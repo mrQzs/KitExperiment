@@ -1,6 +1,10 @@
 {
   "allowed_executors": [
-    {"provider": "step", "model": "step-5-preview", "thinking": "high"}
+    {
+      "provider": "bb",
+      "model": "step-5-preview",
+      "thinking": "high"
+    }
   ],
   "worktree_root": null,
   "kill_grace_seconds": 15,

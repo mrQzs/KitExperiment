@@ -1,6 +1,6 @@
 # Pi execution environment
 
-- Provider/model: `step/step-5-preview`
+- Provider/model: `bb/step-5-preview`
 - Requested thinking: `high`
 - Pi version: 1.0.1 (verified by Code-Kit doctor on 2026-10-04)
 - Python: PowerShell 3.9.23; Git Bash 3.12.3
