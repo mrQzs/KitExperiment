@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-acceptance",
+  "plan_version": 1,
+  "title": "Pi high acceptance coverage for the SentinelMesh reference",
+  "repository": "KitExperiment",
+  "base_sha": "3de150144b9a9478eca38200496faf19dbfe5f5c",
+  "risk_level": "low",
+  "authorization": {"executor": ["local_edit", "local_test"], "integration": []},
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [],
+    "allowed_new_files": ["tests/test_pi_acceptance.py"],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [".agent/**", ".agents/**", ".pi/**", "AGENTS.md", "code-kit-v2/**", "pyproject.toml", "sentinelmesh/**"],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {"id": "V01", "argv": ["python", "-c", "from pathlib import Path; p=Path(r'tests/test_pi_acceptance.py'); assert p.exists() and p.stat().st_size>0; print('PI_ACCEPTANCE_ARTIFACT_OK')"], "cwd": ".", "timeout_seconds": 60, "required": true, "expected_exit_code": 0, "output_must_match": ["PI_ACCEPTANCE_ARTIFACT_OK"], "expect_on_base": "fail"},
+    {"id": "V02", "argv": ["python", "-m", "pytest", "-q"], "cwd": ".", "timeout_seconds": 180, "required": true, "expected_exit_code": 0},
+    {"id": "V03", "argv": ["python", "-m", "compileall", "-q", "sentinelmesh", "tests"], "cwd": ".", "timeout_seconds": 60, "required": true, "expected_exit_code": 0},
+    {"id": "V04", "argv": ["git", "diff", "--check"], "cwd": ".", "timeout_seconds": 60, "required": true, "expected_exit_code": 0}
+  ],
+  "definition_of_done": [
+    {"id": "D01", "text": "新增离线验收覆盖，验证基线、规划合同、工作流和集成门禁的关键不变量", "evidence": ["V01", "V02"]},
+    {"id": "D02", "text": "保持依赖零、只读生产边界和 NOT_RUN/BLOCKED 语义", "evidence": ["V02", "V04"]},
+    {"id": "D03", "text": "完整测试与编译检查通过", "evidence": ["V02", "V03", "V04"]}
+  ],
+  "budget": {"max_attempts_total": 1, "max_wall_seconds_per_attempt": 600, "max_wall_seconds_total": 600, "cost_budget": null}
+}
