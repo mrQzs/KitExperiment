@@ -1,0 +1,29 @@
+{
+  "artifact": "03-approvals-and-locks-审阅增强版.md",
+  "bytes": 189542,
+  "lines": 3328,
+  "sha256": "5727ab30e73962fd8a0dfefe3a250885624657bdc91423b0210bbc0b5b26cae2",
+  "extracted_files": 12,
+  "extracted_files_match": true,
+  "unit_tests": 72,
+  "unit_tests_status": "PASS",
+  "json_code_blocks_parsed": 6,
+  "code_fences_balanced": true,
+  "footnotes_resolved": true,
+  "environment": {
+    "platform": "linux",
+    "python": "3.13.5",
+    "sqlite": "3.46.1",
+    "jsonschema": "4.26.0"
+  },
+  "vectors": {
+    "serialization_vectors": 12,
+    "resource_byte_hashes": 17,
+    "auxiliary_examples": 5,
+    "auxiliary_negative_cases": 6,
+    "approval_canonical_sha256": "2826d84deeb667e58998ca04501f2445488dc192084cf305e4b455606c200ff5",
+    "status": "PASS",
+    "production_authorization_verified": false
+  },
+  "production_and_cross_platform": "NOT_RUN"
+}

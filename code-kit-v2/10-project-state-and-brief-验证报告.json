@@ -1,0 +1,244 @@
+{
+  "status": "PASS",
+  "provenance": "offline-synthetic-reference",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "jsonschema": "4.26.0"
+  },
+  "tests": {
+    "run": 76,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "schema_meta_validations": 1,
+  "positive_record_families": [
+    "SourceRecord",
+    "ProjectEvent",
+    "ProjectState",
+    "ViewManifest",
+    "ReadReceipt"
+  ],
+  "unknown_field_rejections": [
+    "SourceRecord",
+    "ProjectEvent",
+    "ProjectState",
+    "ViewManifest",
+    "ReadReceipt"
+  ],
+  "golden_vectors": [
+    {
+      "id": "V01",
+      "passed": true
+    },
+    {
+      "id": "V02",
+      "passed": true
+    },
+    {
+      "id": "V03",
+      "passed": true
+    },
+    {
+      "id": "V04",
+      "passed": true
+    },
+    {
+      "id": "V05",
+      "passed": true
+    },
+    {
+      "id": "V06",
+      "passed": true
+    },
+    {
+      "id": "V07",
+      "passed": true
+    },
+    {
+      "id": "V08",
+      "passed": true
+    },
+    {
+      "id": "V09",
+      "passed": true
+    },
+    {
+      "id": "V10",
+      "passed": true
+    }
+  ],
+  "resource_checks": [
+    {
+      "id": "source-task-1",
+      "kind": "fixture-source",
+      "sha256": "14068d2faabc8fb421bbf1aa46aac0fe2315e5ff9a447a693b9c5679c8b7fcf9",
+      "bytes": 650,
+      "passed": true
+    },
+    {
+      "id": "source-planning-1",
+      "kind": "fixture-source",
+      "sha256": "17318ac7505a78d51e552ac6dae60f9551046e7b0ff2d41904fad06322e241ae",
+      "bytes": 469,
+      "passed": true
+    },
+    {
+      "id": "source-approval-1",
+      "kind": "fixture-source",
+      "sha256": "b34e945a47a4251decef2d75ee3b3363e1fd61f6342dd7e677488093b7dc606c",
+      "bytes": 516,
+      "passed": true
+    },
+    {
+      "id": "source-decision-1",
+      "kind": "fixture-source",
+      "sha256": "77d2a692f581256b7126d2284539a8e1203db4d4fa770aae6c2646acaf27cdf9",
+      "bytes": 477,
+      "passed": true
+    },
+    {
+      "id": "source-goal-1",
+      "kind": "fixture-source",
+      "sha256": "70edf434e384e2d77ab28e6967f5999b7417239c20add54c0b37b09125d1bb4f",
+      "bytes": 473,
+      "passed": true
+    },
+    {
+      "id": "source-budget-1",
+      "kind": "fixture-source",
+      "sha256": "37dd414842935a7d1f7a599f9c5c12e40d92bd458f7ff714631ad78c896d0b83",
+      "bytes": 751,
+      "passed": true
+    },
+    {
+      "id": "b458f254ffe800160804da57a470d591aa1be3e92633e894fd420938441f50dd",
+      "kind": "project-state",
+      "sha256": "066e62cf8d68c6785914ac09d0667a9e2e9762c9735724fd6f4ae44d4b8ff7f8",
+      "bytes": 3837,
+      "passed": true
+    },
+    {
+      "id": "b458f254ffe800160804da57a470d591aa1be3e92633e894fd420938441f50dd",
+      "kind": "project-brief",
+      "sha256": "a05a5d69892466a40b81f20a2bd4001c1603b3d0914402cdf30bff3bd4b8c36a",
+      "bytes": 2293,
+      "passed": true
+    },
+    {
+      "id": "b458f254ffe800160804da57a470d591aa1be3e92633e894fd420938441f50dd",
+      "kind": "project-view-manifest",
+      "sha256": "b45f9eeb3ca305d5a6bf7decef761143e4179a885a7ff0a26b5187ec98df37b1",
+      "bytes": 2019,
+      "passed": true
+    }
+  ],
+  "not_run": [
+    "actual project tests/test_dispatch.py",
+    "real 03/05/07/09 wiring",
+    "real Pi or other CLI/model",
+    "native Windows and macOS",
+    "OS power-loss or process-kill recovery",
+    "real host delivery/read acknowledgement",
+    "real provider billing and main-session usage",
+    "actual G0-G6"
+  ],
+  "not_implemented": [
+    "real source discovery and completeness certificates",
+    "production identity/authorization and revocation",
+    "Windows LockFileEx backend",
+    "multi-host/distributed fencing",
+    "generation reset and signed recovery high-watermarks",
+    "production dependency semantic validation",
+    "schema/reducer content digest binding and full freshness vectors",
+    "network filesystem guarantees",
+    "production GC and retention pins",
+    "compatibility root state.json/brief.md aliases",
+    "host push adapter",
+    "semantic understanding verification"
+  ],
+  "limitations": [
+    "fault injection raises synchronous exceptions; not a power-failure test",
+    "concurrency tests use two threads and separate opened lock descriptors; not a distributed system test",
+    "fixture producer strings are not authenticated identities",
+    "test coverage does not prove the draft design fully implemented"
+  ],
+  "document": {
+    "name": "10-project-state-and-brief-审阅增强版.md",
+    "bytes": 203431,
+    "sha256": "ec913889b581ed1643f485e80683dc91a8fea27943ad7a805374e974a8f78713",
+    "original_name": "10-project-state-and-brief.md",
+    "original_sha256": "d48243838d932054a29ccd68c1143165b6c09955d42e7dd5025e69b4808fc998",
+    "named_artifacts": [
+      {
+        "name": "project-reference.schema.json",
+        "bytes": 39502,
+        "sha256": "5264b0428491bc35557b1c441adc382300ad89f386902393a966737a4c60d988",
+        "identical": true
+      },
+      {
+        "name": "project_reference.py",
+        "bytes": 31772,
+        "sha256": "8290aa7eec665d802e75c2804075c6755d27d42083333b8bfa503f42fef70026",
+        "identical": true
+      },
+      {
+        "name": "fixtures.py",
+        "bytes": 2895,
+        "sha256": "1430cbe71ec3ab77d249e75eebf6718d44212010cdfc2f025e9ac88fdda06101",
+        "identical": true
+      },
+      {
+        "name": "test_reference.py",
+        "bytes": 22946,
+        "sha256": "a17ff895ed89e63802b12e81695a8032053faf7da6f279a0e18142603a0a45a5",
+        "identical": true
+      },
+      {
+        "name": "run_demo.py",
+        "bytes": 1470,
+        "sha256": "f91a14d8e63eb34716f408cbd971184829357a30b3140dcf55bcf3b2030d5e9b",
+        "identical": true
+      },
+      {
+        "name": "verify_reference.py",
+        "bytes": 4936,
+        "sha256": "dcf4ca4e861745b778fc19fde19ad25f52760452cd07c5c79cb85145a58d7388",
+        "identical": true
+      },
+      {
+        "name": "extract_artifacts.py",
+        "bytes": 1422,
+        "sha256": "edd9105e331c394ab8fd789b31508ab5201e4cea1da03da9dc5dcd8003aad183",
+        "identical": true
+      },
+      {
+        "name": "golden-vectors.json",
+        "bytes": 2117,
+        "sha256": "8d23f67f9d3e025bdd83184926f0300d4201a3b6d590159bb432735ab704c31d",
+        "identical": true
+      },
+      {
+        "name": "README.md",
+        "bytes": 1697,
+        "sha256": "babab3d94691edaf8bad79d4f2af64f53c3f7ff7e59e388a3c3f03e0414df10b",
+        "identical": true
+      }
+    ],
+    "audit": {
+      "fenced_blocks": 21,
+      "json_blocks": 2,
+      "python_blocks": 6,
+      "all_fences_closed": true,
+      "all_json_parsed": true,
+      "all_python_syntax_valid": true,
+      "footnotes_defined": true,
+      "preserved_original_acceptance_rows": 9,
+      "preserved_original_main_chapters": 9,
+      "preserved_original_section_4_subheadings": 3,
+      "proposed_integration_scenarios": 30,
+      "final_markdown_extraction_byte_match": true
+    }
+  }
+}

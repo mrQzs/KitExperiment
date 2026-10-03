@@ -1,0 +1,651 @@
+{
+  "record_type": "offline-reference-verification",
+  "schema_version": 1,
+  "module": "09-planning-and-contracts",
+  "synthetic_reference_only": true,
+  "verified_at": "2026-09-25T13:00:03.410891+00:00",
+  "status": "PASS",
+  "production_acceptance": "NOT_RUN",
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "sqlite": "3.46.1",
+    "jsonschema": "4.26.0"
+  },
+  "tests": {
+    "run": 90,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "groups": {
+      "BundleTests": 37,
+      "ParsingTests": 16,
+      "ProtocolTests": 7,
+      "PublicationTests": 30
+    },
+    "cases": [
+      {
+        "id": "test_reference.BundleTests.test_arbitrary_output_path",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_blocking_question_preserved_not_publishable",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_budget_over_parent",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_check_must_follow_freeze",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_cycle",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_dangling_edge",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_duplicate_risk_identity",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_duplicate_task",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_evidence_out_of_range",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_evidence_quote_hash",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_evidence_split_utf8",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_fence_injection_literal",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_forged_approved_field",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_future_base_not_complete",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_narrative_change_changes_both_bytes",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_new_scope_requires_graph_revision",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_no_room_for_initial_call",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_null_environment_saved_but_not_renderable",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_pair_deterministic",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_protected_scope",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_resource_bytes_drift",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_resource_kind_cannot_substitute",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_rewrite_graph",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_risk_cannot_name_unknown_task",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_risk_decision_cannot_be_plain_rules",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_risks_field_not_silently_omitted",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_source_claim_not_runtime_result",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_unconfirmed_assumption",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_uncovered_requirement",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_unknown_decision_not_auto_resolved",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_unsupplied_resource",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_valid_graph_not_contract",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_valid_refine_has_no_semantic_proof",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_version_boolean_rejected",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_wrong_request",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_wrong_request_ref",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.BundleTests.test_wrong_requirement_set",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_bom",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_depth_limit",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_duplicate_keys",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_escaped_duplicate_keys",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_float_and_exponent_rejected_for_this_profile",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_invalid_utf8",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_nonfinite",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_nonobject",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_path_traversal",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_schemas_meta_valid",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_second_document",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_surrogate",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_unicode_and_order",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_unsafe_integer",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_windows_reserved",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ParsingTests.test_windows_stream",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_empty_result",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_incomplete_transport",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_one_result",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_replay_conflict",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_same_event_replay",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_truncated_payload",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.ProtocolTests.test_two_results_even_same_bytes",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_aba_guard_does_not_revive",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_abandoned_versions_not_reused",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_before_commit_rolls_back",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_controller_fenced",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_corrupt_projection_never_overwritten",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_corrupt_source_not_publishable",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_cross_request_name_collision",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_fake_review",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_freeze_idempotent",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_frozen_version_not_overwritten",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_guard_drift",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_half_pair_never_eligible",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_half_pair_recovery",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_head_cas",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_idempotency_changed_review_conflict",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_line_endings_are_reviewed_bytes",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_new_version_preserves_old_bytes",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_older_reserved_version_cannot_replace_new",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_other_candidate_review",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_pair_projection_complete",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_pause_blocks_publication",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_registration_not_visibility",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_replay_after_revocation_is_history",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_reservation_idempotent",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_reservation_key_conflict",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_response_lost_replay_no_duplicate",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_restore_revoked_not_reauthorize",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_two_connections_distinct_candidates_one_head",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_two_connections_same_key_one_registration",
+        "status": "PASS"
+      },
+      {
+        "id": "test_reference.PublicationTests.test_unreserved_version",
+        "status": "PASS"
+      }
+    ]
+  },
+  "extra_checks": {
+    "status": "PASS",
+    "schema_meta_checks": 3,
+    "schemas": [
+      "planning.schema.json",
+      "contract-ir.fixture.schema.json",
+      "candidate.schema.json"
+    ],
+    "fixed_examples": 4,
+    "unknown_field_negative_examples": [
+      {
+        "example": "graph.bundle.json",
+        "added_field": "_comment",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "graph.bundle.json",
+        "added_field": "approved",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "graph.bundle.json",
+        "added_field": "output_path",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "refine.bundle.json",
+        "added_field": "_comment",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "refine.bundle.json",
+        "added_field": "approved",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "refine.bundle.json",
+        "added_field": "output_path",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "contract-ir.synthetic.json",
+        "added_field": "_comment",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "contract-ir.synthetic.json",
+        "added_field": "approved",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "contract-ir.synthetic.json",
+        "added_field": "output_path",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "candidate.synthetic.json",
+        "added_field": "_comment",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "candidate.synthetic.json",
+        "added_field": "approved",
+        "status": "REJECTED_AS_EXPECTED"
+      },
+      {
+        "example": "candidate.synthetic.json",
+        "added_field": "output_path",
+        "status": "REJECTED_AS_EXPECTED"
+      }
+    ],
+    "golden_vectors": 10,
+    "sample_resource_bindings_verified": 30,
+    "sample_resource_unique_digests": 19,
+    "reference_occurrences_in_examples": 63,
+    "python_sources": [
+      {
+        "file": "extract_artifacts.py",
+        "sha256": "bfe0e2d370b8705247ea325db3fd407de70037356b9eb24141d104e987019796"
+      },
+      {
+        "file": "fixtures.py",
+        "sha256": "94d253b7746e35e91460755d56f97c424c939aa3f34f94e6969ac87b2da3b234"
+      },
+      {
+        "file": "generate_samples.py",
+        "sha256": "c66c54c8d20ce7a626600a088559d6366e9218a90b6224e7b72f7a4448f407d5"
+      },
+      {
+        "file": "planning_reference.py",
+        "sha256": "9b819900872fd2c223dab247a61f830edee217a93680095148dc5f7ce9e42c0c"
+      },
+      {
+        "file": "publication_reference.py",
+        "sha256": "8bb1815b535db914d5721bdb27d3e8409aedbdc9c4779c21e6d83432ab4da47c"
+      },
+      {
+        "file": "test_reference.py",
+        "sha256": "7a474dde9e76da165d81b53be7bab29f4af5b8f1d0a9569f603419efa78f5a29"
+      },
+      {
+        "file": "verify.py",
+        "sha256": "e082a3ee9ff0d22c1ac1e8c9e88d4615a369adb467e713316937d9b53c26d572"
+      }
+    ],
+    "semantic_support_verified": false,
+    "production_authorized": false
+  },
+  "not_run": [
+    "原项目 python tests/test_dispatch.py 与真实 validate_plan / Markdown-JSON 校验",
+    "真实 Git 基线、工作区、上游接受和基线使用授权",
+    "真实 Pi / 第二 CLI / 模型、提供商身份证据、费用和隐式资源加载",
+    "03 审核与当前授权 / 04 协议 / 05 进程 / 06 锁 / 07 预算 / 08 插件 / 10 索引接线",
+    "生产 G0–G6、主模型语义复审与用户授权系统",
+    "Windows / macOS / WSL 原生文件、进程与恢复行为",
+    "真实进程强杀、断电、存储设备故障、网络文件系统与灾备恢复",
+    "真实凭据脱敏、恶意同账户攻击、沙箱逃逸及文件路径竞态防护"
+  ],
+  "not_implemented": [
+    "正式 PlannerRequest / DraftReceipt / PublicationReceipt 等生产 Schema 与可信注册服务",
+    "正式合同 v1/v2 渲染、现行 validate_plan 接口与来源感知的旧入口路由",
+    "03 supervisor 身份与动作授权、审核替代/撤销/条件/到期及精确依赖失效",
+    "真实 Git/文件证据解析、完整传递输入闭包、插件导出类型与完整阶段端口编译",
+    "语义蕴涵、测试辨别力、需求完整性和架构正确性的通用自动证明",
+    "生产草稿版本 CAS、完整设计差异比较、有限修复调度及 request 预算账本",
+    "跨平台安全对象存储、OS 级只读、真实进程 handoff / START_UNKNOWN 对账"
+  ],
+  "artifact_audit": {
+    "input_source": {
+      "file": "09-planning-and-contracts.md",
+      "bytes": 11309,
+      "sha256": "0b93868c947b1383517a417b9fc6350e3ab44110a8bc0d815be0961b162fecbb"
+    },
+    "final_markdown": {
+      "file": "09-planning-and-contracts-审阅增强版.md",
+      "bytes": 230221,
+      "lines": 4701,
+      "sha256": "e34eab5806ebbae63db40fffc363d0bd42aca5391e7bfd95345d95ecb8d5ef25"
+    },
+    "extracted_files": [
+      {
+        "file": "planning.schema.json",
+        "bytes": 17267,
+        "sha256": "587bd12769b0a43ce6fa663713b54c6609f85ab7f902ebf969fbdc3674aff948",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "contract-ir.fixture.schema.json",
+        "bytes": 3842,
+        "sha256": "14c1fe8c0cde7637202b89d38d82c3fa34dc6a7a870d6d1cc5a4626b3204516b",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "candidate.schema.json",
+        "bytes": 2495,
+        "sha256": "52237c1210811080eb206cfcc5f6f026076986c3460301182eedd0ae07ddad5a",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "README.md",
+        "bytes": 2651,
+        "sha256": "7759b36b349c6e2c5684e40f8a0b982fc4b9d6f0d9ee71ef83dc3c1023cda9ff",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "extract_artifacts.py",
+        "bytes": 1267,
+        "sha256": "bfe0e2d370b8705247ea325db3fd407de70037356b9eb24141d104e987019796",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "planning_reference.py",
+        "bytes": 17132,
+        "sha256": "9b819900872fd2c223dab247a61f830edee217a93680095148dc5f7ce9e42c0c",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "publication_reference.py",
+        "bytes": 16568,
+        "sha256": "8bb1815b535db914d5721bdb27d3e8409aedbdc9c4779c21e6d83432ab4da47c",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "fixtures.py",
+        "bytes": 5922,
+        "sha256": "94d253b7746e35e91460755d56f97c424c939aa3f34f94e6969ac87b2da3b234",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "generate_samples.py",
+        "bytes": 4228,
+        "sha256": "c66c54c8d20ce7a626600a088559d6366e9218a90b6224e7b72f7a4448f407d5",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "test_reference.py",
+        "bytes": 19063,
+        "sha256": "7a474dde9e76da165d81b53be7bab29f4af5b8f1d0a9569f603419efa78f5a29",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "verify.py",
+        "bytes": 8157,
+        "sha256": "e082a3ee9ff0d22c1ac1e8c9e88d4615a369adb467e713316937d9b53c26d572",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "examples/graph.bundle.json",
+        "bytes": 6936,
+        "sha256": "465d9210c4ff6915d493c5b714ae66253eb5ad9924a1d9dcfd23713926b7e942",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "examples/refine.bundle.json",
+        "bytes": 7294,
+        "sha256": "5dfec414766d05f81909490fd3a3fac8abe517d712b0fff5f322ef9dbf679f52",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "examples/contract-ir.synthetic.json",
+        "bytes": 4597,
+        "sha256": "f423cdbf86c9f9e1f35c5d97e0b94900bbd14f308b14fcfc1f8e70ea5f23b990",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "examples/candidate.synthetic.json",
+        "bytes": 3449,
+        "sha256": "540c11ae17840b0e62d3ff43e9b950427f21fd2cee83cf33f3d6f0672c231af1",
+        "extracted_byte_equal": true
+      },
+      {
+        "file": "golden-vectors.json",
+        "bytes": 2703,
+        "sha256": "e63ea4cb9e3e7df2c4a1957714266c2a495fe30f6a79c7fbd3e74947ecd151d1",
+        "extracted_byte_equal": true
+      }
+    ],
+    "extracted_file_count": 16,
+    "all_byte_equal": true,
+    "verification_ran_from_extracted_files": true,
+    "markdown_checks": {
+      "fences_balanced": true,
+      "code_blocks_by_language": {
+        "json": 9,
+        "text": 10,
+        "sql": 2,
+        "markdown": 1,
+        "python": 7
+      },
+      "json_blocks_parsed": 9,
+      "python_blocks_parsed": 7,
+      "footnote_definitions": 22,
+      "no_dangling_footnotes": true,
+      "original_chapters_preserved": 9,
+      "original_4_subsections_preserved": 5,
+      "original_acceptance_items_verbatim": 10,
+      "new_acceptance_items": 18,
+      "real_integration_scenarios_not_run": 30
+    },
+    "no_original_project_test_executed": true,
+    "packaged_sample_resource_bindings": 30
+  }
+}

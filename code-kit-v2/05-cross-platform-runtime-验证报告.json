@@ -1,0 +1,336 @@
+{
+  "record_type": "reference_validation_report",
+  "scope": "synthetic reference only; not project acceptance or production runtime",
+  "generated_at_utc": "2026-09-25T08:47:32.097485+00:00",
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "container_execution": true,
+    "bash": "GNU bash, version 5.2.37(1)-release (x86_64-pc-linux-gnu)",
+    "pwsh_available": false,
+    "jsonschema_version": "4.26.0"
+  },
+  "schema": {
+    "meta_validated": 1,
+    "positive_samples": 5,
+    "negative_samples_rejected": 16,
+    "negative_cases": [
+      "unknown-record-version",
+      "extra-root-field",
+      "required-not-boolean",
+      "timeout-zero",
+      "negative-expected-exit",
+      "empty-argv",
+      "null-in-argv",
+      "variant-overrides-required",
+      "conflicting-carriers",
+      "script-missing",
+      "invalid-platform",
+      "tty-not-supported",
+      "pid-zero",
+      "hash-not-lowercase-sha256",
+      "invalid-started-type",
+      "negative-stream-count"
+    ],
+    "semantic_boundary_demonstrations": [
+      {
+        "case": "missing-declared-platform",
+        "schema_only_accepts": true,
+        "production_semantic_guard_required": true
+      },
+      {
+        "case": "backend-platform-mismatch",
+        "schema_only_accepts": true,
+        "production_semantic_guard_required": true
+      },
+      {
+        "case": "not-started-with-exit",
+        "schema_only_accepts": true,
+        "production_semantic_guard_required": true
+      },
+      {
+        "case": "complete-without-eof",
+        "schema_only_accepts": true,
+        "production_semantic_guard_required": true
+      }
+    ]
+  },
+  "strict_json_files_checked": 11,
+  "resource_references_checked": 11,
+  "unique_resource_targets_checked": 10,
+  "resource_target_hashes": {
+    "fixtures/check.sh": "199a5ab69fb9e850f99d4f6ae97881e1f401dfee4317bc06f4f54f034c34b0ee",
+    "fixtures/cwd-binding.json": "696253fef0ff3f4a95aa43c635cf53bf0041feeee607de8647e8191c3fd83310",
+    "fixtures/environment.json": "616505100e0d0a5b56b73c900f7ffab17813f210dcd244f8c9dc8038eee9bc90",
+    "fixtures/executable-binding.json": "2b7d50f14175261cce4ae1af75ba712ffe41be84f2f2ea7f57cf530187cde41c",
+    "fixtures/command-set.json": "444ab9c8ee780d34fd71f28262727d5710821e77027f16b16d910e56d47b7363",
+    "fixtures/cleanup.json": "5c2e74f1c62b4c2ccf102580a898f929ae10cbe02bbb4389407bd9aa7d4f1e36",
+    "fixtures/final-launch-plan.json": "54b3175a969fa0d42b6fda8d989463dea059e42f845352333a8f04a3677233ec",
+    "fixtures/process-identity.json": "a6e94eee2c1bd7aea47c96ce58f010dd4220b361993f76eb345f90f6323c5f19",
+    "fixtures/stderr.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fixtures/stdout.bin": "03b035400b802461110b426f44247573a04ebefd43bc9c9720a0f95c7c490ed8"
+  },
+  "golden_vectors_passed": 10,
+  "tests": {
+    "run": 83,
+    "passed": 83,
+    "contract_tests_passed": 70,
+    "linux_synthetic_tests_passed": 13,
+    "skipped": 0,
+    "failures": 0,
+    "errors": 0,
+    "skipped_cases": [],
+    "elapsed_seconds": 8.726066,
+    "passed_ids": [
+      "test_contracts.ContractsTests.test_argv_empty",
+      "test_contracts.ContractsTests.test_argv_empty_entry",
+      "test_contracts.ContractsTests.test_argv_newline_entry",
+      "test_contracts.ContractsTests.test_argv_nul",
+      "test_contracts.ContractsTests.test_argv_scalar",
+      "test_contracts.ContractsTests.test_command_order_is_not_normalized",
+      "test_contracts.ContractsTests.test_common_carrier",
+      "test_contracts.ContractsTests.test_complete_three_platform_selection",
+      "test_contracts.ContractsTests.test_default_assertions_are_explicit_before_sealing",
+      "test_contracts.ContractsTests.test_direct_plus_variants_rejected",
+      "test_contracts.ContractsTests.test_duplicate_command_id",
+      "test_contracts.ContractsTests.test_empty_env_value_is_preserved",
+      "test_contracts.ContractsTests.test_environment_values_not_in_error",
+      "test_contracts.ContractsTests.test_event_order_rejected",
+      "test_contracts.ContractsTests.test_exit_unknown_is_not_zero",
+      "test_contracts.ContractsTests.test_failed_output_assertion",
+      "test_contracts.ContractsTests.test_field_cwd_absolute",
+      "test_contracts.ContractsTests.test_field_cwd_backslash",
+      "test_contracts.ContractsTests.test_field_cwd_drive",
+      "test_contracts.ContractsTests.test_field_cwd_parent",
+      "test_contracts.ContractsTests.test_field_expected_bool",
+      "test_contracts.ContractsTests.test_field_expected_signal",
+      "test_contracts.ContractsTests.test_field_required_null",
+      "test_contracts.ContractsTests.test_field_timeout_bool",
+      "test_contracts.ContractsTests.test_field_timeout_real",
+      "test_contracts.ContractsTests.test_field_timeout_zero",
+      "test_contracts.ContractsTests.test_file_is_not_cwd",
+      "test_contracts.ContractsTests.test_first_stop_reason_is_sticky",
+      "test_contracts.ContractsTests.test_forbidden_loader_env",
+      "test_contracts.ContractsTests.test_identity_equal_is_only_match_not_permission",
+      "test_contracts.ContractsTests.test_identity_pid_reuse_rejected",
+      "test_contracts.ContractsTests.test_identity_unknown_rejected",
+      "test_contracts.ContractsTests.test_inadequate_containment_cannot_satisfy",
+      "test_contracts.ContractsTests.test_json_bom",
+      "test_contracts.ContractsTests.test_json_duplicate",
+      "test_contracts.ContractsTests.test_json_escaped_duplicate",
+      "test_contracts.ContractsTests.test_json_invalid_utf8",
+      "test_contracts.ContractsTests.test_json_large_integer",
+      "test_contracts.ContractsTests.test_json_nan",
+      "test_contracts.ContractsTests.test_json_overflow",
+      "test_contracts.ContractsTests.test_json_surrogate",
+      "test_contracts.ContractsTests.test_json_too_deep",
+      "test_contracts.ContractsTests.test_json_trailing_document",
+      "test_contracts.ContractsTests.test_missing_eof_evidence_cannot_satisfy",
+      "test_contracts.ContractsTests.test_missing_target_is_not_optional_skip",
+      "test_contracts.ContractsTests.test_no_candidate_PASS_label",
+      "test_contracts.ContractsTests.test_nonzero_expected_normal_exit_can_satisfy",
+      "test_contracts.ContractsTests.test_numeric_representation_is_not_rewritten",
+      "test_contracts.ContractsTests.test_platform_set_normalization_is_order_independent",
+      "test_contracts.ContractsTests.test_posix_case_distinct",
+      "test_contracts.ContractsTests.test_posix_signal_not_exit_code",
+      "test_contracts.ContractsTests.test_render_view_keeps_exact_data",
+      "test_contracts.ContractsTests.test_required_env_missing",
+      "test_contracts.ContractsTests.test_residuals_cannot_satisfy",
+      "test_contracts.ContractsTests.test_script_kind_is_not_arbitrary_fixture",
+      "test_contracts.ContractsTests.test_secret_not_in_diagnostic",
+      "test_contracts.ContractsTests.test_selection_does_not_mutate_source",
+      "test_contracts.ContractsTests.test_shell_fixture",
+      "test_contracts.ContractsTests.test_shell_without_script",
+      "test_contracts.ContractsTests.test_start_unknown_cannot_satisfy",
+      "test_contracts.ContractsTests.test_static_inside_cwd",
+      "test_contracts.ContractsTests.test_static_symlink_escape",
+      "test_contracts.ContractsTests.test_timeout_zero_exit_stays_aborted",
+      "test_contracts.ContractsTests.test_unicode_is_not_normalized",
+      "test_contracts.ContractsTests.test_unknown_command",
+      "test_contracts.ContractsTests.test_unknown_target",
+      "test_contracts.ContractsTests.test_unlisted_env_not_inherited",
+      "test_contracts.ContractsTests.test_variant_cannot_override_required",
+      "test_contracts.ContractsTests.test_windows_case_collision",
+      "test_contracts.ContractsTests.test_windows_signed_exit_is_not_posix_signal",
+      "test_native.NativeLinuxTests.test_argv_roundtrip",
+      "test_native.NativeLinuxTests.test_bash_syntax_and_program_failure_separate",
+      "test_native.NativeLinuxTests.test_bash_wrapper_arguments",
+      "test_native.NativeLinuxTests.test_bash_wrapper_wait_three",
+      "test_native.NativeLinuxTests.test_cancel_owned_group_and_reap_grandchild",
+      "test_native.NativeLinuxTests.test_native_nonzero_and_wait_three",
+      "test_native.NativeLinuxTests.test_pipefail_is_a_semantic_option",
+      "test_native.NativeLinuxTests.test_start_failure_has_no_exit_status",
+      "test_native.NativeLinuxTests.test_stdin_eof_and_byte_preservation",
+      "test_native.NativeLinuxTests.test_stdout_stderr_drained_separately",
+      "test_native.NativeLinuxTests.test_term_escalation_for_known_single_child",
+      "test_native.NativeLinuxTests.test_timeout_is_not_automatic_communicate_tree_kill",
+      "test_native.NativeLinuxTests.test_unicode_cwd"
+    ]
+  },
+  "overall_reference_success": true,
+  "not_run": [
+    "actual project python tests/test_dispatch.py and G0-G6",
+    "actual 03/04/07 integration, authorization, budget or persistent handoff",
+    "Windows native, Job Objects and PowerShell wrapper",
+    "macOS native, Bash 3.2 and WSL",
+    "real Pi, another CLI, model calls or billing",
+    "production redaction, TOCTOU defense, hard-kill supervisor and power-loss recovery",
+    "30 project integration/fault-injection scenarios in chapter 7.4"
+  ],
+  "test_log": "test_argv_empty (test_contracts.ContractsTests.test_argv_empty) ... ok\ntest_argv_empty_entry (test_contracts.ContractsTests.test_argv_empty_entry) ... ok\ntest_argv_newline_entry (test_contracts.ContractsTests.test_argv_newline_entry) ... ok\ntest_argv_nul (test_contracts.ContractsTests.test_argv_nul) ... ok\ntest_argv_scalar (test_contracts.ContractsTests.test_argv_scalar) ... ok\ntest_command_order_is_not_normalized (test_contracts.ContractsTests.test_command_order_is_not_normalized) ... ok\ntest_common_carrier (test_contracts.ContractsTests.test_common_carrier) ... ok\ntest_complete_three_platform_selection (test_contracts.ContractsTests.test_complete_three_platform_selection) ... ok\ntest_default_assertions_are_explicit_before_sealing (test_contracts.ContractsTests.test_default_assertions_are_explicit_before_sealing) ... ok\ntest_direct_plus_variants_rejected (test_contracts.ContractsTests.test_direct_plus_variants_rejected) ... ok\ntest_duplicate_command_id (test_contracts.ContractsTests.test_duplicate_command_id) ... ok\ntest_empty_env_value_is_preserved (test_contracts.ContractsTests.test_empty_env_value_is_preserved) ... ok\ntest_environment_values_not_in_error (test_contracts.ContractsTests.test_environment_values_not_in_error) ... ok\ntest_event_order_rejected (test_contracts.ContractsTests.test_event_order_rejected) ... ok\ntest_exit_unknown_is_not_zero (test_contracts.ContractsTests.test_exit_unknown_is_not_zero) ... ok\ntest_failed_output_assertion (test_contracts.ContractsTests.test_failed_output_assertion) ... ok\ntest_field_cwd_absolute (test_contracts.ContractsTests.test_field_cwd_absolute) ... ok\ntest_field_cwd_backslash (test_contracts.ContractsTests.test_field_cwd_backslash) ... ok\ntest_field_cwd_drive (test_contracts.ContractsTests.test_field_cwd_drive) ... ok\ntest_field_cwd_parent (test_contracts.ContractsTests.test_field_cwd_parent) ... ok\ntest_field_expected_bool (test_contracts.ContractsTests.test_field_expected_bool) ... ok\ntest_field_expected_signal (test_contracts.ContractsTests.test_field_expected_signal) ... ok\ntest_field_required_null (test_contracts.ContractsTests.test_field_required_null) ... ok\ntest_field_timeout_bool (test_contracts.ContractsTests.test_field_timeout_bool) ... ok\ntest_field_timeout_real (test_contracts.ContractsTests.test_field_timeout_real) ... ok\ntest_field_timeout_zero (test_contracts.ContractsTests.test_field_timeout_zero) ... ok\ntest_file_is_not_cwd (test_contracts.ContractsTests.test_file_is_not_cwd) ... ok\ntest_first_stop_reason_is_sticky (test_contracts.ContractsTests.test_first_stop_reason_is_sticky) ... ok\ntest_forbidden_loader_env (test_contracts.ContractsTests.test_forbidden_loader_env) ... ok\ntest_identity_equal_is_only_match_not_permission (test_contracts.ContractsTests.test_identity_equal_is_only_match_not_permission) ... ok\ntest_identity_pid_reuse_rejected (test_contracts.ContractsTests.test_identity_pid_reuse_rejected) ... ok\ntest_identity_unknown_rejected (test_contracts.ContractsTests.test_identity_unknown_rejected) ... ok\ntest_inadequate_containment_cannot_satisfy (test_contracts.ContractsTests.test_inadequate_containment_cannot_satisfy) ... ok\ntest_json_bom (test_contracts.ContractsTests.test_json_bom) ... ok\ntest_json_duplicate (test_contracts.ContractsTests.test_json_duplicate) ... ok\ntest_json_escaped_duplicate (test_contracts.ContractsTests.test_json_escaped_duplicate) ... ok\ntest_json_invalid_utf8 (test_contracts.ContractsTests.test_json_invalid_utf8) ... ok\ntest_json_large_integer (test_contracts.ContractsTests.test_json_large_integer) ... ok\ntest_json_nan (test_contracts.ContractsTests.test_json_nan) ... ok\ntest_json_overflow (test_contracts.ContractsTests.test_json_overflow) ... ok\ntest_json_surrogate (test_contracts.ContractsTests.test_json_surrogate) ... ok\ntest_json_too_deep (test_contracts.ContractsTests.test_json_too_deep) ... ok\ntest_json_trailing_document (test_contracts.ContractsTests.test_json_trailing_document) ... ok\ntest_missing_eof_evidence_cannot_satisfy (test_contracts.ContractsTests.test_missing_eof_evidence_cannot_satisfy) ... ok\ntest_missing_target_is_not_optional_skip (test_contracts.ContractsTests.test_missing_target_is_not_optional_skip) ... ok\ntest_no_candidate_PASS_label (test_contracts.ContractsTests.test_no_candidate_PASS_label) ... ok\ntest_nonzero_expected_normal_exit_can_satisfy (test_contracts.ContractsTests.test_nonzero_expected_normal_exit_can_satisfy) ... ok\ntest_numeric_representation_is_not_rewritten (test_contracts.ContractsTests.test_numeric_representation_is_not_rewritten) ... ok\ntest_platform_set_normalization_is_order_independent (test_contracts.ContractsTests.test_platform_set_normalization_is_order_independent) ... ok\ntest_posix_case_distinct (test_contracts.ContractsTests.test_posix_case_distinct) ... ok\ntest_posix_signal_not_exit_code (test_contracts.ContractsTests.test_posix_signal_not_exit_code) ... ok\ntest_render_view_keeps_exact_data (test_contracts.ContractsTests.test_render_view_keeps_exact_data) ... ok\ntest_required_env_missing (test_contracts.ContractsTests.test_required_env_missing) ... ok\ntest_residuals_cannot_satisfy (test_contracts.ContractsTests.test_residuals_cannot_satisfy) ... ok\ntest_script_kind_is_not_arbitrary_fixture (test_contracts.ContractsTests.test_script_kind_is_not_arbitrary_fixture) ... ok\ntest_secret_not_in_diagnostic (test_contracts.ContractsTests.test_secret_not_in_diagnostic) ... ok\ntest_selection_does_not_mutate_source (test_contracts.ContractsTests.test_selection_does_not_mutate_source) ... ok\ntest_shell_fixture (test_contracts.ContractsTests.test_shell_fixture) ... ok\ntest_shell_without_script (test_contracts.ContractsTests.test_shell_without_script) ... ok\ntest_start_unknown_cannot_satisfy (test_contracts.ContractsTests.test_start_unknown_cannot_satisfy) ... ok\ntest_static_inside_cwd (test_contracts.ContractsTests.test_static_inside_cwd) ... ok\ntest_static_symlink_escape (test_contracts.ContractsTests.test_static_symlink_escape) ... ok\ntest_timeout_zero_exit_stays_aborted (test_contracts.ContractsTests.test_timeout_zero_exit_stays_aborted) ... ok\ntest_unicode_is_not_normalized (test_contracts.ContractsTests.test_unicode_is_not_normalized) ... ok\ntest_unknown_command (test_contracts.ContractsTests.test_unknown_command) ... ok\ntest_unknown_target (test_contracts.ContractsTests.test_unknown_target) ... ok\ntest_unlisted_env_not_inherited (test_contracts.ContractsTests.test_unlisted_env_not_inherited) ... ok\ntest_variant_cannot_override_required (test_contracts.ContractsTests.test_variant_cannot_override_required) ... ok\ntest_windows_case_collision (test_contracts.ContractsTests.test_windows_case_collision) ... ok\ntest_windows_signed_exit_is_not_posix_signal (test_contracts.ContractsTests.test_windows_signed_exit_is_not_posix_signal) ... ok\ntest_argv_roundtrip (test_native.NativeLinuxTests.test_argv_roundtrip) ... ok\ntest_bash_syntax_and_program_failure_separate (test_native.NativeLinuxTests.test_bash_syntax_and_program_failure_separate) ... ok\ntest_bash_wrapper_arguments (test_native.NativeLinuxTests.test_bash_wrapper_arguments) ... ok\ntest_bash_wrapper_wait_three (test_native.NativeLinuxTests.test_bash_wrapper_wait_three) ... ok\ntest_cancel_owned_group_and_reap_grandchild (test_native.NativeLinuxTests.test_cancel_owned_group_and_reap_grandchild) ... ok\ntest_native_nonzero_and_wait_three (test_native.NativeLinuxTests.test_native_nonzero_and_wait_three) ... ok\ntest_pipefail_is_a_semantic_option (test_native.NativeLinuxTests.test_pipefail_is_a_semantic_option) ... ok\ntest_start_failure_has_no_exit_status (test_native.NativeLinuxTests.test_start_failure_has_no_exit_status) ... ok\ntest_stdin_eof_and_byte_preservation (test_native.NativeLinuxTests.test_stdin_eof_and_byte_preservation) ... ok\ntest_stdout_stderr_drained_separately (test_native.NativeLinuxTests.test_stdout_stderr_drained_separately) ... ok\ntest_term_escalation_for_known_single_child (test_native.NativeLinuxTests.test_term_escalation_for_known_single_child) ... ok\ntest_timeout_is_not_automatic_communicate_tree_kill (test_native.NativeLinuxTests.test_timeout_is_not_automatic_communicate_tree_kill) ... ok\ntest_unicode_cwd (test_native.NativeLinuxTests.test_unicode_cwd) ... ok\n\n----------------------------------------------------------------------\nRan 83 tests in 8.726s\n\nOK\n",
+  "document": {
+    "filename": "05-cross-platform-runtime-审阅增强版.md",
+    "sha256": "452437ddd9f962b393c1a3b1db357ecb851c8391f6ca46ab0168d2a885a5cbb7",
+    "bytes": 188979,
+    "lines": 3392
+  },
+  "source": {
+    "filename": "05-cross-platform-runtime.md",
+    "sha256": "f9cc508af91b4f226025e380e02e353d34ecbd8cda4c5e1db3361e3fd9459bf9"
+  },
+  "document_qa": {
+    "outer_fence_blocks": 40,
+    "json_code_blocks_parsed": 12,
+    "python_code_blocks_ast_checked": 6,
+    "footnotes_defined": 29,
+    "original_acceptance_lines_preserved": 10,
+    "new_acceptance_items": 20,
+    "integration_scenarios_not_run": 30,
+    "main_chapters_preserved": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9"
+    ],
+    "reference_files_byte_equal": 23,
+    "utf8_no_bom_lf": true
+  },
+  "extraction": {
+    "source_sha256": "452437ddd9f962b393c1a3b1db357ecb851c8391f6ca46ab0168d2a885a5cbb7",
+    "extracted_files": 23,
+    "files": [
+      {
+        "path": "README.md",
+        "bytes": 3121,
+        "sha256": "01cd67b20102a4f46f67cb6a1a23179c0d6e1f116f7ea31ce095d52bd20add4a"
+      },
+      {
+        "path": "extract_reference.py",
+        "bytes": 2811,
+        "sha256": "371c51f0f5c5c2d8d8fc58cc2430fd08bcb1341f105b6867707a2bba12c5f28c"
+      },
+      {
+        "path": "fixtures/check.sh",
+        "bytes": 56,
+        "sha256": "199a5ab69fb9e850f99d4f6ae97881e1f401dfee4317bc06f4f54f034c34b0ee"
+      },
+      {
+        "path": "fixtures/cleanup.json",
+        "bytes": 77,
+        "sha256": "5c2e74f1c62b4c2ccf102580a898f929ae10cbe02bbb4389407bd9aa7d4f1e36"
+      },
+      {
+        "path": "fixtures/command-set-shell.json",
+        "bytes": 428,
+        "sha256": "c265bb2eacbfe2dfa9d0a4cf92e53d6b37ca8cc843604d518a1ba53e7f899954"
+      },
+      {
+        "path": "fixtures/command-set.json",
+        "bytes": 367,
+        "sha256": "444ab9c8ee780d34fd71f28262727d5710821e77027f16b16d910e56d47b7363"
+      },
+      {
+        "path": "fixtures/cwd-binding.json",
+        "bytes": 72,
+        "sha256": "696253fef0ff3f4a95aa43c635cf53bf0041feeee607de8647e8191c3fd83310"
+      },
+      {
+        "path": "fixtures/environment.json",
+        "bytes": 127,
+        "sha256": "616505100e0d0a5b56b73c900f7ffab17813f210dcd244f8c9dc8038eee9bc90"
+      },
+      {
+        "path": "fixtures/executable-binding.json",
+        "bytes": 89,
+        "sha256": "2b7d50f14175261cce4ae1af75ba712ffe41be84f2f2ea7f57cf530187cde41c"
+      },
+      {
+        "path": "fixtures/final-launch-plan.json",
+        "bytes": 1265,
+        "sha256": "54b3175a969fa0d42b6fda8d989463dea059e42f845352333a8f04a3677233ec"
+      },
+      {
+        "path": "fixtures/golden-vectors.json",
+        "bytes": 1521,
+        "sha256": "aa3037bc67da678ca88a4f12ef0e909fed461c8a825d380582420e1dd3086ee0"
+      },
+      {
+        "path": "fixtures/process-identity.json",
+        "bytes": 580,
+        "sha256": "a6e94eee2c1bd7aea47c96ce58f010dd4220b361993f76eb345f90f6323c5f19"
+      },
+      {
+        "path": "fixtures/process_stub.py",
+        "bytes": 1301,
+        "sha256": "6d3451ce133200d6bcae969a2774ffdf83435a1ac1f1f2ed6e8a75d8e46940a9"
+      },
+      {
+        "path": "fixtures/stderr.bin",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "fixtures/stdout.bin",
+        "bytes": 13,
+        "sha256": "03b035400b802461110b426f44247573a04ebefd43bc9c9720a0f95c7c490ed8"
+      },
+      {
+        "path": "fixtures/transport-summary.json",
+        "bytes": 1629,
+        "sha256": "4a9be230ae098d59c7695ed4fc6f37e9cec50efce54d1559f5c5b4c5c0fad039"
+      },
+      {
+        "path": "runtime_contracts.py",
+        "bytes": 13767,
+        "sha256": "943e847317e51b43caa1e8acf5afd54b5896c523cad79597807e96880b0c9533"
+      },
+      {
+        "path": "schemas/runtime.schema.json",
+        "bytes": 22376,
+        "sha256": "9cab7c43693a38831d10ca3057c22e05d1c5f2b1528fa21ef0ef194598b547b8"
+      },
+      {
+        "path": "tests/test_contracts.py",
+        "bytes": 11433,
+        "sha256": "0146a6ff6179844e3ae15fa29740ee5cc19d37ce67e841583d669120e3021415"
+      },
+      {
+        "path": "tests/test_native.py",
+        "bytes": 6330,
+        "sha256": "1dcb8cf566d5566a1163e223b5f032cd5ef5183e15290b7bc6ba588acd407450"
+      },
+      {
+        "path": "verify.py",
+        "bytes": 9958,
+        "sha256": "73b83975fe82aa1daa37f10b250a64416c841d219377383918948b7527cbe9ff"
+      },
+      {
+        "path": "wrappers/dispatch-stub.ps1",
+        "bytes": 1362,
+        "sha256": "3ee56d3245bef6da0b10ecd2aa60269f1ef8596e990c2916b5b1113d1c81d717"
+      },
+      {
+        "path": "wrappers/dispatch-stub.sh",
+        "bytes": 280,
+        "sha256": "74dd5cb2859a0c07f1a670a436d2213ea31312fafc8a39280ac9525043f65b33"
+      }
+    ]
+  },
+  "verification_provenance": "Executed verify.py from files extracted from the final Markdown; every extracted file byte-compared with authored reference source."
+}

@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "record_type": "document-reference-verification",
+  "review_date": "2026-09-25",
+  "review_timezone": "Asia/Tokyo",
+  "scope": "final_markdown_extracted_synthetic_reference_only",
+  "project_acceptance": "NOT_RUN",
+  "document": {
+    "filename": "04-cli-adapters-and-pi-审阅增强版.md",
+    "bytes": 196353,
+    "lines_lf": 3731,
+    "sha256": "14deca96b56e7d6a9ed1d0676d60805548122acd73a9b18cb9d966bec0bbd376"
+  },
+  "verification_command": "python verify.py",
+  "verification_cwd": "fresh_directory_extracted_from_final_markdown",
+  "process_exit_code": 0,
+  "reference_verification": {
+    "example_reference_occurrences_checked": 21,
+    "golden_vectors": 10,
+    "jsonschema": "4.26.0",
+    "not_run": [
+      "real_project_regression",
+      "real_pi_probe",
+      "real_model_call",
+      "production_redaction",
+      "G0-G6",
+      "Windows_and_macOS_processes",
+      "budget_ledger",
+      "power_loss_recovery"
+    ],
+    "platform": "linux",
+    "project_acceptance": "NOT_RUN",
+    "python": "3.13.5",
+    "schema_meta_checks": 1,
+    "schema_negative_examples_rejected": 14,
+    "schema_positive_examples": 5,
+    "scope": "offline_synthetic_reference_only",
+    "unique_resource_hash_checks": 15,
+    "unit_tests": {
+      "errors": 0,
+      "failures": 0,
+      "run": 95
+    }
+  },
+  "document_checks": {
+    "utf8_no_bom_lf": true,
+    "balanced_fences": true,
+    "fenced_blocks": 40,
+    "json_blocks_parsed": 16,
+    "jsonl_blocks_parsed": 1,
+    "jsonl_records_parsed": 20,
+    "python_blocks_ast_parsed": 5,
+    "footnotes_checked": 21,
+    "chapter_1_to_9_preserved": true,
+    "section_4_1_to_4_4_preserved": true,
+    "original_acceptance_ids_preserved": 9,
+    "additional_proposed_acceptance_ids": 17,
+    "real_integration_scenarios_not_run": 20,
+    "embedded_files": 26,
+    "byte_identical_extraction": 26,
+    "extractor_synthetic_positive_checks": 1,
+    "extractor_malformed_cases_rejected": 6,
+    "input_files_unchanged_during_generation": 7
+  },
+  "source_files": [
+    {
+      "file": "01-baseline-and-protocols.md",
+      "bytes": 10213,
+      "sha256": "49b880b87c037b00f73de0214c6859d60f268fb10d569f7186d1dae7834b18c2"
+    },
+    {
+      "file": "01-baseline-and-protocols-审阅增强版.md",
+      "bytes": 128737,
+      "sha256": "c5fca7b163d6e8d42f0c79dc0b5d6755c508ec832e8a87f514a294c8a300f42d"
+    },
+    {
+      "file": "02-config-and-profiles.md",
+      "bytes": 8769,
+      "sha256": "9a31440b7002ae0d1acbcb0eff6c1e4b9fd53e380571df5ac52f4e7ee9a0da86"
+    },
+    {
+      "file": "02-config-and-profiles-审阅增强版.md",
+      "bytes": 174441,
+      "sha256": "1cc5adb72e2e6def13897ac259c62717aa39915cffce4be2f1d2136eb346bd1d"
+    },
+    {
+      "file": "03-approvals-and-locks.md",
+      "bytes": 8909,
+      "sha256": "64b6c8cd1bd9fb7a08912b4505c54cd4babd2d7bd3ac4d7b635612499498733e"
+    },
+    {
+      "file": "03-approvals-and-locks-审阅增强版.md",
+      "bytes": 189542,
+      "sha256": "5727ab30e73962fd8a0dfefe3a250885624657bdc91423b0210bbc0b5b26cae2"
+    },
+    {
+      "file": "04-cli-adapters-and-pi.md",
+      "bytes": 8954,
+      "sha256": "0356ca997961c1cb6e78a23e0eb545261fb3634c2848796068e47051deef4320"
+    }
+  ],
+  "extracted_file_fingerprints": [
+    {
+      "path": "records.schema.json",
+      "bytes": 18573,
+      "sha256": "bb861bd1f8a2ea09f94d20fca9b523e5676d47e0363dd9aa302d54dd2e8458a9"
+    },
+    {
+      "path": "record-examples.json",
+      "bytes": 7951,
+      "sha256": "2a54a042b70f174c2f5f6abe5c026a1276c560bc489ff3a921b528e84e836378"
+    },
+    {
+      "path": "adapter_reference.py",
+      "bytes": 26269,
+      "sha256": "579f10c43030a0b152205170d7730008746247d4737bc56a4e0099d46aa96ecd"
+    },
+    {
+      "path": "fixtures.py",
+      "bytes": 3078,
+      "sha256": "6b6f1eb65665f4da2951d12dc040ea18c7b750a653b4e387b86a3e023caa5362"
+    },
+    {
+      "path": "test_reference.py",
+      "bytes": 17340,
+      "sha256": "951369264f451b5161eabd7935aa4615d05d8ce13c3648faf011041fa6c58089"
+    },
+    {
+      "path": "verify.py",
+      "bytes": 4690,
+      "sha256": "70df5050a2094b84031fa679c862fd2edcacc49cf5031143e4641eefadddcdac"
+    },
+    {
+      "path": "extract_reference.py",
+      "bytes": 2776,
+      "sha256": "f1fa1e96e5a146e645d948731eadb8906aff0d0de988807f6ff7c3ca7c427c92"
+    },
+    {
+      "path": "golden-vectors.json",
+      "bytes": 1893,
+      "sha256": "b84b69a259263e4d46bdbc0f1b03c3f0ba0a1ad4de6af8b837604ff9b81d9d8f"
+    },
+    {
+      "path": "resource-refs.json",
+      "bytes": 2835,
+      "sha256": "862477fafe24b08e35c833aafab1bbec8b69956dab399a6edd1f59bbcd2a2485"
+    },
+    {
+      "path": "reference-invocation.json",
+      "bytes": 528,
+      "sha256": "71014c3323f56510bf5a6423f594086a6de675190a14c53182a017f8c9631acb"
+    },
+    {
+      "path": "fixtures/argument-contract.json",
+      "bytes": 61,
+      "sha256": "f95ba5770df8d87a31ea7e4ec4d68b469821df0c1e75b6cdf5bc243a864d1228"
+    },
+    {
+      "path": "fixtures/config.json",
+      "bytes": 47,
+      "sha256": "c12ebc318a892fd9c7c80513fbf65226eb107c54f4baac68037d593270fcec88"
+    },
+    {
+      "path": "fixtures/cwd.json",
+      "bytes": 52,
+      "sha256": "bf3883174222e387cd1eee70bfdc1ba6bf58c063f918cae807341b3f2e9f73e8"
+    },
+    {
+      "path": "fixtures/descriptor.json",
+      "bytes": 1500,
+      "sha256": "c98e6acf0718647e2432c380ed63b94a247e339b3cce0a058706ebf4fa2129a0"
+    },
+    {
+      "path": "fixtures/environment.json",
+      "bytes": 59,
+      "sha256": "fbb64b67472bd695f2a798ae88d71afc46ac1193ab91df68813ea2e682c8076a"
+    },
+    {
+      "path": "fixtures/invocation.json",
+      "bytes": 1815,
+      "sha256": "1bc668b520ca645c50b66c08d281952e3e4f8d9226286fdcd1ad8b1fda48af3c"
+    },
+    {
+      "path": "fixtures/model.schema.json",
+      "bytes": 162,
+      "sha256": "fe1f59dd018fdfeb93eb4f75a67de1dc2dc4c3256d78f1000839109d7399824f"
+    },
+    {
+      "path": "fixtures/options.schema.json",
+      "bytes": 77,
+      "sha256": "d0157ce84790721854763c7480015e84f7cb0c7fde53afb21c3a42908805bf35"
+    },
+    {
+      "path": "fixtures/probe-policy.json",
+      "bytes": 55,
+      "sha256": "20ab30ea0bacddde9c69732c48aaea27d69884fb69472bfbbf57b0173e9fbe48"
+    },
+    {
+      "path": "fixtures/raw-manifest.json",
+      "bytes": 227,
+      "sha256": "7658f4061d84ea26b11bae9c049065ade7665f7df682569a45080ea28394f78a"
+    },
+    {
+      "path": "fixtures/report.txt",
+      "bytes": 16,
+      "sha256": "f564fbd0f834ef2173c4a3f45d84b1deb19a4f06e510a91b938d0cfb8f5b6064"
+    },
+    {
+      "path": "fixtures/request.txt",
+      "bytes": 36,
+      "sha256": "d94eb23c85f478d794ddca34db7cb1b5022737f1cbfd0ce2a7dc18e51f13ccc7"
+    },
+    {
+      "path": "fixtures/resource-policy.json",
+      "bytes": 45,
+      "sha256": "65e017577f8cba1b94374bcc24066336ce843ebd802cdd73240cfa73d5b8193e"
+    },
+    {
+      "path": "fixtures/synthetic-stream.jsonl",
+      "bytes": 3133,
+      "sha256": "825c552d7009d4387c4841cbcd53938680d43543c302ee4a0c7ccdd0ea9e9ca9"
+    },
+    {
+      "path": "README.txt",
+      "bytes": 2254,
+      "sha256": "4074680094971f13d49d9c3cfaf8bfb61589f2c91a0a39f3da98d9cd65177721"
+    },
+    {
+      "path": "requirements-schema.txt",
+      "bytes": 19,
+      "sha256": "756cc9e506ae4ee1a6f6c0507088b5cfc0dc8ba350fb2d2d46f1ffa72033adb6"
+    }
+  ],
+  "research_limitations": {
+    "upstream_docs": "mutable main, documentation observations only",
+    "upstream_fixed_commit_obtained": false,
+    "local_pi_version_verified": false
+  },
+  "additional_not_run": [
+    "real_03_05_07_integration",
+    "real_protocol_before_after_differential",
+    "protected_core_migration",
+    "second_cli_integration",
+    "performance_measurement",
+    "real_billing"
+  ],
+  "notes": [
+    "Synthetic test pass is not real Pi compatibility or project acceptance.",
+    "Schema examples pass structural validation only, not all domain or authorization checks.",
+    "No real Pi/model process, credential resolution, package installation, or project modification was performed."
+  ]
+}

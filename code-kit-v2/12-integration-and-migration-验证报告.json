@@ -1,0 +1,255 @@
+{
+  "record_type": "offline-reference-verification",
+  "compiled_for_document_date": "2026-09-26",
+  "observed_at_utc": "2026-09-25T20:35:05.959904+00:00",
+  "provenance": "current-container synthetic fixtures; not target-project acceptance",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "sqlite": "3.46.1",
+    "jsonschema": "4.26.0"
+  },
+  "tests": {
+    "run": 80,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "groups": {
+      "AggregationTests": 28,
+      "BundleTests": 11,
+      "InventorySchemaTests": 8,
+      "LedgerTests": 16,
+      "ProtocolTests": 17
+    },
+    "passed": 80,
+    "case_ids": [
+      "test_reference.AggregationTests.test_changed_environment",
+      "test_reference.AggregationTests.test_changed_target",
+      "test_reference.AggregationTests.test_dropped_case_selection",
+      "test_reference.AggregationTests.test_duplicate_catalog_case",
+      "test_reference.AggregationTests.test_empty_required",
+      "test_reference.AggregationTests.test_explicit_failure_resolution",
+      "test_reference.AggregationTests.test_failure_visible",
+      "test_reference.AggregationTests.test_missing_case_not_pass",
+      "test_reference.AggregationTests.test_missing_evidence",
+      "test_reference.AggregationTests.test_no_observations",
+      "test_reference.AggregationTests.test_no_trusted_receipt",
+      "test_reference.AggregationTests.test_optional_not_required_total",
+      "test_reference.AggregationTests.test_prior_failure_blocks_selected_pass",
+      "test_reference.AggregationTests.test_receipt_bytes_mismatch",
+      "test_reference.AggregationTests.test_same_family_not_heterogeneous",
+      "test_reference.AggregationTests.test_same_id_conflict",
+      "test_reference.AggregationTests.test_same_record_replay",
+      "test_reference.AggregationTests.test_selected_missing_record",
+      "test_reference.AggregationTests.test_selected_wrong_case",
+      "test_reference.AggregationTests.test_simulated_complete_not_dispatch",
+      "test_reference.AggregationTests.test_skip_does_not_pass",
+      "test_reference.AggregationTests.test_synthetic_not_native",
+      "test_reference.AggregationTests.test_synthetic_not_real_cli",
+      "test_reference.AggregationTests.test_unknown_record",
+      "test_reference.AggregationTests.test_waiver_does_not_pass",
+      "test_reference.AggregationTests.test_windows_mock_not_native",
+      "test_reference.AggregationTests.test_wrong_kind",
+      "test_reference.AggregationTests.test_wsl_not_native_windows",
+      "test_reference.BundleTests.test_boolean_size",
+      "test_reference.BundleTests.test_bundle_ok",
+      "test_reference.BundleTests.test_casefold_collision",
+      "test_reference.BundleTests.test_duplicate_path",
+      "test_reference.BundleTests.test_entry_order",
+      "test_reference.BundleTests.test_missing_payload",
+      "test_reference.BundleTests.test_modified_bytes",
+      "test_reference.BundleTests.test_nfc_collision",
+      "test_reference.BundleTests.test_omitted_entry",
+      "test_reference.BundleTests.test_ref_rehash_cannot_override_expected",
+      "test_reference.BundleTests.test_undeclared_payload",
+      "test_reference.InventorySchemaTests.test_history_changed",
+      "test_reference.InventorySchemaTests.test_history_missing",
+      "test_reference.InventorySchemaTests.test_history_unchanged_with_planned_add",
+      "test_reference.InventorySchemaTests.test_history_unplanned",
+      "test_reference.InventorySchemaTests.test_original_requirements_unique_and_not_run",
+      "test_reference.InventorySchemaTests.test_schema_and_samples",
+      "test_reference.InventorySchemaTests.test_schema_nested_unknown",
+      "test_reference.InventorySchemaTests.test_schema_unknown_fields",
+      "test_reference.LedgerTests.test_boolean_generation",
+      "test_reference.LedgerTests.test_cas_and_history",
+      "test_reference.LedgerTests.test_guard_false",
+      "test_reference.LedgerTests.test_guard_unknown",
+      "test_reference.LedgerTests.test_idempotent_repeat",
+      "test_reference.LedgerTests.test_key_conflict",
+      "test_reference.LedgerTests.test_old_replay_does_not_reactivate",
+      "test_reference.LedgerTests.test_online_backup_fixture",
+      "test_reference.LedgerTests.test_precommit_failure_rolls_back",
+      "test_reference.LedgerTests.test_reopen_retains_selection",
+      "test_reference.LedgerTests.test_response_loss_recovers_same_operation",
+      "test_reference.LedgerTests.test_rollback_is_new_generation",
+      "test_reference.LedgerTests.test_stale_generation",
+      "test_reference.LedgerTests.test_two_connections_one_winner",
+      "test_reference.LedgerTests.test_two_connections_same_key_once",
+      "test_reference.LedgerTests.test_user_edit_blocks_rollback",
+      "test_reference.ProtocolTests.test_bom",
+      "test_reference.ProtocolTests.test_brackets_inside_string",
+      "test_reference.ProtocolTests.test_depth",
+      "test_reference.ProtocolTests.test_duplicate_escaped_key",
+      "test_reference.ProtocolTests.test_float_is_out_of_reference_scope",
+      "test_reference.ProtocolTests.test_golden_vectors",
+      "test_reference.ProtocolTests.test_integer_bound",
+      "test_reference.ProtocolTests.test_invalid_utf8",
+      "test_reference.ProtocolTests.test_nan_rejected",
+      "test_reference.ProtocolTests.test_newline_hash_difference",
+      "test_reference.ProtocolTests.test_nonstring_key",
+      "test_reference.ProtocolTests.test_path_restrictions",
+      "test_reference.ProtocolTests.test_path_unicode_preserved",
+      "test_reference.ProtocolTests.test_roundtrip",
+      "test_reference.ProtocolTests.test_second_document",
+      "test_reference.ProtocolTests.test_size",
+      "test_reference.ProtocolTests.test_surrogate"
+    ]
+  },
+  "schemas": {
+    "meta_validated": 1,
+    "record_families": 4,
+    "positive_samples": 4,
+    "unknown_field_negative_samples": 5,
+    "note": "Shape only; migration sample refs are fixtures, not a valid authorization chain."
+  },
+  "golden_vectors": {
+    "verified": 10
+  },
+  "synthetic_resources": {
+    "verified": 3
+  },
+  "demo_coverage": {
+    "evidence_readiness": "PARTIAL",
+    "required_total": 3,
+    "required_passed": 1,
+    "can_dispatch": false,
+    "cases": [
+      {
+        "case_id": "hetero",
+        "requirement_id": "12-A05",
+        "required": true,
+        "effective_status": "NOT_RUN"
+      },
+      {
+        "case_id": "offline",
+        "requirement_id": "12-A02",
+        "required": true,
+        "effective_status": "PASS"
+      },
+      {
+        "case_id": "windows",
+        "requirement_id": "12-A04",
+        "required": true,
+        "effective_status": "NOT_RUN"
+      }
+    ]
+  },
+  "original_requirement_register": {
+    "requirements": 107,
+    "target_project_status": "NOT_RUN"
+  },
+  "source_documents_verified": [
+    {
+      "file": "01-baseline-and-protocols.md",
+      "sha256": "49b880b87c037b00f73de0214c6859d60f268fb10d569f7186d1dae7834b18c2",
+      "status": "PASS"
+    },
+    {
+      "file": "02-config-and-profiles.md",
+      "sha256": "9a31440b7002ae0d1acbcb0eff6c1e4b9fd53e380571df5ac52f4e7ee9a0da86",
+      "status": "PASS"
+    },
+    {
+      "file": "03-approvals-and-locks.md",
+      "sha256": "64b6c8cd1bd9fb7a08912b4505c54cd4babd2d7bd3ac4d7b635612499498733e",
+      "status": "PASS"
+    },
+    {
+      "file": "04-cli-adapters-and-pi.md",
+      "sha256": "0356ca997961c1cb6e78a23e0eb545261fb3634c2848796068e47051deef4320",
+      "status": "PASS"
+    },
+    {
+      "file": "05-cross-platform-runtime.md",
+      "sha256": "f9cc508af91b4f226025e380e02e353d34ecbd8cda4c5e1db3361e3fd9459bf9",
+      "status": "PASS"
+    },
+    {
+      "file": "06-plugin-manifests-and-locks.md",
+      "sha256": "7b5504e314244b7454833889490c91dc8e5b02fd178076ebf01df79454b85db1",
+      "status": "PASS"
+    },
+    {
+      "file": "07-workflows-and-scheduling.md",
+      "sha256": "d47ce1d62a5c53628c06a4ff753c67128474f7e28c6b0178c1e90017cc41f839",
+      "status": "PASS"
+    },
+    {
+      "file": "08-builtin-task-plugins.md",
+      "sha256": "2dcf577b98de65115adbaab03d4b25942fdd3d1bad89223274fa4f0eed810af7",
+      "status": "PASS"
+    },
+    {
+      "file": "09-planning-and-contracts.md",
+      "sha256": "0b93868c947b1383517a417b9fc6350e3ab44110a8bc0d815be0961b162fecbb",
+      "status": "PASS"
+    },
+    {
+      "file": "10-project-state-and-brief.md",
+      "sha256": "d48243838d932054a29ccd68c1143165b6c09955d42e7dd5025e69b4808fc998",
+      "status": "PASS"
+    },
+    {
+      "file": "11-second-cli-adapter.md",
+      "sha256": "d0c62ad4c99fa33aa2a2a7db3dc07912bcf0a37d7ead0349be5ad0d7b068d72b",
+      "status": "PASS"
+    },
+    {
+      "file": "12-integration-and-migration.md",
+      "sha256": "cf81922e6f248fcc6c3c0bfdfa7963b9d9d7bb0475ef8dda8c0d664fa4156959",
+      "status": "PASS"
+    }
+  ],
+  "not_run": [
+    "target repository tests/test_dispatch.py",
+    "real G0-G6 and module integration",
+    "native Windows/macOS/WSL runtime acceptance",
+    "actual Pi or second CLI/model call",
+    "production migration, credentials, permissions, budget or rollback",
+    "power loss, OS process termination, actual CI pipeline",
+    "optional Observer end-to-end disabled-mode check"
+  ],
+  "not_implemented": [
+    "trusted collector authentication and receipt issuance",
+    "production requirement-catalog compilation and approval",
+    "filesystem/archive secure extraction",
+    "real config/multiple-file cutover and maintenance barrier",
+    "cross-store backup checkpoint and revocation replay",
+    "production migration-plan semantics"
+  ],
+  "test_output": "test_changed_environment (test_reference.AggregationTests.test_changed_environment) ... ok\ntest_changed_target (test_reference.AggregationTests.test_changed_target) ... ok\ntest_dropped_case_selection (test_reference.AggregationTests.test_dropped_case_selection) ... ok\ntest_duplicate_catalog_case (test_reference.AggregationTests.test_duplicate_catalog_case) ... ok\ntest_empty_required (test_reference.AggregationTests.test_empty_required) ... ok\ntest_explicit_failure_resolution (test_reference.AggregationTests.test_explicit_failure_resolution) ... ok\ntest_failure_visible (test_reference.AggregationTests.test_failure_visible) ... ok\ntest_missing_case_not_pass (test_reference.AggregationTests.test_missing_case_not_pass) ... ok\ntest_missing_evidence (test_reference.AggregationTests.test_missing_evidence) ... ok\ntest_no_observations (test_reference.AggregationTests.test_no_observations) ... ok\ntest_no_trusted_receipt (test_reference.AggregationTests.test_no_trusted_receipt) ... ok\ntest_optional_not_required_total (test_reference.AggregationTests.test_optional_not_required_total) ... ok\ntest_prior_failure_blocks_selected_pass (test_reference.AggregationTests.test_prior_failure_blocks_selected_pass) ... ok\ntest_receipt_bytes_mismatch (test_reference.AggregationTests.test_receipt_bytes_mismatch) ... ok\ntest_same_family_not_heterogeneous (test_reference.AggregationTests.test_same_family_not_heterogeneous) ... ok\ntest_same_id_conflict (test_reference.AggregationTests.test_same_id_conflict) ... ok\ntest_same_record_replay (test_reference.AggregationTests.test_same_record_replay) ... ok\ntest_selected_missing_record (test_reference.AggregationTests.test_selected_missing_record) ... ok\ntest_selected_wrong_case (test_reference.AggregationTests.test_selected_wrong_case) ... ok\ntest_simulated_complete_not_dispatch (test_reference.AggregationTests.test_simulated_complete_not_dispatch) ... ok\ntest_skip_does_not_pass (test_reference.AggregationTests.test_skip_does_not_pass) ... ok\ntest_synthetic_not_native (test_reference.AggregationTests.test_synthetic_not_native) ... ok\ntest_synthetic_not_real_cli (test_reference.AggregationTests.test_synthetic_not_real_cli) ... ok\ntest_unknown_record (test_reference.AggregationTests.test_unknown_record) ... ok\ntest_waiver_does_not_pass (test_reference.AggregationTests.test_waiver_does_not_pass) ... ok\ntest_windows_mock_not_native (test_reference.AggregationTests.test_windows_mock_not_native) ... ok\ntest_wrong_kind (test_reference.AggregationTests.test_wrong_kind) ... ok\ntest_wsl_not_native_windows (test_reference.AggregationTests.test_wsl_not_native_windows) ... ok\ntest_boolean_size (test_reference.BundleTests.test_boolean_size) ... ok\ntest_bundle_ok (test_reference.BundleTests.test_bundle_ok) ... ok\ntest_casefold_collision (test_reference.BundleTests.test_casefold_collision) ... ok\ntest_duplicate_path (test_reference.BundleTests.test_duplicate_path) ... ok\ntest_entry_order (test_reference.BundleTests.test_entry_order) ... ok\ntest_missing_payload (test_reference.BundleTests.test_missing_payload) ... ok\ntest_modified_bytes (test_reference.BundleTests.test_modified_bytes) ... ok\ntest_nfc_collision (test_reference.BundleTests.test_nfc_collision) ... ok\ntest_omitted_entry (test_reference.BundleTests.test_omitted_entry) ... ok\ntest_ref_rehash_cannot_override_expected (test_reference.BundleTests.test_ref_rehash_cannot_override_expected) ... ok\ntest_undeclared_payload (test_reference.BundleTests.test_undeclared_payload) ... ok\ntest_history_changed (test_reference.InventorySchemaTests.test_history_changed) ... ok\ntest_history_missing (test_reference.InventorySchemaTests.test_history_missing) ... ok\ntest_history_unchanged_with_planned_add (test_reference.InventorySchemaTests.test_history_unchanged_with_planned_add) ... ok\ntest_history_unplanned (test_reference.InventorySchemaTests.test_history_unplanned) ... ok\ntest_original_requirements_unique_and_not_run (test_reference.InventorySchemaTests.test_original_requirements_unique_and_not_run) ... ok\ntest_schema_and_samples (test_reference.InventorySchemaTests.test_schema_and_samples) ... ok\ntest_schema_nested_unknown (test_reference.InventorySchemaTests.test_schema_nested_unknown) ... ok\ntest_schema_unknown_fields (test_reference.InventorySchemaTests.test_schema_unknown_fields) ... ok\ntest_boolean_generation (test_reference.LedgerTests.test_boolean_generation) ... ok\ntest_cas_and_history (test_reference.LedgerTests.test_cas_and_history) ... ok\ntest_guard_false (test_reference.LedgerTests.test_guard_false) ... ok\ntest_guard_unknown (test_reference.LedgerTests.test_guard_unknown) ... ok\ntest_idempotent_repeat (test_reference.LedgerTests.test_idempotent_repeat) ... ok\ntest_key_conflict (test_reference.LedgerTests.test_key_conflict) ... ok\ntest_old_replay_does_not_reactivate (test_reference.LedgerTests.test_old_replay_does_not_reactivate) ... ok\ntest_online_backup_fixture (test_reference.LedgerTests.test_online_backup_fixture) ... ok\ntest_precommit_failure_rolls_back (test_reference.LedgerTests.test_precommit_failure_rolls_back) ... ok\ntest_reopen_retains_selection (test_reference.LedgerTests.test_reopen_retains_selection) ... ok\ntest_response_loss_recovers_same_operation (test_reference.LedgerTests.test_response_loss_recovers_same_operation) ... ok\ntest_rollback_is_new_generation (test_reference.LedgerTests.test_rollback_is_new_generation) ... ok\ntest_stale_generation (test_reference.LedgerTests.test_stale_generation) ... ok\ntest_two_connections_one_winner (test_reference.LedgerTests.test_two_connections_one_winner) ... ok\ntest_two_connections_same_key_once (test_reference.LedgerTests.test_two_connections_same_key_once) ... ok\ntest_user_edit_blocks_rollback (test_reference.LedgerTests.test_user_edit_blocks_rollback) ... ok\ntest_bom (test_reference.ProtocolTests.test_bom) ... ok\ntest_brackets_inside_string (test_reference.ProtocolTests.test_brackets_inside_string) ... ok\ntest_depth (test_reference.ProtocolTests.test_depth) ... ok\ntest_duplicate_escaped_key (test_reference.ProtocolTests.test_duplicate_escaped_key) ... ok\ntest_float_is_out_of_reference_scope (test_reference.ProtocolTests.test_float_is_out_of_reference_scope) ... ok\ntest_golden_vectors (test_reference.ProtocolTests.test_golden_vectors) ... ok\ntest_integer_bound (test_reference.ProtocolTests.test_integer_bound) ... ok\ntest_invalid_utf8 (test_reference.ProtocolTests.test_invalid_utf8) ... ok\ntest_nan_rejected (test_reference.ProtocolTests.test_nan_rejected) ... ok\ntest_newline_hash_difference (test_reference.ProtocolTests.test_newline_hash_difference) ... ok\ntest_nonstring_key (test_reference.ProtocolTests.test_nonstring_key) ... ok\ntest_path_restrictions (test_reference.ProtocolTests.test_path_restrictions) ... ok\ntest_path_unicode_preserved (test_reference.ProtocolTests.test_path_unicode_preserved) ... ok\ntest_roundtrip (test_reference.ProtocolTests.test_roundtrip) ... ok\ntest_second_document (test_reference.ProtocolTests.test_second_document) ... ok\ntest_size (test_reference.ProtocolTests.test_size) ... ok\ntest_surrogate (test_reference.ProtocolTests.test_surrogate) ... ok\n\n----------------------------------------------------------------------\nRan 80 tests in 0.074s\n\nOK\n",
+  "final_document": {
+    "path": "12-integration-and-migration-审阅增强版.md",
+    "sha256": "7123ce12c28a7945610b203ff325ba8a9310a790ff0c2fc1d62891ec696794ed",
+    "bytes": 199595,
+    "physical_lines": 3569
+  },
+  "document_validation": {
+    "extracted_files": 15,
+    "byte_equal": true,
+    "code_blocks": {
+      "text": 12,
+      "yaml": 1,
+      "sql": 1,
+      "python": 4,
+      "json": 9
+    },
+    "resolved_footnotes": 25,
+    "original_nonempty_lines_retained": true,
+    "sections_retained": 9,
+    "original_acceptance_items_retained": 9,
+    "new_acceptance_items": 20,
+    "not_run_integration_scenarios": 36
+  },
+  "tested_from": "15 named files re-extracted from the final Markdown; byte equality verified"
+}

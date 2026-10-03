@@ -1,0 +1,296 @@
+{
+  "record_type": "reference-verification-report",
+  "schema_version": 1,
+  "scope": "OFFLINE_REFERENCE_ONLY",
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "sqlite": "3.46.1",
+    "jsonschema": "4.26.0",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "journal_mode_tested": "DELETE"
+  },
+  "commands": [
+    "python verify.py",
+    "python -m unittest discover -s tests -v"
+  ],
+  "production_not_run": [
+    "Original project tests/test_dispatch.py",
+    "Actual Git baselines and authorization",
+    "Real approvals and G0-G6",
+    "03/04/05/06/09/10 production wiring",
+    "Pi or any other real model/provider calls",
+    "Real account billing and hidden provider calls",
+    "Native Windows/macOS/WSL behavior",
+    "OS crash/power-loss/process-recovery tests",
+    "WAL backend and distributed scheduling",
+    "Production cases F01-F30"
+  ],
+  "reference_not_implemented": [
+    "Real authorization, artifact trust, Git validation, and baseline adoption",
+    "Complete task-stage orchestrator and multi-run role accounting",
+    "Automatic schema-subtyping or workflow pointer mapping",
+    "R/W hierarchical lock compiler and pairwise independence approvals",
+    "Production provider alias merging and invoice allocation",
+    "Resume, live budget amendment, real process handoff, or recovery adoption"
+  ],
+  "schemas": {
+    "meta_validated": 2,
+    "workflow_topology": [
+      "alpha",
+      "beta"
+    ]
+  },
+  "structural_records": {
+    "positive": 5,
+    "unknown_field_rejections": 5
+  },
+  "golden_vectors": {
+    "passed": 10,
+    "source": "self-authored synthetic vectors"
+  },
+  "resource_hashes": {
+    "passed": 12
+  },
+  "tests": {
+    "run": 82,
+    "passed": 82,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed_test_ids": [
+      "test_reference.ContractTests.test_01_workflow_valid",
+      "test_reference.ContractTests.test_02_topology_not_list_order",
+      "test_reference.ContractTests.test_03_duplicate_nodes",
+      "test_reference.ContractTests.test_04_missing_dependency",
+      "test_reference.ContractTests.test_05_cycle",
+      "test_reference.ContractTests.test_06_self_edge",
+      "test_reference.ContractTests.test_07_duplicate_edge",
+      "test_reference.ContractTests.test_08_missing_required_port",
+      "test_reference.ContractTests.test_09_absent_optional_port",
+      "test_reference.ContractTests.test_10_binding_requires_edge",
+      "test_reference.ContractTests.test_11_missing_export",
+      "test_reference.ContractTests.test_12_schema_drift",
+      "test_reference.ContractTests.test_13_stage_cycle",
+      "test_reference.ContractTests.test_14_check_before_freeze_rejected",
+      "test_reference.ContractTests.test_15_verdict_requires_all_checks",
+      "test_reference.ContractTests.test_16_unknown_stage_export",
+      "test_reference.ContractTests.test_17_unknown_fields",
+      "test_reference.ContractTests.test_18_unknown_schema_version",
+      "test_reference.ContractTests.test_19_schema_meta_validation",
+      "test_reference.ContractTests.test_20_structural_record_examples",
+      "test_reference.ContractTests.test_21_duplicate_json_key",
+      "test_reference.ContractTests.test_22_nonfinite",
+      "test_reference.ContractTests.test_23_bom_and_encoding",
+      "test_reference.ContractTests.test_24_depth_and_size_limits",
+      "test_reference.ContractTests.test_25_non_scalar_unicode",
+      "test_reference.ContractTests.test_26_trailing_document",
+      "test_reference.ContractTests.test_27_floats_not_accepted_as_counts",
+      "test_reference.ContractTests.test_28_canonical_vectors",
+      "test_reference.ContractTests.test_29_unicode_not_normalized",
+      "test_reference.ContractTests.test_30_safe_path",
+      "test_reference.ContractTests.test_31_path_prefix_segments",
+      "test_reference.ContractTests.test_32_refinable_not_executable",
+      "test_reference.ContractTests.test_33_no_baseline_no_refinement",
+      "test_reference.ContractTests.test_34_no_upstream_acceptance",
+      "test_reference.ContractTests.test_35_missing_authorized_baseline",
+      "test_reference.ContractTests.test_36_readiness_requires_all_guards",
+      "test_reference.ContractTests.test_37_untyped_facts_rejected",
+      "test_reference.ContractTests.test_38_money_exact_units",
+      "test_reference.ContractTests.test_39_money_rejects_rounding_and_formats",
+      "test_reference.ContractTests.test_40_pointer_escaping",
+      "test_reference.ContractTests.test_41_pointer_missing_not_null",
+      "test_reference.ContractTests.test_42_resources_raw_byte_hashes",
+      "test_reference.LedgerTests.test_43_idempotent_claim",
+      "test_reference.LedgerTests.test_44_idempotency_conflict",
+      "test_reference.LedgerTests.test_45_active_across_plan_versions",
+      "test_reference.LedgerTests.test_46_parallel_reservation_does_not_oversubscribe",
+      "test_reference.LedgerTests.test_47_partial_usage_does_not_double_count_hold",
+      "test_reference.LedgerTests.test_48_final_releases_unused_reservation",
+      "test_reference.LedgerTests.test_49_unknown_finished_retains_hold_and_stops",
+      "test_reference.LedgerTests.test_50_explicit_unknown_not_zero",
+      "test_reference.LedgerTests.test_51_usage_replay_not_new_charge",
+      "test_reference.LedgerTests.test_52_same_revision_changed_amount_conflict",
+      "test_reference.LedgerTests.test_53_late_correction_replaces_does_not_sum",
+      "test_reference.LedgerTests.test_54_decrease_requires_correction",
+      "test_reference.LedgerTests.test_55_old_observation_does_not_replace_current",
+      "test_reference.LedgerTests.test_56_overrun_recorded_even_over_limit",
+      "test_reference.LedgerTests.test_57_stop_still_accepts_late_usage",
+      "test_reference.LedgerTests.test_58_unstarted_cancellation_releases_hold",
+      "test_reference.LedgerTests.test_59_handoff_cannot_be_claimed_unstarted",
+      "test_reference.LedgerTests.test_60_start_unknown_retains_resources",
+      "test_reference.LedgerTests.test_61_epoch_fences_previous_controller",
+      "test_reference.LedgerTests.test_62_lease_expiry_not_automatic_release",
+      "test_reference.LedgerTests.test_63_lease_renewal",
+      "test_reference.LedgerTests.test_64_guard_rechecked_at_handoff",
+      "test_reference.LedgerTests.test_65_finish_does_not_accept",
+      "test_reference.LedgerTests.test_66_changed_candidate_cannot_inherit_verdict",
+      "test_reference.LedgerTests.test_67_retry_accumulates_same_request",
+      "test_reference.LedgerTests.test_68_attempt_limit_survives_new_plan",
+      "test_reference.LedgerTests.test_69_claim_transaction_rollback",
+      "test_reference.LedgerTests.test_70_reopen_preserves_idempotency",
+      "test_reference.LedgerTests.test_71_conflicts_cross_request",
+      "test_reference.LedgerTests.test_72_subbudget_cannot_exceed_root",
+      "test_reference.LedgerTests.test_73_task_subbudget_enforced",
+      "test_reference.LedgerTests.test_74_currency_dimensions_not_added",
+      "test_reference.LedgerTests.test_75_provider_key_not_charged_to_two_runs",
+      "test_reference.LedgerTests.test_76_summaries_cannot_write_local_dispatch_count",
+      "test_reference.LedgerTests.test_77_concurrent_same_key_one_claim",
+      "test_reference.LedgerTests.test_78_concurrent_budget_only_one_wins",
+      "test_reference.LedgerTests.test_79_foreign_key_enforced",
+      "test_reference.LedgerTests.test_80_cleanup_unknown_does_not_release_resources",
+      "test_reference.LedgerTests.test_81_duplicate_after_stop_is_fact_not_new_start",
+      "test_reference.LedgerTests.test_82_finite_integer_budget_rejects_bool"
+    ],
+    "failures": [],
+    "log": "unit-tests.log"
+  },
+  "result": "PASS_REFERENCE_ONLY",
+  "source_document": {
+    "name": "07-workflows-and-scheduling.md",
+    "sha256": "d47ce1d62a5c53628c06a4ff753c67128474f7e28c6b0178c1e90017cc41f839"
+  },
+  "final_document": {
+    "name": "07-workflows-and-scheduling-审阅增强版.md",
+    "sha256": "7ba6108be9e5a890e573636b5004fbc6070356d1eadb7fc1ce7a8ae7b072b23a",
+    "bytes": 204322,
+    "lines": 4143
+  },
+  "document_validation": {
+    "named_files_extracted": 24,
+    "byte_equal_files": 24,
+    "python_files_syntax_checked": 5,
+    "json_files_parsed": 18,
+    "markdown_fenced_blocks": 35,
+    "markdown_json_blocks_parsed": 18,
+    "top_level_1_to_9_preserved": true,
+    "section_4_1_to_4_4_preserved": true,
+    "original_acceptance_exact_text_preserved": true,
+    "suggested_acceptance_total": 30,
+    "production_fault_cases_not_run": 30,
+    "footnote_references_resolved": 23,
+    "tested_from_final_markdown_extraction": true
+  },
+  "reference_files": [
+    {
+      "path": "README.md",
+      "sha256": "c82fd79f8fa7b2b8134ffbba4bd0dc4984eaaebe12ae2024114c89a580caf56e",
+      "bytes": 2422
+    },
+    {
+      "path": "extract_markdown.py",
+      "sha256": "957746e632ec507a6921f3930fe63b9ea278c9e01701dd9ab2e8fbc24f2ae4dd",
+      "bytes": 1754
+    },
+    {
+      "path": "fixtures/golden-vectors.json",
+      "sha256": "b21f6cc82a7b6720b4e16d9d9854956948eeb16c987e4ea1d78b2d36c2bfd473",
+      "bytes": 1855
+    },
+    {
+      "path": "fixtures/readiness-facts.json",
+      "sha256": "c86d7758c9072c8d473fc51deb68d742a441e644cd4bb19733d461196c280c7e",
+      "bytes": 282
+    },
+    {
+      "path": "fixtures/records.json",
+      "sha256": "674e667bd5da84e5667fb3a503be38f88c9081788e48a57489492384676d6493",
+      "bytes": 4575
+    },
+    {
+      "path": "fixtures/resource-refs.json",
+      "sha256": "ea3ad8e77eb77d84e4e980f228cf0ac4c1fa7dab4d25143ac67b30fa3bd44759",
+      "bytes": 2258
+    },
+    {
+      "path": "fixtures/workflow.json",
+      "sha256": "5be4b4ddeda301524f643e28c511a6b76fdf6b3ce44f841e7266f49f982d0990",
+      "bytes": 5575
+    },
+    {
+      "path": "ledger_ref.py",
+      "sha256": "1c8874671a4ed68f649403125a407e60212ef5f0a20ff5e5526da764e889c41d",
+      "bytes": 25594
+    },
+    {
+      "path": "records.schema.json",
+      "sha256": "fa44782b87b933b6fe1e3fd62ecf938605f15df05bb9089eb1c57946f4167786",
+      "bytes": 11510
+    },
+    {
+      "path": "resources/budget-policy.json",
+      "sha256": "3e8b58bfca7fe28e178bc465b89c6eb516d3f2730a3511a3a5efedc556f9d660",
+      "bytes": 82
+    },
+    {
+      "path": "resources/candidate.json",
+      "sha256": "8856c2930c89041b2ca3fa59f9b7d0ab584a32c2351a1edd50921553e4f4e0db",
+      "bytes": 107
+    },
+    {
+      "path": "resources/charge-observation.json",
+      "sha256": "38084ee621f1a9cf59f58c6f9541cce4c016695980bdfd9cf6f7ca0d66e89d9e",
+      "bytes": 79
+    },
+    {
+      "path": "resources/check-set.json",
+      "sha256": "0a09f5a1f0e8f9da94f93e5552260b9aec4d06bd06d8112878454ec86411b8b4",
+      "bytes": 55
+    },
+    {
+      "path": "resources/contract.json",
+      "sha256": "a529c199c39687288975a48df54096934c83956221e84cf552cbdbe9c0cc658c",
+      "bytes": 83
+    },
+    {
+      "path": "resources/input.json",
+      "sha256": "480b4bdb7a91084d782eff9acf08e5f526c47fd4f92c88d4876ec3963ba97394",
+      "bytes": 34
+    },
+    {
+      "path": "resources/plugin-lock.json",
+      "sha256": "f3ef33e8ba50eb57de1e09e952d9486bb4876b59bbe819419e2a596da80692a5",
+      "bytes": 227
+    },
+    {
+      "path": "resources/plugin-step.json",
+      "sha256": "8c842840946b7a932cc383af108ae61701fcbcedcda528ea846814476f7585e7",
+      "bytes": 83
+    },
+    {
+      "path": "resources/port.schema.json",
+      "sha256": "32041334ecd468df8ea80609bd06c5914f5e153b44b823baa4ce000496bb203a",
+      "bytes": 268
+    },
+    {
+      "path": "resources/reservation.json",
+      "sha256": "6cdce97603473e72e156c247001eae184c845ef6571f8a0892656da1095bc9c6",
+      "bytes": 56
+    },
+    {
+      "path": "resources/verdict.json",
+      "sha256": "7e4973e3658919783a7be592635c2cda8d4453683a7a164a01cfc5e010a92185",
+      "bytes": 429
+    },
+    {
+      "path": "tests/test_reference.py",
+      "sha256": "5e1abcf3a9f6641cb98b89bab5177216ed94747d44221cc8c94f65ac67e85d58",
+      "bytes": 22293
+    },
+    {
+      "path": "verify.py",
+      "sha256": "09de8e4cd4447da735ef7b2fe0f75be3313c663160457a75e6e19c40b3af48eb",
+      "bytes": 5195
+    },
+    {
+      "path": "workflow.schema.json",
+      "sha256": "15075a4a982d93f9f42f0f07713aae99a913552cddfdfb165b84a7c0da853549",
+      "bytes": 9110
+    },
+    {
+      "path": "workflow_ref.py",
+      "sha256": "2c4609478354a5c3424ac0fe9bad20302a73915f2c92a0e35ce5deb7af600001",
+      "bytes": 11331
+    }
+  ]
+}

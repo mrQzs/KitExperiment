@@ -1,0 +1,721 @@
+{
+  "scope": "synthetic_offline_reference_only",
+  "observed_at_utc": "2026-09-25T09:53:04.897469+00:00",
+  "environment": {
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "python": "3.13.5",
+    "jsonschema": "4.26.0",
+    "referencing": "0.37.0"
+  },
+  "unit_tests": {
+    "run": 100,
+    "passed": 100,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cases": [
+      {
+        "id": "test_reference.ReferenceTests.test_added_unlisted_file_not_loaded",
+        "status": "PASS",
+        "seconds": 0.013879
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_capability_gap",
+        "status": "PASS",
+        "seconds": 0.007018
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_case_collision",
+        "status": "PASS",
+        "seconds": 0.001192
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_catalog_order_determinism",
+        "status": "PASS",
+        "seconds": 0.011779
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_check_common_semantics_in_variant_rejected",
+        "status": "PASS",
+        "seconds": 0.003581
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_check_identity_mismatch",
+        "status": "PASS",
+        "seconds": 0.003588
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_core_reference_drift",
+        "status": "PASS",
+        "seconds": 0.005401
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dangling_check_step",
+        "status": "PASS",
+        "seconds": 0.002484
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dangling_schema_resource",
+        "status": "PASS",
+        "seconds": 0.00238
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_declared_unused_resource_still_locked",
+        "status": "PASS",
+        "seconds": 0.013679
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dependency_conflict",
+        "status": "PASS",
+        "seconds": 0.002508
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dependency_cycle",
+        "status": "PASS",
+        "seconds": 0.003364
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dependency_missing_not_trusted",
+        "status": "PASS",
+        "seconds": 0.002731
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_dependency_platform_coverage",
+        "status": "PASS",
+        "seconds": 0.003359
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_directory_case_collision",
+        "status": "PASS",
+        "seconds": 0.000974
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_directory_link",
+        "status": "PASS",
+        "seconds": 0.001279
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_duplicate_dependency",
+        "status": "PASS",
+        "seconds": 0.002494
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_duplicate_enabled",
+        "status": "PASS",
+        "seconds": 0.001185
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_duplicate_path",
+        "status": "PASS",
+        "seconds": 0.001224
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_duplicate_resource_id",
+        "status": "PASS",
+        "seconds": 0.002357
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_enabled_set_order_determinism",
+        "status": "PASS",
+        "seconds": 0.01194
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_errors_do_not_echo_secret_payload",
+        "status": "PASS",
+        "seconds": 0.001052
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_export_duplicate",
+        "status": "PASS",
+        "seconds": 0.002358
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_fifo_does_not_block",
+        "status": "PASS",
+        "seconds": 0.002213
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_file_directory_collision",
+        "status": "PASS",
+        "seconds": 0.000988
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_file_limit",
+        "status": "PASS",
+        "seconds": 0.001182
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_happy_closure_and_order",
+        "status": "PASS",
+        "seconds": 0.007899
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_hardlink",
+        "status": "PASS",
+        "seconds": 0.002484
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_bom",
+        "status": "PASS",
+        "seconds": 0.000955
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_depth",
+        "status": "PASS",
+        "seconds": 0.000914
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_duplicate",
+        "status": "PASS",
+        "seconds": 0.001097
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_escaped_duplicate",
+        "status": "PASS",
+        "seconds": 0.000929
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_large_integer",
+        "status": "PASS",
+        "seconds": 0.00091
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_nan",
+        "status": "PASS",
+        "seconds": 0.001003
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_overflow",
+        "status": "PASS",
+        "seconds": 0.001133
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_surrogate",
+        "status": "PASS",
+        "seconds": 0.000966
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_trailing_document",
+        "status": "PASS",
+        "seconds": 0.000993
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_json_utf8",
+        "status": "PASS",
+        "seconds": 0.001177
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_link_inside_is_stricter_policy",
+        "status": "PASS",
+        "seconds": 0.002442
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_link_outside",
+        "status": "PASS",
+        "seconds": 0.002889
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_local_schema_pointer_with_slash_escape",
+        "status": "PASS",
+        "seconds": 0.001833
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_lock_roundtrip",
+        "status": "PASS",
+        "seconds": 0.014084
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_lock_single_byte_tamper",
+        "status": "PASS",
+        "seconds": 0.006659
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_manifest_api",
+        "status": "PASS",
+        "seconds": 0.003041
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_manifest_pass",
+        "status": "PASS",
+        "seconds": 0.002713
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_manifest_plugin_code",
+        "status": "PASS",
+        "seconds": 0.002428
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_manifest_unknown",
+        "status": "PASS",
+        "seconds": 0.002477
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_missing_resource",
+        "status": "PASS",
+        "seconds": 0.002343
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_nfc_paths_preserve",
+        "status": "PASS",
+        "seconds": 0.001007
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_no_execution_or_network_imports",
+        "status": "PASS",
+        "seconds": 0.012035
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_no_platform_fallback",
+        "status": "PASS",
+        "seconds": 0.006524
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_offline_cross_schema_positive_negative",
+        "status": "PASS",
+        "seconds": 0.00659
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_one_sided_conflict",
+        "status": "PASS",
+        "seconds": 0.003631
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_absolute",
+        "status": "PASS",
+        "seconds": 0.00101
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_ads",
+        "status": "PASS",
+        "seconds": 0.00092
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_backslash",
+        "status": "PASS",
+        "seconds": 0.000893
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_device",
+        "status": "PASS",
+        "seconds": 0.000891
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_drive",
+        "status": "PASS",
+        "seconds": 0.00089
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_nul",
+        "status": "PASS",
+        "seconds": 0.000989
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_parent",
+        "status": "PASS",
+        "seconds": 0.000888
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_percent",
+        "status": "PASS",
+        "seconds": 0.000853
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_trailing_dot",
+        "status": "PASS",
+        "seconds": 0.000874
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_path_unc",
+        "status": "PASS",
+        "seconds": 0.001243
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_permission_all_four_required",
+        "status": "PASS",
+        "seconds": 0.006738
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_permission_intersection",
+        "status": "PASS",
+        "seconds": 0.006754
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_platform_requires_all_checks",
+        "status": "PASS",
+        "seconds": 0.003794
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_read_drift",
+        "status": "PASS",
+        "seconds": 0.005391
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_rehash_forged_missing_file_rejected",
+        "status": "PASS",
+        "seconds": 0.013145
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_role_gap",
+        "status": "PASS",
+        "seconds": 0.006444
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_root_relocation_changes_lock",
+        "status": "PASS",
+        "seconds": 0.013089
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_dynamic",
+        "status": "PASS",
+        "seconds": 0.001213
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_file_uri",
+        "status": "PASS",
+        "seconds": 0.001143
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_nested_id",
+        "status": "PASS",
+        "seconds": 0.001209
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_pointer_missing",
+        "status": "PASS",
+        "seconds": 0.001142
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_recursion_rejected",
+        "status": "PASS",
+        "seconds": 0.001418
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_ref_annotation_is_data",
+        "status": "PASS",
+        "seconds": 0.001294
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_regex_outside_subset",
+        "status": "PASS",
+        "seconds": 0.001552
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_remote",
+        "status": "PASS",
+        "seconds": 0.00116
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_undeclared_cross_plugin",
+        "status": "PASS",
+        "seconds": 0.00131
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_schema_unknown_keyword",
+        "status": "PASS",
+        "seconds": 0.001106
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_selection_shape_rejected",
+        "status": "PASS",
+        "seconds": 0.000913
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_source_manifest_reordering_changes_hash",
+        "status": "PASS",
+        "seconds": 0.015001
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_step_cycle",
+        "status": "PASS",
+        "seconds": 0.00241
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_attribute",
+        "status": "PASS",
+        "seconds": 0.001116
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_eval",
+        "status": "PASS",
+        "seconds": 0.001962
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_include",
+        "status": "PASS",
+        "seconds": 0.001354
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_missing_input",
+        "status": "PASS",
+        "seconds": 0.001268
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_nonrecursive",
+        "status": "PASS",
+        "seconds": 0.00283
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_output_bound",
+        "status": "PASS",
+        "seconds": 0.001089
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_template_unclosed",
+        "status": "PASS",
+        "seconds": 0.00091
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_total_limit",
+        "status": "PASS",
+        "seconds": 0.002387
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_unselected_catalog_change_unrelated",
+        "status": "PASS",
+        "seconds": 0.012752
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_empty_build",
+        "status": "PASS",
+        "seconds": 0.00107
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_exact_build_metadata",
+        "status": "PASS",
+        "seconds": 0.001327
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_leading_zero",
+        "status": "PASS",
+        "seconds": 0.001061
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_pre_zero",
+        "status": "PASS",
+        "seconds": 0.000915
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_range",
+        "status": "PASS",
+        "seconds": 0.000911
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_short",
+        "status": "PASS",
+        "seconds": 0.000975
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_version_whitespace",
+        "status": "PASS",
+        "seconds": 0.001
+      },
+      {
+        "id": "test_reference.ReferenceTests.test_wrong_identity",
+        "status": "PASS",
+        "seconds": 0.00239
+      }
+    ]
+  },
+  "schema_meta_validations": 2,
+  "structural_negative_cases": [
+    {
+      "id": "manifest_unknown",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "manifest_missing_version",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "manifest_null_resources",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "manifest_runtime_type",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "manifest_unknown_platform",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "manifest_supervisor",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "lock_self_hash",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "lock_bad_file_hash",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "lock_empty_plugins",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "lock_wrong_record",
+      "status": "REJECTED_AS_EXPECTED"
+    },
+    {
+      "id": "lock_null_core_refs",
+      "status": "REJECTED_AS_EXPECTED"
+    }
+  ],
+  "golden_vectors": 10,
+  "resource_byte_hash_checks": 12,
+  "lock_ref_hash_verified": true,
+  "input_output_instance_cases": [
+    {
+      "resource_id": "input",
+      "expected_valid": true,
+      "observed_valid": true
+    },
+    {
+      "resource_id": "output",
+      "expected_valid": true,
+      "observed_valid": true
+    },
+    {
+      "resource_id": "input",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "input",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "input",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "input",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "output",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "output",
+      "expected_valid": false,
+      "observed_valid": false
+    },
+    {
+      "resource_id": "output",
+      "expected_valid": false,
+      "observed_valid": false
+    }
+  ],
+  "python_syntax_files": [
+    "fixtures.py",
+    "plugin_reference.py",
+    "test_reference.py",
+    "verify_reference.py"
+  ],
+  "sample_lock_sha256": "50c3fa957fc5ec932f7d12bba0b0165e0581f2098b12cfdeab0406a86626ca80",
+  "not_run": [
+    "Actual project python tests/test_dispatch.py and unchanged legacy Pi behavior",
+    "Production 02/03/04/05/07 integration, approvals, current authorization, trust catalog publication",
+    "Production CAS/idempotency transactions, pin/GC concurrency, crash or power-loss persistence",
+    "Native Windows/macOS/WSL path and process behavior",
+    "True Pi/Codex/model calls, real plugin checks, G0-G6 and candidate verification",
+    "Hostile same-user writer isolation, atomic multi-file source snapshot, Windows native file handles",
+    "Full JSON Schema 2020-12, recursive schemas, dynamic template engines, full 05 CommandSpec backend"
+  ],
+  "document_validation": {
+    "document_name": "06-plugin-manifests-and-locks-审阅增强版.md",
+    "sha256": "5538a31c8ab7f493664d37f6a1cf82515181e0b3402626ebcb534486d252066b",
+    "size_bytes": 156848,
+    "lines": 2682,
+    "fenced_blocks": 22,
+    "json_blocks_parsed": 7,
+    "python_blocks_syntax_checked": 5,
+    "footnote_definitions": 19,
+    "preserved_acceptance_ids": [
+      "06-A01",
+      "06-A02",
+      "06-A03",
+      "06-A04",
+      "06-A05",
+      "06-A06",
+      "06-A07",
+      "06-A08",
+      "06-A09"
+    ],
+    "extracted_files_count": 12,
+    "extracted_files_byte_identical": true,
+    "extracted_files": [
+      {
+        "name": "manifest.schema.json",
+        "sha256": "41e56db55e0dcab8e42987a1e739ea4b99a2ae2904ffe25a329b9c56dfc52c94",
+        "size_bytes": 6953
+      },
+      {
+        "name": "lock.schema.json",
+        "sha256": "e002f76b70be7776761342d75f7307c766ae20971c281e4ee819c157f2b72d8d",
+        "size_bytes": 5108
+      },
+      {
+        "name": "sample.manifest.json",
+        "sha256": "c42dbb50903eaa31f8cdafe7d7adf55f5b0b0363b30c7c68d03af35b0ab346db",
+        "size_bytes": 1542
+      },
+      {
+        "name": "sample.plugin-lock.json",
+        "sha256": "50c3fa957fc5ec932f7d12bba0b0165e0581f2098b12cfdeab0406a86626ca80",
+        "size_bytes": 2472
+      },
+      {
+        "name": "sample-lock.ref.json",
+        "sha256": "69c19c5dfcce8bec66242e0e14e79ee4a47fdb41a1a1515e35576648b783cf0f",
+        "size_bytes": 178
+      },
+      {
+        "name": "plugin_reference.py",
+        "sha256": "5f1f97d873a8bf6bf35e0670da25b483f3b29624f07124b381a64af85176b7e2",
+        "size_bytes": 23225
+      },
+      {
+        "name": "fixtures.py",
+        "sha256": "c2a6d9c661f4299d4a37e6e014ae5d265c86e8c2b717e65fabe768b902c96fcf",
+        "size_bytes": 4020
+      },
+      {
+        "name": "test_reference.py",
+        "sha256": "fd91bf0f8498a45d03e6ec0f3bf54c2d28fa4574abbb1be6f0e3f2f5215d4ab7",
+        "size_bytes": 15785
+      },
+      {
+        "name": "verify_reference.py",
+        "sha256": "a64b85ead4437a71a18410f758558e66b2a067518dc7a9def859f2a2bb3c28da",
+        "size_bytes": 7448
+      },
+      {
+        "name": "golden-vectors.json",
+        "sha256": "9439a474ab655b6cee3dc1c679cb94b89bf3936e8c8108e540aa6bb9f67aed07",
+        "size_bytes": 2008
+      },
+      {
+        "name": "provenance.json",
+        "sha256": "5c928a11b8b3e86457e51aaf40d12e2f18167440033121092e9dee978366829f",
+        "size_bytes": 479
+      },
+      {
+        "name": "README.md",
+        "sha256": "6d1df58fa3c3993694501856b88eb2d95055cd734a4df67ba83466d247ed0823",
+        "size_bytes": 1886
+      }
+    ]
+  },
+  "source_document": {
+    "name": "06-plugin-manifests-and-locks.md",
+    "sha256": "7b5504e314244b7454833889490c91dc8e5b02fd178076ebf01df79454b85db1"
+  }
+}

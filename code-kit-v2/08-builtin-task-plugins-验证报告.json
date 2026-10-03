@@ -1,0 +1,343 @@
+{
+  "record_type": "module08-reference-verification",
+  "schema_version": 1,
+  "scope": "hand-authored offline reference, not production acceptance",
+  "recorded_at": "2026-09-25T12:22:57.463606+00:00",
+  "environment": {
+    "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "system": "Linux",
+    "machine": "x86_64",
+    "jsonschema": "4.26.0",
+    "markdown-it-py": "4.2.0"
+  },
+  "status": "PASSED_REFERENCE_ONLY",
+  "checks": {
+    "schema": {
+      "meta_validated": 3,
+      "structural_positive": 10,
+      "artifact_positive": 8,
+      "negative_rejected": 9,
+      "not_domain_validated": true
+    },
+    "syntax": {
+      "json_files": 16,
+      "python_files": 5
+    },
+    "resource_hashes": {
+      "passed": 7,
+      "failed": 0
+    },
+    "golden_vectors": {
+      "passed": 10,
+      "failed": 0
+    },
+    "recipes": {
+      "catalog_entries": 7,
+      "flows": {
+        "bugfix": [
+          "analyze",
+          "change",
+          "freeze",
+          "check",
+          "review"
+        ],
+        "documentation": [
+          "analyze",
+          "change",
+          "freeze",
+          "check",
+          "review"
+        ],
+        "regression": [
+          "analyze",
+          "change",
+          "freeze",
+          "check",
+          "review"
+        ]
+      },
+      "compatible_with_existing_06_07_schema": false
+    },
+    "unittest": {
+      "run": 99,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "synthetic_process_test_methods": 6,
+      "other_test_methods": 93,
+      "test_ids": [
+        "test_reference.Documentation.test_automatic_heading_anchor_not_claimed",
+        "test_reference.Documentation.test_backslash_rejected",
+        "test_reference.Documentation.test_broken_link",
+        "test_reference.Documentation.test_dangerous_scheme_rejected",
+        "test_reference.Documentation.test_double_decode_not_performed",
+        "test_reference.Documentation.test_duplicate_anchor_rejected",
+        "test_reference.Documentation.test_encoded_parent_escape_rejected",
+        "test_reference.Documentation.test_external_not_verified",
+        "test_reference.Documentation.test_fenced_example_not_link",
+        "test_reference.Documentation.test_good_explicit_anchor",
+        "test_reference.Documentation.test_image_target_checked",
+        "test_reference.Documentation.test_inline_code_not_link",
+        "test_reference.Documentation.test_local_query_not_silently_stripped",
+        "test_reference.Documentation.test_parent_inside_repo_is_valid",
+        "test_reference.Documentation.test_parent_outside_repo_rejected",
+        "test_reference.Documentation.test_raw_html_href_checked",
+        "test_reference.Documentation.test_reference_style_link",
+        "test_reference.Documentation.test_unknown_html_not_silently_ignored",
+        "test_reference.Documentation.test_url_encoded_space",
+        "test_reference.Documentation.test_wrong_content_can_pass_links_and_fail_review",
+        "test_reference.JsonAndResources.test_array_order_preserved",
+        "test_reference.JsonAndResources.test_dictionary_order",
+        "test_reference.JsonAndResources.test_golden_vectors",
+        "test_reference.JsonAndResources.test_portable_case_collision",
+        "test_reference.JsonAndResources.test_portable_unicode_collision",
+        "test_reference.JsonAndResources.test_ref_hash_drift",
+        "test_reference.JsonAndResources.test_reject_json_bom",
+        "test_reference.JsonAndResources.test_reject_json_duplicate",
+        "test_reference.JsonAndResources.test_reject_json_escaped_duplicate",
+        "test_reference.JsonAndResources.test_reject_json_float",
+        "test_reference.JsonAndResources.test_reject_json_invalid_utf8",
+        "test_reference.JsonAndResources.test_reject_json_nan",
+        "test_reference.JsonAndResources.test_reject_json_overflow",
+        "test_reference.JsonAndResources.test_reject_json_second_document",
+        "test_reference.JsonAndResources.test_reject_json_surrogate",
+        "test_reference.JsonAndResources.test_reject_json_unsafe_integer",
+        "test_reference.JsonAndResources.test_reject_path_absolute",
+        "test_reference.JsonAndResources.test_reject_path_backslash",
+        "test_reference.JsonAndResources.test_reject_path_drive",
+        "test_reference.JsonAndResources.test_reject_path_empty_segment",
+        "test_reference.JsonAndResources.test_reject_path_nul",
+        "test_reference.JsonAndResources.test_reject_path_traversal",
+        "test_reference.JsonAndResources.test_round_trip_chinese",
+        "test_reference.JsonAndResources.test_snapshot_copy",
+        "test_reference.JsonAndResources.test_source_anchor_utf8_byte_range",
+        "test_reference.JsonAndResources.test_source_anchor_wrong_excerpt",
+        "test_reference.JsonAndResources.test_unicode_not_normalized",
+        "test_reference.ReviewAndCountertest.test_assertion_with_success_exit_is_conflict",
+        "test_reference.ReviewAndCountertest.test_assertion_with_unknown_exit_is_conflict",
+        "test_reference.ReviewAndCountertest.test_changed_candidate_rejected",
+        "test_reference.ReviewAndCountertest.test_checks_only_ready_for_review_not_pass",
+        "test_reference.ReviewAndCountertest.test_duplicate_check_rejected",
+        "test_reference.ReviewAndCountertest.test_error_not_a_kill",
+        "test_reference.ReviewAndCountertest.test_flaky_repeats_not_best_of",
+        "test_reference.ReviewAndCountertest.test_incomplete_transport_rejected",
+        "test_reference.ReviewAndCountertest.test_missing_content_review_rejected",
+        "test_reference.ReviewAndCountertest.test_missing_core_gates_rejected",
+        "test_reference.ReviewAndCountertest.test_missing_repeat_is_incomplete",
+        "test_reference.ReviewAndCountertest.test_no_mutation_evidence_rejected",
+        "test_reference.ReviewAndCountertest.test_reference_failure_invalidates_pair",
+        "test_reference.ReviewAndCountertest.test_self_report_rejected",
+        "test_reference.ReviewAndCountertest.test_skipped_target_rejected",
+        "test_reference.ReviewAndCountertest.test_suite_change_incomparable",
+        "test_reference.ReviewAndCountertest.test_target_assertion_detected",
+        "test_reference.ReviewAndCountertest.test_timeout_not_a_kill",
+        "test_reference.ReviewAndCountertest.test_unrelated_assertion_not_a_kill",
+        "test_reference.ReviewAndCountertest.test_vacuous_test_survives",
+        "test_reference.ReviewAndCountertest.test_xfail_target_rejected",
+        "test_reference.ReviewAndCountertest.test_zero_tests_rejected",
+        "test_reference.ScopeAndCommands.test_all_platform_variants",
+        "test_reference.ScopeAndCommands.test_allowed_code_change",
+        "test_reference.ScopeAndCommands.test_delete_outside_scope",
+        "test_reference.ScopeAndCommands.test_docs_cannot_write_code",
+        "test_reference.ScopeAndCommands.test_dual_carrier_rejected",
+        "test_reference.ScopeAndCommands.test_empty_argument_preserved",
+        "test_reference.ScopeAndCommands.test_missing_nonselected_platform_still_fails",
+        "test_reference.ScopeAndCommands.test_platform_override_rejected",
+        "test_reference.ScopeAndCommands.test_rename_new_side_outside_scope",
+        "test_reference.ScopeAndCommands.test_rename_old_side_protected",
+        "test_reference.SyntheticProcessIntegration.test_bad_fix_caught_by_guard_cases",
+        "test_reference.SyntheticProcessIntegration.test_bug_detected_in_actual_child",
+        "test_reference.SyntheticProcessIntegration.test_correct_candidate_actual_tests_pass",
+        "test_reference.SyntheticProcessIntegration.test_old_implementation_keeps_new_test_bytes",
+        "test_reference.SyntheticProcessIntegration.test_syntax_error_is_invalid_not_detected",
+        "test_reference.SyntheticProcessIntegration.test_vacuous_actual_test_survives",
+        "test_reference.WorkflowAndSchema.test_core_freeze_cannot_be_plugin",
+        "test_reference.WorkflowAndSchema.test_cycle_rejected",
+        "test_reference.WorkflowAndSchema.test_deterministic_check_no_model_run",
+        "test_reference.WorkflowAndSchema.test_duplicate_stage_rejected",
+        "test_reference.WorkflowAndSchema.test_future_port_rejected",
+        "test_reference.WorkflowAndSchema.test_missing_stage_rejected",
+        "test_reference.WorkflowAndSchema.test_order_is_not_array_order",
+        "test_reference.WorkflowAndSchema.test_plugin_version_mismatch",
+        "test_reference.WorkflowAndSchema.test_port_type_mismatch_rejected",
+        "test_reference.WorkflowAndSchema.test_resource_refs_actual_bytes",
+        "test_reference.WorkflowAndSchema.test_schema_meta_and_positive_examples",
+        "test_reference.WorkflowAndSchema.test_schema_rejects_fake_pass_fields",
+        "test_reference.WorkflowAndSchema.test_schema_requires_candidate_for_check",
+        "test_reference.WorkflowAndSchema.test_three_recipes"
+      ]
+    },
+    "illustrative_scenarios": {
+      "additional_process_runs": 6,
+      "countertest_outcomes": {
+        "boundary_defect": "DETECTED_TARGET_ASSERTION",
+        "invalid_syntax": "INVALID_VARIANT",
+        "vacuous_test": "SURVIVED_OR_UNPROVEN"
+      },
+      "docs_cases": 3,
+      "all_expected_results_matched": true
+    },
+    "final_document": {
+      "embedded_files": 24,
+      "byte_equal_files": 24,
+      "fences": 34,
+      "code_blocks_by_language": {
+        "text": 12,
+        "json": 16,
+        "markdown": 1,
+        "python": 5
+      },
+      "original_acceptance_items_preserved": 9,
+      "suggested_additional_acceptance_items": 19,
+      "integration_scenarios": 30,
+      "footnotes_defined": 18,
+      "main_chapters_preserved": 9,
+      "json_fences_parsed": 16,
+      "python_fences_parsed": 5,
+      "retained_project_navigation": "source links retained; missing source targets not claimed verified"
+    }
+  },
+  "not_run": [
+    "actual project python tests/test_dispatch.py",
+    "production 03-07/09 integration and authenticated review",
+    "real Git candidate/worktree/mutation runner integration",
+    "actual Pi or other model calls and provider billing",
+    "native Windows/macOS/WSL execution",
+    "actual G0-G6 and production authorization/sandbox",
+    "process kill, power loss and production recovery",
+    "full renderer-specific GitHub/MDX anchor validation",
+    "general document semantic correctness"
+  ],
+  "deliverable": {
+    "file": "08-builtin-task-plugins-审阅增强版.md",
+    "bytes": 220462,
+    "lines": 4736,
+    "sha256": "153eec6f8d3dafc958dc87ab749d12c5afa107f1e76378fd4f41ac703d290bcd",
+    "encoding": "UTF-8 without BOM; LF",
+    "original_file": "08-builtin-task-plugins.md",
+    "original_sha256": "2dcf577b98de65115adbaab03d4b25942fdd3d1bad89223274fa4f0eed810af7"
+  },
+  "reference_file_hashes": [
+    {
+      "path": "README.md",
+      "bytes": 5247,
+      "sha256": "900d96724fb5d55adb791b63e89b2d0cb5271252d128010c314090d5febd378b"
+    },
+    {
+      "path": "artifact-examples.json",
+      "bytes": 12822,
+      "sha256": "bc7930d81f1860b7b98ed4d5c48209a3447e396d6ecab4f3c1885c12f6a78632"
+    },
+    {
+      "path": "artifacts.schema.json",
+      "bytes": 22926,
+      "sha256": "4b8da00fc57167f1bef459b62eedf7c77347dcc50f3eb8128af7e0f05bbb430c"
+    },
+    {
+      "path": "catalog.json",
+      "bytes": 3292,
+      "sha256": "8cedd4a31d805cd65172587f8c69530339e114319c89204c87d5cb8c8c811aa5"
+    },
+    {
+      "path": "catalog.schema.json",
+      "bytes": 2961,
+      "sha256": "cf3404e9bba242aedf7ef42881e0d1999ea2c04e267a70772b251e967ba6163e"
+    },
+    {
+      "path": "command.json",
+      "bytes": 602,
+      "sha256": "cff37ba163f6ab93a99762c5584d51703b1655d72ff2549c2dd0d803a12a9df4"
+    },
+    {
+      "path": "dependencies.json",
+      "bytes": 194,
+      "sha256": "85baa42103ffd65bd9c6b2e7bd8f603f10e31c780353546fc4b742aef574eb30"
+    },
+    {
+      "path": "extract_markdown.py",
+      "bytes": 2836,
+      "sha256": "486eeb5c78be65a1a1da3c6bf8b45c629a08956cc39ef37fe7e1104e063bd387"
+    },
+    {
+      "path": "fixtures.py",
+      "bytes": 5799,
+      "sha256": "b229ef5ec20fc4a2771ad82da430afd83431878da5b3e2dd88ae130a42706684"
+    },
+    {
+      "path": "fixtures/analysis-source.txt",
+      "bytes": 34,
+      "sha256": "a7c3275d7c152b200703e4006609a9b2d20bfb382023def5e4813b0e4811ba5f"
+    },
+    {
+      "path": "fixtures/candidate.json",
+      "bytes": 46,
+      "sha256": "c2a3ba8436ea2f0788b008cb1ab90ad9790740676c497c121773e0e03644553f"
+    },
+    {
+      "path": "fixtures/check-set.json",
+      "bytes": 24,
+      "sha256": "1d2caab5aa1c5fdcd50bb233da6a13d828014e12df49c64e7879393263c568c0"
+    },
+    {
+      "path": "fixtures/contract.json",
+      "bytes": 44,
+      "sha256": "ccafab6c37c282ce1175c7654b2e55417e86eb7f40b475c6f86b7a3c44a41813"
+    },
+    {
+      "path": "fixtures/environment.json",
+      "bytes": 26,
+      "sha256": "ac412f2daedd6ff5bed8fcb890b6abb8a55083e2ca59cb016818c748a16d9479"
+    },
+    {
+      "path": "fixtures/log.txt",
+      "bytes": 14,
+      "sha256": "76b0163f13a44a8d389ea1924569f4eed3e386b58b03f44ef0c511aaaa98fd09"
+    },
+    {
+      "path": "fixtures/plugin-lock.json",
+      "bytes": 45,
+      "sha256": "d2fcaef0c7a9aafb7966653417ebab7dcb0669d556d2eb6a1c5b6a36ac16884b"
+    },
+    {
+      "path": "golden-vectors.json",
+      "bytes": 1778,
+      "sha256": "f81f5049c40729195dd82698d89e19f4a6977631614999a8d0e2e5d803239297"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 2695,
+      "sha256": "452cd0c8a8b61de08496e37dfa89512ac442e9bf72dc9d12327ecc3d8ac342f0"
+    },
+    {
+      "path": "recipes.json",
+      "bytes": 8564,
+      "sha256": "63e8316e528ad3b97407d0626fe5afe11dd309fd0a11aaeee8bf03b82b158fd6"
+    },
+    {
+      "path": "recipes.schema.json",
+      "bytes": 4779,
+      "sha256": "c73e17bc4c9f8e9ed221e2d671da71374f5892daced61750a4ce1a4902c68516"
+    },
+    {
+      "path": "reference.py",
+      "bytes": 23664,
+      "sha256": "58104433b899d8bce6478a3d38cafd6151b556f1a8b880ebace796f8655ccf36"
+    },
+    {
+      "path": "resource-refs.json",
+      "bytes": 1232,
+      "sha256": "418aeb33acc54b256648dfd9f4658098c8995a7754dea769fb1a2e1644859ae9"
+    },
+    {
+      "path": "test_reference.py",
+      "bytes": 16348,
+      "sha256": "843157eae93a7307df24d423a8aaa0854d9acea91ec217a494db577583ce4b2b"
+    },
+    {
+      "path": "verify.py",
+      "bytes": 8964,
+      "sha256": "adcc7d1a1c0822f70da88759359f59db15be226aba77b5937b6054c1b5426cd8"
+    }
+  ]
+}
