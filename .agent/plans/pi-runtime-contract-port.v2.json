@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-runtime-contract-port",
+  "plan_version": 2,
+  "title": "Exact Code-Kit runtime port against planner oracles",
+  "repository": "KitExperiment",
+  "base_sha": "89db55bb9eadcf955a0f8ecb67609548ff1d93a2",
+  "risk_level": "high",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/runtime.py",
+      "tests/test_runtime_contract_port.py"
+    ],
+    "allowed_new_files": [],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/adapter.py",
+      "tests/test_runtime_reference_oracle.py",
+      "tests/test_runtime_fail_closed_oracle.py",
+      "tests/test_runtime_differential_oracle.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_runtime_reference_oracle.py",
+        "tests/test_runtime_fail_closed_oracle.py",
+        "tests/test_runtime_differential_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_runtime_contract_port.py",
+        "tests/test_reference.py",
+        "tests/test_hardening.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "canonical 层与冻结参考逐项一致（Behavior contract 第 1–3 条）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "旧 API 与全量测试不退化（第 4 条）",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "`tests/test_runtime_contract_port.py` 断言参考语义，不再固定失败开放的行为（第 5 条）",
+      "evidence": [
+        "V05",
+        "review"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "所有修改都在允许集合内，oracle 与参考未被改动",
+      "evidence": [
+        "scope"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "无依赖变更、无联网与凭据访问，代码可编译、无空白错误",
+      "evidence": [
+        "V03",
+        "V04",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1500,
+    "max_wall_seconds_total": 2400,
+    "cost_budget": null
+  }
+}
