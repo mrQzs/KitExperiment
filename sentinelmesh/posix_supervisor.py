@@ -27,6 +27,9 @@ What one run guarantees:
 * an interrupt that arrives while the stop or reap windows are running is
   absorbed: those steps finish inside their original deadlines, because the
   group still has to be killed and reaped before the run can report anything.
+  Pure Python cannot make this airtight: an interrupt that lands in the few
+  bytecodes outside the guarded waits (between two attempts, or around the
+  reap's first probe and kill) still escapes.
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code and starts no process,
@@ -219,14 +222,17 @@ def _wait_for_leader(proc: "subprocess.Popen[bytes]", seconds: float) -> bool:
     absorbed: the escalation and the reaping must still happen, and they happen
     inside their original windows, so the wait is retried with whatever time is
     left of ``seconds`` instead of ending early.
+
+    The retry runs even when no time is left: CPython's ``Popen.wait`` keeps
+    waiting until the deadline after an interrupt, may reap the leader there and
+    still re-raises, and ``timeout=0`` checks the leader once more, so an
+    interrupt at the deadline cannot turn an exited leader into a live one
+    (found reviewing attempt-002).
     """
     deadline = time.monotonic() + seconds
     while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0.0:
-            return False
         try:
-            proc.wait(timeout=remaining)
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
             return True
         except subprocess.TimeoutExpired:
             return False

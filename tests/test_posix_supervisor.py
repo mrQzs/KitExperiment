@@ -138,9 +138,13 @@ class PosixSupervisorTests(unittest.TestCase):
     def interrupt_first_wait(self, ready):
         """Return a patch that raises ``KeyboardInterrupt`` in the first wait."""
         real_wait = subprocess.Popen.wait
+        calls = []
 
         def interrupt_first(proc, *args, **kwargs):
-            if proc.returncode is None and not ready.exists():
+            # Count calls: a leader that wrote ``ready`` before the first wait
+            # began must still be interrupted (found reviewing attempt-002).
+            calls.append(1)
+            if len(calls) == 1:
                 deadline = time.monotonic() + 10
                 while not ready.exists() and time.monotonic() < deadline:
                     time.sleep(0.02)
@@ -369,7 +373,11 @@ class PosixSupervisorTests(unittest.TestCase):
 
         spec = self.spec(IGNORE_TERM_SLEEP, timeout=1)
         with mock.patch.object(subprocess.Popen, "wait", interrupt_after_the_kill):
-            run = self.call(spec)
+            try:
+                run = self.call(spec)
+            except KeyboardInterrupt:
+                # Fail this case only: an escaped interrupt would end the session.
+                self.fail("the interrupt in the wait after the kill escaped supervise()")
         self.addCleanup(self.kill_group, run.identity.pid)
         self.assertEqual(len(interrupted), 1, "the wait after the kill was not interrupted")
         self.assertEqual((run.stop_reason, run.exit_code), ("timeout_killed", -signal.SIGKILL))
