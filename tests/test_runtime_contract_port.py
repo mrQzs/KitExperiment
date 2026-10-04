@@ -130,47 +130,47 @@ class ValidateArgvTests(CodeMixin):
 
     def test_shell_carrier_rejected(self):
         self.assertEqual(validate_argv(["python"]), ("python",))
-        self.assertEqual(self.code_of(validate_argv, ["python"], shell=True)[0], "E_ARGV_SHELL")
-        self.assertEqual(self.code_of(validate_argv, ["python"], shell=1)[0], "E_ARGV_SHELL")
+        self.assertEqual(self.code_of(validate_argv, ["python"], shell=True)[0], "E_RUNTIME_SHELL_ARGV")
+        self.assertEqual(self.code_of(validate_argv, ["python"], shell=1)[0], "E_RUNTIME_SHELL_ARGV")
 
     def test_non_sequence_argv_rejected(self):
         self.assertEqual(validate_argv(["python"]), ("python",))
         for bad in ("python", {"python": 1}, None, b"python", 7, iter(["python"])):
             with self.subTest(bad=bad):
-                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_ARGV_TYPE")
+                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_RUNTIME_ARGV")
 
     def test_empty_argv_rejected(self):
         self.assertEqual(validate_argv(["python"]), ("python",))
-        self.assertEqual(self.code_of(validate_argv, [])[0], "E_ARGV_EMPTY")
-        self.assertEqual(self.code_of(validate_argv, ())[0], "E_ARGV_EMPTY")
+        self.assertEqual(self.code_of(validate_argv, [])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(validate_argv, ())[0], "E_RUNTIME_ARGV")
 
     def test_non_string_item_rejected(self):
         self.assertEqual(validate_argv(["python", "arg"]), ("python", "arg"))
         for bad in (["python", 1], ["python", None], ["python", b"x"], ["python", ["x"]]):
             with self.subTest(bad=bad):
-                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_ARGV_TYPE")
+                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_RUNTIME_ARGV")
 
     def test_nul_rejected_in_every_slot(self):
         self.assertEqual(validate_argv(["python", "arg"]), ("python", "arg"))
-        self.assertEqual(self.code_of(validate_argv, ["pyt\x00hon", "arg"])[0], "E_ARGV_NUL")
-        self.assertEqual(self.code_of(validate_argv, ["python", "ar\x00g"])[0], "E_ARGV_NUL")
+        self.assertEqual(self.code_of(validate_argv, ["pyt\x00hon", "arg"])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(validate_argv, ["python", "ar\x00g"])[0], "E_RUNTIME_ARGV")
 
     def test_surrogate_rejected_in_every_slot(self):
         self.assertEqual(validate_argv(["python", "arg"]), ("python", "arg"))
         for bad in (["pyt\ud800hon", "arg"], ["python", "ar\udfffg"]):
             with self.subTest(bad=bad):
-                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_ARGV_SURROGATE")
+                self.assertEqual(self.code_of(validate_argv, bad)[0], "E_RUNTIME_ARGV")
 
     def test_empty_executable_rejected(self):
         self.assertEqual(validate_argv(["python", "arg"]), ("python", "arg"))
-        self.assertEqual(self.code_of(validate_argv, ["", "arg"])[0], "E_ARGV_EXECUTABLE")
-        self.assertEqual(self.code_of(validate_argv, [""])[0], "E_ARGV_EXECUTABLE")
+        self.assertEqual(self.code_of(validate_argv, ["", "arg"])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(validate_argv, [""])[0], "E_RUNTIME_ARGV")
 
     def test_carriage_return_or_line_feed_in_executable_rejected(self):
         self.assertEqual(validate_argv(["python", "arg"]), ("python", "arg"))
-        self.assertEqual(self.code_of(validate_argv, ["py\rthon", "arg"])[0], "E_ARGV_EXECUTABLE")
-        self.assertEqual(self.code_of(validate_argv, ["py\nthon", "arg"])[0], "E_ARGV_EXECUTABLE")
-        self.assertEqual(self.code_of(validate_argv, ["\r", "arg"])[0], "E_ARGV_EXECUTABLE")
+        self.assertEqual(self.code_of(validate_argv, ["py\rthon", "arg"])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(validate_argv, ["py\nthon", "arg"])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(validate_argv, ["\r", "arg"])[0], "E_RUNTIME_ARGV")
 
     def test_control_and_unicode_text_in_arguments_stays_legal(self):
         self.assertEqual(validate_argv(["python", "\t--flag"])[1], "\t--flag")
@@ -211,7 +211,7 @@ class InvocationSpecTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(InvocationSpec, bad, "run-1", ["python"], "/w", SHA_A, 30)[0],
-                    "E_SPEC_REQUEST_ID",
+                    "E_RUNTIME_INVOCATION",
                 )
         # Uppercase and punctuation opaque ids stay legal.
         self.assertEqual(spec(request_id="REQ-1:x_2").request_id, "REQ-1:x_2")
@@ -222,7 +222,7 @@ class InvocationSpecTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(InvocationSpec, "req-1", bad, ["python"], "/w", SHA_A, 30)[0],
-                    "E_SPEC_RUN_ID",
+                    "E_RUNTIME_INVOCATION",
                 )
 
     def test_bad_cwd_rejected(self):
@@ -231,7 +231,7 @@ class InvocationSpecTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(InvocationSpec, "req-1", "run-1", ["python"], bad, SHA_A, 30)[0],
-                    "E_SPEC_CWD",
+                    "E_RUNTIME_INVOCATION",
                 )
 
     def test_bad_environment_sha256_rejected(self):
@@ -240,7 +240,7 @@ class InvocationSpecTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(InvocationSpec, "req-1", "run-1", ["python"], "/w", bad, 30)[0],
-                    "E_SPEC_ENVIRONMENT",
+                    "E_RUNTIME_INVOCATION",
                 )
 
     def test_bad_timeout_rejected(self):
@@ -249,16 +249,18 @@ class InvocationSpecTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(InvocationSpec, "req-1", "run-1", ["python"], "/w", SHA_A, bad)[0],
-                    "E_SPEC_TIMEOUT",
+                    "E_RUNTIME_TIMEOUT",
                 )
 
     def test_shell_carrier_and_command_errors_rejected(self):
         self.assertEqual(spec().shell, False)
-        self.assertEqual(self.code_of(spec, shell=True)[0], "E_SPEC_SHELL")
-        self.assertEqual(self.code_of(spec, shell=1)[0], "E_SPEC_SHELL")
-        self.assertEqual(self.code_of(spec, command="python")[0], "E_ARGV_TYPE")
-        self.assertEqual(self.code_of(spec, command=[])[0], "E_ARGV_EMPTY")
-        self.assertEqual(self.code_of(spec, command=["python", "a\x00"])[0], "E_ARGV_NUL")
+        # A shell carrier is rejected by the argv guard once the text fields pass.
+        self.assertEqual(self.code_of(spec, shell=True)[0], "E_RUNTIME_SHELL_ARGV")
+        # A non-boolean shell flag is a spec error, not an argv error.
+        self.assertEqual(self.code_of(spec, shell=1)[0], "E_RUNTIME_INVOCATION")
+        self.assertEqual(self.code_of(spec, command="python")[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(spec, command=[])[0], "E_RUNTIME_ARGV")
+        self.assertEqual(self.code_of(spec, command=["python", "a\x00"])[0], "E_RUNTIME_ARGV")
 
 
 class ProcessIdentityTests(CodeMixin):
@@ -283,7 +285,7 @@ class ProcessIdentityTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(ProcessIdentity, bad, "boot-1", SHA_B, "tree-1")[0],
-                    "E_IDENTITY_PID",
+                    "E_RUNTIME_PID",
                 )
 
     def test_bad_opaque_fields_rejected(self):
@@ -291,11 +293,11 @@ class ProcessIdentityTests(CodeMixin):
         for bad in ("", "boot\x00", "boot\ud800", "boot\n", 1, None):
             with self.subTest(bad=bad, field="boot_id"):
                 self.assertEqual(
-                    self.code_of(ProcessIdentity, 4242, bad, SHA_B, "tree-1")[0], "E_IDENTITY_FIELD"
+                    self.code_of(ProcessIdentity, 4242, bad, SHA_B, "tree-1")[0], "E_RUNTIME_IDENTITY"
                 )
             with self.subTest(bad=bad, field="worktree_id"):
                 self.assertEqual(
-                    self.code_of(ProcessIdentity, 4242, "boot-1", SHA_B, bad)[0], "E_IDENTITY_FIELD"
+                    self.code_of(ProcessIdentity, 4242, "boot-1", SHA_B, bad)[0], "E_RUNTIME_IDENTITY"
                 )
 
     def test_bad_executable_digest_rejected(self):
@@ -304,7 +306,7 @@ class ProcessIdentityTests(CodeMixin):
             with self.subTest(bad=bad):
                 self.assertEqual(
                     self.code_of(ProcessIdentity, 4242, "boot-1", bad, "tree-1")[0],
-                    "E_IDENTITY_EXECUTABLE",
+                    "E_RUNTIME_IDENTITY",
                 )
 
 
@@ -328,7 +330,7 @@ class LifecycleTests(CodeMixin):
                 with self.subTest(terminal=terminal, target=target):
                     self.assertEqual(
                         self.code_of(Lifecycle(terminal, 4).transition, target)[0],
-                        "E_LIFECYCLE_TRANSITION",
+                        "E_RUNTIME_TRANSITION",
                     )
 
     def test_disallowed_transition_rejected(self):
@@ -354,7 +356,7 @@ class LifecycleTests(CodeMixin):
         ):
             with self.subTest(source=source, target=target):
                 self.assertEqual(
-                    self.code_of(stages[source].transition, target)[0], "E_LIFECYCLE_TRANSITION"
+                    self.code_of(stages[source].transition, target)[0], "E_RUNTIME_TRANSITION"
                 )
 
     def test_start_unknown_recovery_requires_explicit_generation_fence(self):
@@ -362,7 +364,7 @@ class LifecycleTests(CodeMixin):
         self.assertEqual((unknown.state, unknown.generation), ("START_UNKNOWN", 2))
         self.assertEqual(
             self.code_of(unknown.transition, "STARTED", identity=identity())[0],
-            "E_LIFECYCLE_FENCE",
+            "E_RUNTIME_FENCE",
         )
         recovered = unknown.transition("STARTED", identity=identity(), expected_generation=2)
         self.assertEqual((recovered.state, recovered.generation), ("STARTED", 3))
@@ -381,16 +383,22 @@ class LifecycleTests(CodeMixin):
 
     def test_stale_generation_fence_rejected(self):
         stage = Lifecycle().transition("STARTING")
-        self.assertEqual(stage.transition("STARTED", expected_generation=1).generation, 2)
+        self.assertEqual(
+            stage.transition("STARTED", identity=identity(), expected_generation=1).generation, 2
+        )
         for bad in (0, 2, 5, -1):
             with self.subTest(bad=bad):
                 self.assertEqual(
-                    self.code_of(stage.transition, "STARTED", expected_generation=bad)[0],
-                    "E_LIFECYCLE_GENERATION",
+                    self.code_of(
+                        stage.transition, "STARTED", identity=identity(), expected_generation=bad
+                    )[0],
+                    "E_RUNTIME_FENCE",
                 )
         self.assertEqual(
-            self.code_of(stage.transition, "STARTED", expected_generation="1")[0],
-            "E_LIFECYCLE_GENERATION",
+            self.code_of(
+                stage.transition, "STARTED", identity=identity(), expected_generation="1"
+            )[0],
+            "E_RUNTIME_FENCE",
         )
 
     def test_identity_binding_is_immutable(self):
@@ -403,7 +411,7 @@ class LifecycleTests(CodeMixin):
             with self.subTest(stage=stage.state, target=target):
                 self.assertEqual(
                     self.code_of(stage.transition, target, identity=other)[0],
-                    "E_LIFECYCLE_IDENTITY",
+                    "E_RUNTIME_IDENTITY",
                 )
         self.assertEqual(started.transition("STOPPING", identity=bound).identity.pid, 1)
         self.assertEqual(started.transition("FAILED").state, "FAILED")
@@ -412,7 +420,7 @@ class LifecycleTests(CodeMixin):
         unknown = Lifecycle().transition("STARTING").transition("START_UNKNOWN")
         self.assertEqual(
             self.code_of(unknown.transition, "STARTED", identity=identity(pid=1))[0],
-            "E_LIFECYCLE_FENCE",
+            "E_RUNTIME_FENCE",
         )
         recovered = unknown.transition(
             "STARTED", identity=identity(pid=1), expected_generation=2
@@ -421,11 +429,11 @@ class LifecycleTests(CodeMixin):
 
     def test_record_construction_is_validated(self):
         self.assertEqual(Lifecycle("STARTED", 3, identity()).state, "STARTED")
-        self.assertEqual(self.code_of(Lifecycle, "RUNNING", 0)[0], "E_LIFECYCLE_STATE")
-        self.assertEqual(self.code_of(Lifecycle, "NEW", -1)[0], "E_LIFECYCLE_GENERATION")
-        self.assertEqual(self.code_of(Lifecycle, "NEW", True)[0], "E_LIFECYCLE_GENERATION")
-        self.assertEqual(self.code_of(Lifecycle, "NEW", 0, "identity")[0], "E_LIFECYCLE_IDENTITY")
-        self.assertEqual(self.code_of(Lifecycle().transition, "RUNNING")[0], "E_LIFECYCLE_STATE")
+        self.assertEqual(self.code_of(Lifecycle, "RUNNING", 0)[0], "E_RUNTIME_TRANSITION")
+        self.assertEqual(self.code_of(Lifecycle, "NEW", -1)[0], "E_RUNTIME_FENCE")
+        self.assertEqual(self.code_of(Lifecycle, "NEW", True)[0], "E_RUNTIME_FENCE")
+        self.assertEqual(self.code_of(Lifecycle, "NEW", 0, "identity")[0], "E_RUNTIME_IDENTITY")
+        self.assertEqual(self.code_of(Lifecycle().transition, "RUNNING")[0], "E_RUNTIME_TRANSITION")
 
 
 class ClassifyStartTests(CodeMixin):
@@ -438,9 +446,11 @@ class ClassifyStartTests(CodeMixin):
             classify_start(handoff_accepted=True, started_observation=None, expected=spec()),
             "START_UNKNOWN",
         )
+        # An empty observation is not a missing one: its run/environment keys are
+        # absent, so the record mismatches instead of following the handoff flag.
         self.assertEqual(
             classify_start(handoff_accepted=True, started_observation={}, expected=spec()),
-            "START_UNKNOWN",
+            "IDENTITY_MISMATCH",
         )
 
     def test_mismatched_observation_run_or_environment_is_identity_mismatch(self):
@@ -487,17 +497,26 @@ class ClassifyStartTests(CodeMixin):
         )
 
     def test_started_observation_requires_bound_process_identity(self):
-        bound = dict(identity().to_dict(), run_id="run-1", environment_sha256=SHA_A)
         self.assertEqual(classify(observation(state="STARTED", identity_value=identity())), "STARTED")
-        self.assertEqual(classify(observation(state="STARTED", identity_value=bound)), "STARTED")
-        self.assertEqual(classify(observation(state="STARTED")), "START_UNKNOWN")
         self.assertEqual(
-            classify(observation(state="STARTED", identity_value=dict(bound, run_id="run-9"))),
-            "START_UNKNOWN",
+            classify(observation(state="STARTED", identity_value=identity().to_dict())), "STARTED"
         )
+        self.assertEqual(classify(observation(state="STARTED")), "START_UNKNOWN")
+        # The observation identity is a closed four-field object; extra keys are
+        # rejected outright instead of being silently ignored or re-derived.
+        for extra in ({"run_id": "run-9"}, {"environment_sha256": SHA_B}, {"note": "x"}):
+            with self.subTest(extra=extra):
+                self.assertEqual(
+                    self.code_of(
+                        classify,
+                        observation(state="STARTED", identity_value=dict(identity().to_dict(), **extra)),
+                    )[0],
+                    "E_RUNTIME_IDENTITY",
+                )
+        # A different but complete identity is still direct start evidence.
         self.assertEqual(
-            classify(observation(state="STARTED", identity_value=dict(bound, environment_sha256=SHA_B))),
-            "START_UNKNOWN",
+            classify(observation(state="STARTED", identity_value=dict(identity().to_dict(), pid=4243))),
+            "STARTED",
         )
 
     def test_failed_and_stopped_pass_through(self):
@@ -521,8 +540,13 @@ class ClassifyStartTests(CodeMixin):
         }
         self.assertEqual(classify(observation(state="NOT_STARTED", **prose)), "NOT_STARTED")
         self.assertEqual(classify(observation(state="STARTED", **prose)), "START_UNKNOWN")
+        self.assertEqual(classify(observation(state="FAILED", exit_code=3)), "FAILED")
+        self.assertEqual(classify(observation(state="STOPPED", exit_code=137)), "STOPPED")
+        # A rejected handoff can never adopt a terminal observation, whatever the
+        # recorded exit code or prose says.
         self.assertEqual(
-            classify(observation(state="FAILED", exit_code=3), handoff=False), "FAILED"
+            classify(observation(state="FAILED", exit_code=3), handoff=False),
+            "IDENTITY_MISMATCH",
         )
 
     def test_signature_and_input_types(self):
@@ -532,7 +556,7 @@ class ClassifyStartTests(CodeMixin):
             self.code_of(
                 classify_start, handoff_accepted=1, started_observation=None, expected=spec()
             )[0],
-            "E_HANDOFF_TYPE",
+            "E_RUNTIME_OBSERVATION",
         )
         self.assertEqual(
             self.code_of(
@@ -541,7 +565,7 @@ class ClassifyStartTests(CodeMixin):
                 started_observation=["state"],
                 expected=spec(),
             )[0],
-            "E_OBSERVATION_TYPE",
+            "E_RUNTIME_OBSERVATION",
         )
         self.assertEqual(
             self.code_of(
@@ -550,7 +574,7 @@ class ClassifyStartTests(CodeMixin):
                 started_observation=None,
                 expected={"run_id": "run-1"},
             )[0],
-            "E_EXPECTED_TYPE",
+            "E_RUNTIME_INVOCATION",
         )
 
 
@@ -570,9 +594,8 @@ class ReconcileTests(CodeMixin):
     def test_replay_allowed_only_for_clear_not_started(self):
         for record in (
             reconcile(spec(), observation()),
-            reconcile(spec(), None),
-            reconcile(spec(), {}),
             reconcile(spec(), observation(handoff_accepted=False)),
+            reconcile(spec(), observation(state="NOT_STARTED", identity_value=None)),
         ):
             with self.subTest(record=record):
                 self.assertIs(record["replay_allowed"], True)
@@ -584,21 +607,38 @@ class ReconcileTests(CodeMixin):
         ):
             with self.subTest(blocked=blocked):
                 self.assertIs(reconcile(spec(), blocked)["replay_allowed"], False)
+        # An empty observation carries contradictory run/environment evidence and
+        # a missing observation is rejected outright; neither is replayable.
+        self.assertEqual(
+            (reconcile(spec(), {})["status"], reconcile(spec(), {})["replay_allowed"]),
+            ("IDENTITY_MISMATCH", False),
+        )
+        self.assertEqual(self.code_of(reconcile, spec(), None)[0], "E_RUNTIME_OBSERVATION")
 
     def test_terminal_replay_requires_bound_identity_and_confirmed_cleanup(self):
         terminal = observation(state="FAILED", identity_value=identity(), cleanup_confirmed=True)
         self.assertEqual(reconcile(spec(), terminal)["status"], "FAILED")
         self.assertIs(reconcile(spec(), terminal)["replay_allowed"], True)
+        # Cleanup that is not explicitly confirmed never re-opens a replay.
         for change in (
-            {"process_identity": None},
             {"cleanup_confirmed": False},
             {"cleanup_confirmed": 1},
             {"cleanup_confirmed": "yes"},
             {"cleanup_confirmed": None},
-            {"state": "STOPPED", "process_identity": {"run_id": "run-9"}, "cleanup_confirmed": True},
         ):
             with self.subTest(change=change):
                 self.assertIs(reconcile(spec(), dict(terminal, **change))["replay_allowed"], False)
+        # A present identity is validated against the closed four-field shape.
+        for malformed in (None, {"run_id": "run-9"}, {"pid": 4242}):
+            with self.subTest(malformed=malformed):
+                self.assertEqual(
+                    self.code_of(
+                        reconcile,
+                        spec(),
+                        dict(terminal, process_identity=malformed),
+                    )[0],
+                    "E_RUNTIME_IDENTITY",
+                )
         stopped = observation(state="STOPPED", identity_value=identity(pid=7), cleanup_confirmed=True)
         self.assertEqual(reconcile(spec(), stopped)["status"], "STOPPED")
         self.assertIs(reconcile(spec(), stopped)["replay_allowed"], True)
@@ -613,10 +653,11 @@ class ReconcileTests(CodeMixin):
 
     def test_status_is_taken_from_classify_start(self):
         cases = (
-            (None, "NOT_STARTED"),
-            ({}, "NOT_STARTED"),
+            ({}, "IDENTITY_MISMATCH"),
             ({"handoff_accepted": True}, "IDENTITY_MISMATCH"),
             (observation(), "NOT_STARTED"),
+            (observation(handoff_accepted=False), "NOT_STARTED"),
+            (observation(state="NOT_STARTED", identity_value=identity()), "START_UNKNOWN"),
             (observation(state="STOPPING"), "START_UNKNOWN"),
             (observation(state="STARTED", identity_value=identity()), "STARTED"),
             (observation(state="FAILED"), "FAILED"),
@@ -625,13 +666,16 @@ class ReconcileTests(CodeMixin):
         for observed, expected_status in cases:
             with self.subTest(observed=observed):
                 self.assertEqual(reconcile(spec(), observed)["status"], expected_status)
+        # A missing observation is not a record; reconcile rejects it outright.
+        self.assertEqual(self.code_of(reconcile, spec(), None)[0], "E_RUNTIME_OBSERVATION")
 
     def test_empty_observation_record_has_no_start_evidence(self):
-        # An absent or empty observation record carries no start evidence, so the
-        # handoff flag alone decides NOT_STARTED versus START_UNKNOWN.
-        self.assertEqual(reconcile(spec(), {})["status"], "NOT_STARTED")
-        self.assertEqual(reconcile(spec(), {})["observed_environment_sha256"], None)
-        self.assertIs(reconcile(spec(), {})["replay_allowed"], True)
+        # An empty observation is not a missing one: its run/environment keys are
+        # absent, so the record is an identity mismatch that never allows replay.
+        empty = reconcile(spec(), {})
+        self.assertEqual(empty["status"], "IDENTITY_MISMATCH")
+        self.assertEqual(empty["observed_environment_sha256"], None)
+        self.assertIs(empty["replay_allowed"], False)
 
     def test_observed_environment_and_run_fields(self):
         self.assertEqual(reconcile(spec(), {})["observed_environment_sha256"], None)
@@ -639,10 +683,7 @@ class ReconcileTests(CodeMixin):
             reconcile(spec(), {"run_id": "run-1", "environment_sha256": SHA_B})["observed_environment_sha256"],
             SHA_B,
         )
-        self.assertEqual(
-            reconcile(spec(), {"run_id": "run-1", "environment_sha256": 12})["observed_environment_sha256"],
-            None,
-        )
+        self.assertEqual(reconcile(spec(), {"run_id": "run-1", "environment_sha256": 12})["observed_environment_sha256"], 12)
         mismatch = reconcile(spec(), {"run_id": "run-9", "environment_sha256": SHA_B})
         self.assertEqual(mismatch["status"], "IDENTITY_MISMATCH")
         self.assertEqual(mismatch["run_id"], "run-1")
@@ -651,21 +692,25 @@ class ReconcileTests(CodeMixin):
         self.assertIs(mismatch["replay_allowed"], False)
 
     def test_input_types(self):
-        self.assertEqual(set(reconcile(spec(), None)), set(reconcile(spec(), {})))
+        record = reconcile(spec(), {})
         self.assertEqual(
-            self.code_of(reconcile, {"run_id": "run-1"}, observation())[0], "E_EXPECTED_TYPE"
+            set(record),
+            {"status", "run_id", "expected_environment_sha256", "observed_environment_sha256", "replay_allowed"},
         )
-        self.assertEqual(self.code_of(reconcile, spec(), ["state"])[0], "E_OBSERVATION_TYPE")
+        # A missing observation is rejected, and so is a non-mapping one.
+        self.assertEqual(self.code_of(reconcile, spec(), None)[0], "E_RUNTIME_OBSERVATION")
+        self.assertEqual(self.code_of(reconcile, spec(), ["state"])[0], "E_RUNTIME_OBSERVATION")
+        # The expected value must already be an InvocationSpec; reconcile does not
+        # coerce or accept a mapping-shaped stand-in.
         self.assertEqual(
-            self.code_of(reconcile, spec(), {"handoff_accepted": 1})[0], "E_HANDOFF_TYPE"
+            self.code_of(reconcile, {"run_id": "run-1"}, observation())[0], "E_RUNTIME_INVOCATION"
         )
-        # A recorded handoff flag must be an explicit boolean, never coerced text.
-        for value in ("true", "yes", None, 0):
+        # A recorded ``handoff_accepted`` flag is data about the handoff, never the
+        # handoff itself: reconcile never reads it, coerced text included.
+        for value in ("true", "yes", None, 0, 1):
             with self.subTest(value=value):
-                self.assertEqual(
-                    self.code_of(reconcile, spec(), {"handoff_accepted": value})[0],
-                    "E_HANDOFF_TYPE",
-                )
+                observed = observation(state="NOT_STARTED", handoff_accepted=value)
+                self.assertEqual(reconcile(spec(), observed)["status"], "NOT_STARTED")
 
 
 class LegacyApiRegressionTests(unittest.TestCase):
