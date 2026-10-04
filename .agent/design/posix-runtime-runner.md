@@ -1,6 +1,6 @@
 # 设计说明：SentinelMesh 原生 POSIX 进程监督（macOS 先行）
 
-状态：草稿，待用户确认后拆分合同
+状态：用户已确认（2026-10-04），按第 3 节拆分合同
 前置：pi-runtime-contract-port 已集成（2c3c115）：canonical InvocationSpec / ProcessIdentity / Lifecycle / reconcile 与 Code-Kit 一致
 
 ## 1. 为什么做
@@ -40,8 +40,10 @@
 - macOS 原生测试结果记为 macOS 原生证据；Linux、Windows Job Object 与三平台一致性仍为 NOT_RUN。
 - 不调用真实 provider CLI，不读取凭据；测试只启动 `python -c` 一类本地进程。
 
-## 5. 需要用户决定的问题（附建议）
+## 5. 用户决定（2026-10-04）
 
-1. 范围：先只做 macOS，Linux 留作 NOT_RUN？建议：是，本机没有 Linux 环境。
-2. 环境：默认不继承父进程环境，只用调用方显式给出的映射？建议：是，这是安全默认；需要 PATH 时由调用方显式传入。
-3. 是否先把旧 `SubprocessRunner` 的两个实测缺陷作为单独的第 0 份合同修复？修复内容是超时后对整个进程组 SIGKILL、给收尾的 communicate 加时限，残留进程未清净时不报 `verified`。建议：是，这是现有 API 的正确性问题，并且会改变它在超时路径上的行为（返回更快、清理状态更诚实）。
+1. 范围：先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN。
+2. 环境：新监督器默认不继承父进程环境，只用调用方显式给出的映射，并核对摘要。
+3. 旧 `SubprocessRunner` 的两个实测缺陷作为第 0 份合同先修（`runner-posix-cleanup`）。
+   - 修复范围：超时与取消时对整个进程组升级到 SIGKILL，收尾读取有时限，残留进程未清净时报 `incomplete`。
+   - 正常结束后组内仍有成员时只报 `incomplete`，不主动杀。完整的残留回收留给新监督器（第 3 节第 2 份）。
