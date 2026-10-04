@@ -13,6 +13,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Config and approvals | `config.py`, `approvals.py` | profile precedence, CAS, input-lock and revocation checks |
 | Plugins and workflows | `plugins.py`, `workflows.py` | seven trusted manifests; bugfix/documentation/regression DAG recipes |
 | Runtime and adapters | `runtime.py`, `adapter.py` | bounded invocation, argv/env/input validation and normalized vendor events |
+| Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
@@ -20,10 +21,11 @@ offline evidence from capabilities that require a real provider or platform.
 | Persistence | `persistence.py` | SQLite WAL/FULL resources, idempotency, generation fencing and hash-chain journal |
 | Observability/migration/observer | `observability.py`, `migration.py`, `observer.py` | redaction, CAS preview, source-bound read-only observer degradation |
 
-The current KitExperiment check is:
+The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
+is:
 
 ```text
-python -m pytest -q                 65 passed
+python -m pytest -q                 158 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -34,6 +36,14 @@ added deterministic acceptance coverage. Its review records three tool errors
 and a fixed `/tmp` scratch-file process deviation; the candidate was manually
 reviewed and integrated as `3352627`, rather than being described as a
 dispatcher `INTEGRATED` verdict.
+
+The runtime port is recorded in `.agent/reviews/pi-runtime-contract-port/`.
+Attempt-001 (`bb/step-5-preview`, Windows) was REVISE: its `reconcile`
+allowed replay for missing, empty or malformed observations. Attempt-002
+(`step/step-5-preview`, thinking `high`, macOS, pi 1.0.2) reworked it against
+three planner oracles and was accepted with an exception: the executor again
+wrote fixed `/tmp` scratch files. It was integrated as `2c3c115`; the planner
+closed four test-coverage gaps in `8e09793`.
 
 ## Explicitly not proven by this repository
 
