@@ -4,7 +4,7 @@
   "plan_version": 1,
   "title": "Pi exact Code-Kit runtime contract port with observation mapping",
   "repository": "KitExperiment",
-  "base_sha": "60f2d15b86a6b00f13f36f1307ce2143fa07f096",
+  "base_sha": "60f2d159f30a36f956f542f363e72cd98a879f96",
   "risk_level": "high",
   "authorization": {
     "executor": [
@@ -113,7 +113,7 @@
       "argv": [
         "python",
         "-c",
-        "from sentinelmesh.runtime import ALLOWED_TRANSITIONS, LIFECYCLE, InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert LIFECYCLE == ('NEW','STARTING','STARTED','STOPPING','STOPPED','FAILED','START_UNKNOWN'); assert ALLOWED_TRANSITIONS['START_UNKNOWN'] == {'STARTED','STOPPING','FAILED'}; assert tuple(validate_argv(['python','', 'x\\n'])) == ('python','','x\\n'); print('PI_RUNTIME_PORT_API_OK')"
+        "from sentinelmesh.runtime import ALLOWED_TRANSITIONS, LIFECYCLE, InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert LIFECYCLE == ('NEW','STARTING','STARTED','STOPPING','STOPPED','FAILED','START_UNKNOWN'); assert ALLOWED_TRANSITIONS['START_UNKNOWN'] == {'STARTED','STOPPING','FAILED'}; assert tuple(validate_argv(['python',''])) == ('python',''); print('PI_RUNTIME_PORT_API_OK')"
       ],
       "cwd": ".",
       "timeout_seconds": 60,

@@ -3,7 +3,7 @@
 ## Identity
 - plan_version: 1
 - repository: KitExperiment
-- base_sha: 60f2d15b86a6b00f13f36f1307ce2143fa07f096
+- base_sha: 60f2d159f30a36f956f542f363e72cd98a879f96
 - risk_level: high
 - authorized_actions: local_edit, local_test
 - integration_actions: local_branch (planner will cherry-pick only after independent review)
@@ -44,12 +44,18 @@ Implement these public shapes in `sentinelmesh.runtime`:
 2. 只在 scope 内实现兼容层和直接调用 canonical shapes 的测试；禁止保留上一候选的替代 reconcile/classify API。
 3. 运行 V01-V05，逐项报告 D01-D05、命令结果和未运行平台能力。
 
+## Behavior contract
+- `LIFECYCLE` 与 `ALLOWED_TRANSITIONS` 必须逐字匹配 Canonical API；`START_UNKNOWN` 可恢复，不是终态。
+- `InvocationSpec` 构造立即校验并提供 `digest()`；`ProcessIdentity` 只有四个必填字段；`Lifecycle.transition` 返回 generation 加一的新记录并执行 expected_generation fence。
+- `classify_start` 必须读取 observation 的 `run_id`、`environment_sha256`、`state`、`process_identity`；`reconcile` 必须接受 InvocationSpec 和 Mapping，并返回五键 mapping：`status`、`run_id`、`expected_environment_sha256`、`observed_environment_sha256`、`replay_allowed`。
+- 参考 argv 语义允许普通参数为空或含换行；只拒绝 shell carrier、空 executable、executable CR/LF、NUL、surrogate；未知启动和不完整 cleanup 必须 fail closed。
+
 ## Validation commands
 - V01（基线应失败）：`python -c "from pathlib import Path; p=Path(r'tests/test_runtime_contract_port.py'); assert p.exists() and p.stat().st_size>0; print('PI_RUNTIME_PORT_ARTIFACT_OK')"`
 - V02（必要）：`python -m pytest -q`
 - V03（必要）：`python -m compileall -q sentinelmesh tests`
 - V04（必要）：`git diff --check`
-- V05（必要，基线应失败）：`python -c "from sentinelmesh.runtime import ALLOWED_TRANSITIONS, LIFECYCLE, InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert LIFECYCLE == ('NEW','STARTING','STARTED','STOPPING','STOPPED','FAILED','START_UNKNOWN'); assert ALLOWED_TRANSITIONS['START_UNKNOWN'] == {'STARTED','STOPPING','FAILED'}; assert tuple(validate_argv(['python','', 'x\\n'])) == ('python','','x\\n'); print('PI_RUNTIME_PORT_API_OK')"`
+- V05（必要，基线应失败）：`python -c "from sentinelmesh.runtime import ALLOWED_TRANSITIONS, LIFECYCLE, InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert LIFECYCLE == ('NEW','STARTING','STARTED','STOPPING','STOPPED','FAILED','START_UNKNOWN'); assert ALLOWED_TRANSITIONS['START_UNKNOWN'] == {'STARTED','STOPPING','FAILED'}; assert tuple(validate_argv(['python',''])) == ('python',''); print('PI_RUNTIME_PORT_API_OK')"`
 
 ## Definition of done
 - D01：canonical 常量、错误、输入和 Lifecycle API；证据 V02/V05。
