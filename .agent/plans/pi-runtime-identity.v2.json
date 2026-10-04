@@ -4,7 +4,7 @@
   "plan_version": 2,
   "title": "Pi exact Code-Kit runtime identity API compatibility",
   "repository": "KitExperiment",
-  "base_sha": "aeb6859c5dc2a9de2c5a1a687ee2f3e41fe1274f",
+  "base_sha": "aeb685985113b2c10c3b815bbc0324ed7243acd5",
   "risk_level": "medium",
   "authorization": {
     "executor": [

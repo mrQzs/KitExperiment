@@ -3,7 +3,7 @@
 ## Identity
 - plan_version: 2
 - repository: KitExperiment
-- base_sha: aeb6859c5dc2a9de2c5a1a687ee2f3e41fe1274f
+- base_sha: aeb685985113b2c10c3b815bbc0324ed7243acd5
 - risk_level: medium
 - authorized_actions: local_edit, local_test
 - integration_actions: local_branch (planner will cherry-pick only after independent review)
@@ -71,5 +71,6 @@
 ## Forbidden
 - 不修改合同、AGENTS.md、`.agent/`、设计材料。
 - 不删除、跳过或弱化既有测试；不提交、不推送、不合并、不部署。
+
 
 
