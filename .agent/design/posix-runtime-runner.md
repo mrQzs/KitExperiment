@@ -73,3 +73,26 @@
 4. 凭据类环境变量（2026-10-04）：新监督器默认拒绝名称含 TOKEN、KEY、SECRET、PASSWORD、CREDENTIAL、COOKIE、AUTH 的变量（与 Code-Kit `offline_runner` 的判定相同，按大写名称子串匹配）。
    - 调用方用参数显式列出允许的名称时才放行；
    - 证据与观察记录只记变量名，不记值。
+
+## 6. 第 3 份合同的设计（规划端，2026-10-05）
+
+- 目标：把监督器的观察记录落盘，只凭落盘的记录做重放判定。端到端证明三点：超时且清理完成可以重放；清理未确认不可重放；启动结果未知不可重放。
+- 不改调度器。`Scheduler` 的状态迁移（`finish`、`unknown`、已交接后的未启动取消）接入监督器另做合同；本份只提供调用方可用的判定。
+- 监督器增加钩子 `before_start`：
+  - 在两个证据文件建好之后、Popen 之前调用一次；
+  - 钩子抛出时，关闭并删除这两个文件，原样重新抛出，不启动进程；
+  - 非 None 且不可调用时报 `E_RUNTIME_INVOCATION`（排在证据目录校验之后）。
+- 新模块 `sentinelmesh/supervised_record.py`：
+  - `record_supervised_run(...)`：在钩子里写 `handoff.json`（启动之前），`supervise()` 返回后写 `observation.json`；
+  - `replay_decision(spec, evidence_dir)`：只读这两份文件，返回与 `reconcile` 相同的五键记录：
+    - 两份都没有：NOT_STARTED，可以重放；
+    - 只有交接：START_UNKNOWN，不可重放；
+    - 交接或观察的规格摘要与 spec 不符：IDENTITY_MISMATCH，不可重放；
+    - 两份都有且一致：`reconcile(spec, observation)`；
+    - 以下情形都报 `E_RUNTIME_EVIDENCE`：只有观察、文件损坏、不是规范 JSON、多余或缺少键、是符号链接、超过 64 KiB。
+  - 记录文件：
+    - 格式：规范 JSON（排序键、紧凑、UTF-8、末尾换行），权限 0600；
+    - 写法：先写到 `.<名称>.partial`（O_EXCL）并 fsync，再用硬链接发布；已存在的记录永不覆盖。
+- 证据边界：
+  - 进程崩溃时记录保持一致（链接是原子的）；
+  - 断电后的持久性不验证：不对目录做 fsync，macOS 的 fsync 也不等于 F_FULLFSYNC。记为 NOT_RUN。
