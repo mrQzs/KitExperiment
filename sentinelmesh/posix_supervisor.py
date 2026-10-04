@@ -20,6 +20,10 @@ What one run guarantees:
 * stdout/stderr go to files created ``O_EXCL`` in the caller's evidence
   directory, never to pipes, so a descendant holding the output open cannot make
   the supervisor hang;
+* a caller may pass a ``before_start`` hook that runs once after those two files
+  exist and before ``Popen``; if it raises, the two files are removed and the
+  exception is re-raised unchanged, so nothing starts and no evidence of an
+  attempt that never happened survives;
 * on timeout or cancellation the group is SIGTERMed, then SIGKILLed as a group
   inside bounded windows, and the leftovers are reaped until the group is
   confirmed empty.  ``cleanup_confirmed=False`` (no false "clean" report) is
@@ -44,7 +48,7 @@ import os
 import signal
 import subprocess
 import time
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .process_identity import (
     _scalar_text,
@@ -320,6 +324,7 @@ def supervise(
     evidence_dir: str,
     worktree_id: str,
     allowed_secret_names: frozenset[str] = frozenset(),
+    before_start: Optional[Callable[[], None]] = None,
 ) -> SupervisedRun:
     """Start one explicitly described process and supervise it to its end.
 
@@ -333,6 +338,13 @@ def supervise(
     Returns a `SupervisedRun` whose ``observation`` can be handed straight to
     `sentinelmesh.runtime.reconcile`.  A cancellation is reported, never
     re-raised, so the caller still receives the evidence and the observation.
+
+    ``before_start`` is an optional caller hook invoked exactly once, with no
+    arguments, after both evidence files exist and immediately before
+    ``Popen``.  It is where a caller records its own handoff evidence; if it
+    raises, this call removes the two evidence files it created and re-raises
+    the same exception, so no process is started and no half-written evidence
+    is left behind (see `sentinelmesh.supervised_record`).
     """
     started_at = time.monotonic()
     if os.name != "posix":
@@ -356,8 +368,29 @@ def supervise(
     executable_sha256 = file_sha256(executable)
     boot = boot_id()
     evidence = _validated_evidence_dir(evidence_dir)
+    # A caller hook that is present but not callable is a programming error.
+    # It is checked *after* the evidence directory, which is the last of the
+    # start-time checks: both rejections say the call cannot start anything, and
+    # reporting the directory first lets a caller that fixes them one at a time
+    # learn each rule in the order the checks run.
+    if before_start is not None and not callable(before_start):
+        raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_start must be callable")
 
     stdout_path, stderr_path, stdout_fd, stderr_fd = _open_evidence_files(evidence)
+    if before_start is not None:
+        try:
+            before_start()
+        except BaseException:
+            # Whatever the hook raised (including ``KeyboardInterrupt``), the
+            # start did not happen, so the two evidence files this call created
+            # exclusively for it must go with it: leaving them would record an
+            # attempt that never reached ``Popen``.  The exception is re-raised
+            # unchanged so the caller still sees its own failure.
+            _close_fd(stdout_fd)
+            _close_fd(stderr_fd)
+            _remove_evidence(stdout_path)
+            _remove_evidence(stderr_path)
+            raise
     environment_names = tuple(sorted(snapshot))
     lifecycle = Lifecycle().transition("STARTING")
     try:
