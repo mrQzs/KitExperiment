@@ -386,6 +386,11 @@ class LifecycleTests(CodeMixin):
         self.assertEqual(
             stage.transition("STARTED", identity=identity(), expected_generation=1).generation, 2
         )
+        # The same fenced move without a process identity is rejected: STARTED is
+        # only reachable with direct start evidence.
+        self.assertEqual(
+            self.code_of(stage.transition, "STARTED", expected_generation=1)[0], "E_RUNTIME_IDENTITY"
+        )
         for bad in (0, 2, 5, -1):
             with self.subTest(bad=bad):
                 self.assertEqual(
@@ -429,6 +434,7 @@ class LifecycleTests(CodeMixin):
 
     def test_record_construction_is_validated(self):
         self.assertEqual(Lifecycle("STARTED", 3, identity()).state, "STARTED")
+        self.assertEqual(self.code_of(Lifecycle, "STARTED", 3)[0], "E_RUNTIME_IDENTITY")
         self.assertEqual(self.code_of(Lifecycle, "RUNNING", 0)[0], "E_RUNTIME_TRANSITION")
         self.assertEqual(self.code_of(Lifecycle, "NEW", -1)[0], "E_RUNTIME_FENCE")
         self.assertEqual(self.code_of(Lifecycle, "NEW", True)[0], "E_RUNTIME_FENCE")
@@ -504,7 +510,12 @@ class ClassifyStartTests(CodeMixin):
         self.assertEqual(classify(observation(state="STARTED")), "START_UNKNOWN")
         # The observation identity is a closed four-field object; extra keys are
         # rejected outright instead of being silently ignored or re-derived.
-        for extra in ({"run_id": "run-9"}, {"environment_sha256": SHA_B}, {"note": "x"}):
+        for extra in (
+            {"run_id": "run-1", "environment_sha256": SHA_A},
+            {"run_id": "run-9"},
+            {"environment_sha256": SHA_B},
+            {"note": "x"},
+        ):
             with self.subTest(extra=extra):
                 self.assertEqual(
                     self.code_of(
@@ -595,7 +606,6 @@ class ReconcileTests(CodeMixin):
         for record in (
             reconcile(spec(), observation()),
             reconcile(spec(), observation(handoff_accepted=False)),
-            reconcile(spec(), observation(state="NOT_STARTED", identity_value=None)),
         ):
             with self.subTest(record=record):
                 self.assertIs(record["replay_allowed"], True)
@@ -614,6 +624,11 @@ class ReconcileTests(CodeMixin):
             ("IDENTITY_MISMATCH", False),
         )
         self.assertEqual(self.code_of(reconcile, spec(), None)[0], "E_RUNTIME_OBSERVATION")
+        # A present-but-null identity is not "no identity": it is rejected, never replayable.
+        self.assertEqual(
+            self.code_of(reconcile, spec(), {**observation(), "process_identity": None})[0],
+            "E_RUNTIME_IDENTITY",
+        )
 
     def test_terminal_replay_requires_bound_identity_and_confirmed_cleanup(self):
         terminal = observation(state="FAILED", identity_value=identity(), cleanup_confirmed=True)
@@ -707,10 +722,10 @@ class ReconcileTests(CodeMixin):
         )
         # A recorded ``handoff_accepted`` flag is data about the handoff, never the
         # handoff itself: reconcile never reads it, coerced text included.
-        for value in ("true", "yes", None, 0, 1):
+        for value in ("true", "yes", None, 0, 1, False):
             with self.subTest(value=value):
-                observed = observation(state="NOT_STARTED", handoff_accepted=value)
-                self.assertEqual(reconcile(spec(), observed)["status"], "NOT_STARTED")
+                observed = observation(state="STARTED", identity_value=identity(), handoff_accepted=value)
+                self.assertEqual(reconcile(spec(), observed)["status"], "STARTED")
 
 
 class LegacyApiRegressionTests(unittest.TestCase):
