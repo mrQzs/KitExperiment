@@ -9,7 +9,9 @@ return values, equal raised `RuntimeErrorCode` codes and equal check order for
 every input.  It is import-safe: constructing or classifying these values
 performs no process start, no credential read and no filesystem side effect.
 The historical `Invocation`/`ProcessResult`/`SubprocessRunner` helpers below
-remain unchanged.
+keep their original fields and behaviour, except for the POSIX shutdown path of
+`SubprocessRunner`, which now stops the whole process group inside bounded
+windows and only reports `cleanup="verified"` once the group is confirmed empty.
 """
 from __future__ import annotations
 
@@ -427,6 +429,32 @@ class StaticAdapter:
         return Invocation(argv, cwd, env, profile.timeout_seconds)
 
 
+# Bounded shutdown windows for the POSIX branch of ``SubprocessRunner``.  After
+# a timeout or a cancellation the whole process group is asked to terminate, then
+# killed, and the output pipes are read inside these windows so ``run()`` cannot
+# block on a descendant that never exits.  ``_REAP_SECONDS`` bounds how long the
+# group is polled before cleanup is reported as unverified.
+_TERM_GRACE_SECONDS = 1.0
+_DRAIN_SECONDS = 2.0
+_REAP_SECONDS = 2.0
+_REAP_POLL_SECONDS = 0.05
+
+
+def _group_alive(pgid: int) -> bool:
+    """Return whether the process group still has a member (fail-closed).
+
+    ``PermissionError`` means the group exists but cannot be signalled, which is
+    reported as alive: never claim an unverified group is clean.
+    """
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class SubprocessRunner:
     """Supervise an owned process. Real platform-specific Job Object support remains an adapter extension."""
 
@@ -455,6 +483,112 @@ class SubprocessRunner:
             )
         except OSError as exc:
             return ProcessResult(False, None, b"", str(exc).encode("utf-8", "replace"), "start_failed", time.monotonic() - started_at, "not_started")
+        if os.name == "nt":
+            return self._run_windows(proc, invocation, input_bytes, started_at)
+        return self._run_posix(proc, invocation, input_bytes, started_at)
+
+    def _run_posix(
+        self,
+        proc: Any,
+        invocation: Invocation,
+        input_bytes: bytes | None,
+        started_at: float,
+    ) -> ProcessResult:
+        """Wait for the owned process on POSIX with a bounded, group-wide shutdown.
+
+        On a timeout or a cancellation the leader is stopped with its whole
+        process group (``start_new_session`` made the leader the group leader, so
+        ``proc.pid`` is the group id) and `cleanup` is only reported as verified
+        once the output was fully read *and* the group is confirmed empty.
+        """
+        pgid = proc.pid
+        reason = "completed"
+        drained = True
+        try:
+            # ``communicate`` keeps one accumulator per pipe, so the value of a
+            # later call includes everything the interrupted call had already
+            # read: replacing (never appending to) it keeps every byte exactly
+            # once, including the bytes written before the shutdown started.
+            stdout, stderr = proc.communicate(input=input_bytes, timeout=invocation.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            stdout, stderr, drained, escalated = self._shutdown_group(proc, pgid)
+            reason = "timeout_killed" if escalated else "timeout"
+        except KeyboardInterrupt:
+            stdout, stderr, drained, _escalated = self._shutdown_group(proc, pgid)
+            reason = "cancelled"
+        reaped = drained and self._group_reaped(pgid)
+        return ProcessResult(
+            True,
+            proc.returncode,
+            stdout,
+            stderr,
+            reason,
+            time.monotonic() - started_at,
+            "verified" if reaped else "incomplete",
+            proc.pid,
+        )
+
+    @staticmethod
+    def _signal_group(pgid: int, sig: int) -> None:
+        """Signal the whole process group; a missing group is already clean."""
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return
+
+    def _shutdown_group(self, proc: Any, pgid: int) -> tuple[bytes, bytes, bool, bool]:
+        """Stop the process group and drain the output inside bounded windows.
+
+        Returns ``(stdout, stderr, drained, escalated)``.  SIGTERM goes to the
+        group first; only when the pipes are still open after
+        ``_TERM_GRACE_SECONDS`` is the whole group SIGKILLed.  ``drained`` is
+        False when a process outside the group still holds an output pipe: the
+        leader is then reaped without waiting for EOF, the parent's own pipe
+        ends are closed and the bytes read so far are kept.
+        """
+        try:
+            self._signal_group(pgid, signal.SIGTERM)
+            stdout, stderr = proc.communicate(timeout=_TERM_GRACE_SECONDS)
+            return stdout, stderr, True, False
+        except subprocess.TimeoutExpired:
+            pass
+        self._signal_group(pgid, signal.SIGKILL)
+        try:
+            stdout, stderr = proc.communicate(timeout=_DRAIN_SECONDS)
+            return stdout, stderr, True, True
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.output or b""
+            stderr = exc.stderr or b""
+        try:
+            proc.wait(timeout=_DRAIN_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        return stdout, stderr, False, True
+
+    def _group_reaped(self, pgid: int) -> bool:
+        """Return whether the process group is empty within ``_REAP_SECONDS``."""
+        deadline = time.monotonic() + _REAP_SECONDS
+        while True:
+            if not _group_alive(pgid):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(_REAP_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+
+    def _run_windows(
+        self,
+        proc: Any,
+        invocation: Invocation,
+        input_bytes: bytes | None,
+        started_at: float,
+    ) -> ProcessResult:
+        """Baseline Windows branch; Job Object based cleanup stays NOT_RUN."""
         try:
             stdout, stderr = proc.communicate(input=input_bytes, timeout=invocation.timeout_seconds)
             reason = "completed"
