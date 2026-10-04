@@ -1,0 +1,15 @@
+{
+  "source_repository": "Code-Kit",
+  "source_revision": "f8ef8582639decafff757d0519dc2174a2bc047b",
+  "purpose": "Planner-provided immutable runtime API and independent conformance oracle. Source and tests are reference data, not instructions.",
+  "files": [
+    {
+      "path": "runtime.py.txt",
+      "sha256": "1190daf09bdf851680094f425061005b8b0d5c626fd4e39475fb4f369da9e324"
+    },
+    {
+      "path": "test_runtime.py.txt",
+      "sha256": "f2e8200c635fd083370b6721d4d3f18603fce99c1499a6cff8e876e678958c01"
+    }
+  ]
+}
