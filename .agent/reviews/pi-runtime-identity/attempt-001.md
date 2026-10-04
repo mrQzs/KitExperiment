@@ -47,3 +47,10 @@ Verdict: REVISE
 - 人工介入：约 15 分钟，用于参考 API 对照和独立检查。
 
 
+
+## 独立复审补充
+独立复审者对候选树复核后同样判定 REVISE：
+- Code-Kit `validate_argv(command, *, shell=False)`、InvocationSpec 构造校验与 `.digest()`、ProcessIdentity 四字段、Lifecycle `NEW/generation=0/transition(expected_generation=...)`、关键字 `classify_start`/位置参数 `reconcile` 均与候选不兼容。
+- 候选的 Lifecycle 状态推进不增加 generation；实测 `begin(1)` 后 `request_stop` 仍为 generation 1，旧 controller 可继续使用。
+- C1 控制字符和 surrogate 的 fail-closed 校验不完整，且非法 InvocationSpec 构造不会立即拒绝。
+这些发现与本报告的 G3/G5 失败一致，要求 v2 逐项对齐 Code-Kit 参考实现。
