@@ -1,7 +1,7 @@
 {
   "allowed_executors": [
     {
-      "provider": "bb",
+      "provider": "step",
       "model": "step-5-preview",
       "thinking": "high"
     }

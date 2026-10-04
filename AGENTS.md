@@ -21,9 +21,9 @@ Code-Kit/SentinelMesh control-plane contracts.
   publish a contract, or authorize integration.
 - Preserve immutable resource references, canonical JSON, CAS/generation
   checks, and fail-closed validation.
-- Changes to Code-Kit itself must be made in `D:\Code\Code-Kit` and validated
-  with its existing test suite; KitExperiment changes must remain in this
-  repository.
+- Changes to Code-Kit itself must be made in the sibling `../Code-Kit`
+  repository and validated with its existing test suite; KitExperiment changes
+  must remain in this repository.
 
 ## Pi dispatch
 
