@@ -30,6 +30,7 @@ python -m sentinelmesh.cli --help
 - `planner_runtime.py` / `planner_projection.py`：规划就绪、结果完整性、预算边界和只读生命周期投影。
 - `workflows.py`：受信的七插件目录和 bugfix/documentation/regression 三个 DAG 配方。
 - `integration_records.py` / `integration_gates.py`：目标、检查、证据清单、覆盖率和离线/生产连接器门禁。
+- `persistence.py`：单主机 SQLite WAL/FULL 资源、幂等操作、代际 fencing 和 hash-chain journal；不宣称分布式锁或生产对象存储。
 
 原型的单元测试是离线证据；它们不能替代设计文档要求的真实 CLI、三平台、生产授权、账单、迁移和断电测试。
 

@@ -26,6 +26,7 @@ from .integration_gates import (GateDecision, IntegrationGateError, evaluate_int
 from .integration_records import (IntegrationTarget, CheckCatalog, CheckObservation, EvidenceManifest,
                                   CoverageReport, DeliveryDecision, evaluate_coverage, make_delivery_decision)
 from .workflows import WorkflowDefinition, WorkflowError, builtin_catalog, builtin_workflow, lock_for_workflow
+from .persistence import DurableStore, JournalEntry, PersistenceError
 
 __all__ = [
     "ConfigResolver", "EffectiveConfig", "Profile", "ApprovalStore", "ApprovalRecord", "InputLock",
@@ -47,4 +48,5 @@ __all__ = [
     "CheckObservation", "EvidenceManifest", "CoverageReport", "DeliveryDecision", "evaluate_coverage",
     "make_delivery_decision", "WorkflowDefinition", "WorkflowError", "builtin_catalog", "builtin_workflow",
     "lock_for_workflow",
+    "DurableStore", "JournalEntry", "PersistenceError",
 ]
