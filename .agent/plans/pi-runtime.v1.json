@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-runtime",
+  "plan_version": 1,
+  "title": "Pi runtime identity, lifecycle fencing, and lease contract",
+  "repository": "KitExperiment",
+  "base_sha": "a297b6ebe08410ade88e5fc4fe09fff489cbf064",
+  "risk_level": "high",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "bb",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "powershell"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/adapter.py"
+    ],
+    "allowed_new_files": [
+      "sentinelmesh/runtime_lease.py",
+      "tests/test_runtime_contract.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-c",
+        "from pathlib import Path; p=Path(r'tests/test_runtime_contract.py'); assert p.exists() and p.stat().st_size>0; print('PI_RUNTIME_ARTIFACT_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_ARTIFACT_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.runtime import InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; from sentinelmesh.runtime_lease import RuntimeLease, issue_lease, assess_lease, release_lease; print('PI_RUNTIME_API_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_API_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "在不破坏现有 Invocation、ProcessResult、SubprocessRunner API 的前提下，增加请求/运行身份、严格 argv 校验、生命周期和 START_UNKNOWN 分类/对账 API；身份不匹配、重复代际或未知启动结果必须拒绝重发。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "增加 RuntimeLease 及 generation fencing；STOPPING/FAILED/已结束运行不得被替换，释放和过期判断保持确定性；Pi/Claude 能力探测保持只读、显式来源和 fail-closed 语义。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "SubprocessRunner 保持无 shell 注入、超时/取消粘性原因、进程组/Windows 原生清理的可证明边界；无法证明的平台能力必须返回 PARTIAL/UNKNOWN，而不是伪造 PASS。",
+      "evidence": [
+        "V02",
+        "V03",
+        "V04"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "只用标准库和本地临时子进程测试；不访问凭据、不联网、不启动真实 Pi/Claude、不修改合同或设计材料。",
+      "evidence": [
+        "V02",
+        "V04"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 1,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 1800,
+    "cost_budget": null
+  }
+}
