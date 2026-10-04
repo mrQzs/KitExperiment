@@ -5,11 +5,17 @@
   "files": [
     {
       "path": "runtime.py.txt",
-      "sha256": "1190daf09bdf851680094f425061005b8b0d5c626fd4e39475fb4f369da9e324"
+      "sha256": "1190daf09bdf851680094f425061005b8b0d5c626fd4e39475fb4f369da9e324",
+      "normalization": "CRLF to LF before SHA-256; UTF-8 source otherwise unchanged",
+      "source_path": "scripts/codekit/runtime.py",
+      "git_blob": "0e0b7a436ae85ab98e662d220383d359eaf90e4e"
     },
     {
       "path": "test_runtime.py.txt",
-      "sha256": "f2e8200c635fd083370b6721d4d3f18603fce99c1499a6cff8e876e678958c01"
+      "sha256": "f2e8200c635fd083370b6721d4d3f18603fce99c1499a6cff8e876e678958c01",
+      "normalization": "CRLF to LF before SHA-256; UTF-8 source otherwise unchanged",
+      "source_path": "tests/test_runtime.py",
+      "git_blob": "5c93027e8667afb5166794d2651b62dd4df3699d"
     }
   ]
 }
