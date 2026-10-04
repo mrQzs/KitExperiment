@@ -11,12 +11,16 @@ native Linux evidence stays NOT_RUN).
 from __future__ import annotations
 
 import builtins
+import collections.abc
 import contextlib
+import ctypes
 import errno
 import hashlib
 import io
 import json
 import os
+import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,6 +47,108 @@ SHA_ENV_EMPTY = "16f1bf80d85f8f89ba69f102a9a8a35f07dd8b0ac4b26cb68a9c0b46e29fde7
 
 ENV_BASELINE = {"LANG": "C", "PATH": "/usr/bin:/bin"}
 LINUX_BOOT_ID_LEGAL = "123e4567-e89b-12d3-a456-426614174000"
+
+# The ctypes prototype the darwin branch has to declare for ``sysctlbyname``: a
+# caller-sized buffer addressed by pointer, or the reported size cannot be read
+# back safely on a 64-bit ABI.
+DARWIN_ARGUMENT_TYPES = [
+    ctypes.c_char_p,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.c_void_p,
+    ctypes.c_size_t,
+]
+
+
+class NameSubclass(str):
+    """A ``str`` subclass, which the module must not accept as a scalar."""
+
+
+class ValueSubclass(str):
+    """A ``str`` subclass, which the module must not accept as a scalar."""
+
+
+class PathSubclass(str):
+    """A ``str`` subclass, which must not be accepted as argv0, cwd or path."""
+
+
+class FakePathLike:
+    """An ``os.PathLike`` object, which must never be opened as a path."""
+
+    def __init__(self, path):
+        self._path = path
+
+    def __fspath__(self):
+        return self._path
+
+
+class SnapshotMapping(collections.abc.Mapping):
+    """Yield one environment on the first ``items()`` and another afterwards."""
+
+    def __init__(self, first, later):
+        self._first, self._later, self.reads = dict(first), dict(later), 0
+
+    def items(self):
+        self.reads += 1
+        return (self._first if self.reads == 1 else self._later).items()
+
+    def __iter__(self):
+        return iter(self._first)
+
+    def __getitem__(self, key):
+        return self._first[key]
+
+    def __len__(self):
+        return len(self._first)
+
+
+class FakeSysctlbyname:
+    """Controllable stand-in for ``libSystem.sysctlbyname``.
+
+    The real symbol is called twice per boot id: once with a ``None`` buffer to
+    learn the size, once with a buffer to fill.  One scripted payload therefore
+    serves both calls of a single ``boot_id()`` call, so a sequence of payloads
+    is returned one ``boot_id()`` at a time.
+    """
+
+    def __init__(self, *payloads, length_status=0, value_status=0, reported_length=None):
+        self.payloads = list(payloads)
+        self.length_status = length_status
+        self.value_status = value_status
+        self.reported_length = reported_length
+        self.argtypes = None
+        self.restype = None
+        self.calls = []
+        self.round = -1
+
+    def _current(self):
+        if self.round < 0 or self.round >= len(self.payloads):
+            raise AssertionError("the implementation asked for more boot ids than scripted")
+        return self.payloads[self.round]
+
+    def _report_length(self, pointer, payload):
+        length = len(payload) + 1 if self.reported_length is None else self.reported_length
+        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_size_t)).contents.value = length
+
+    def __call__(self, name, old_buffer, old_length, new_buffer, new_length):
+        self.calls.append((name, old_buffer, old_length, new_buffer, new_length))
+        if old_buffer is None:
+            # The size query opens a new round and names the payload served.
+            self.round += 1
+            self._report_length(old_length, self._current())
+            return self.length_status
+        payload = self._current()
+        self._report_length(old_length, payload)
+        if payload:
+            old_buffer.value = payload
+        return self.value_status
+
+
+class FakeLibc:
+    """A libSystem handle whose only symbol is the scripted sysctl above."""
+
+    def __init__(self, sysctlbyname):
+        self.sysctlbyname = sysctlbyname
 
 
 def make_spec(**overrides):
@@ -136,6 +242,25 @@ class EnvironmentDigestTests(RejectionAssertions):
             with self.subTest(label):
                 self.assert_rejected(lambda value=value: environment_digest(value), "E_RUNTIME_ENVIRONMENT")
 
+    def test_str_subclass_name_or_value_is_rejected(self):
+        self.assert_baseline_digest()
+        for label, value in {
+            "subclass name": {NameSubclass("LANG"): "C"},
+            "subclass value": {"LANG": ValueSubclass("C")},
+            "subclass name and value": {NameSubclass("LANG"): ValueSubclass("C")},
+        }.items():
+            with self.subTest(label):
+                self.assert_rejected(lambda value=value: environment_digest(value), "E_RUNTIME_ENVIRONMENT")
+
+    def test_mapping_is_read_once_and_the_first_read_wins(self):
+        first = dict(ENV_BASELINE)
+        later = {"LANG": "C", "PATH": "/evil"}
+        probe = SnapshotMapping(first, later)
+        self.assertEqual(environment_digest(probe), SHA_ENV_A)
+        # One read only: a second read would have digested (and validated) a
+        # different mapping than the one the caller handed over.
+        self.assertEqual(probe.reads, 1)
+
     def test_non_text_name_or_value_is_rejected(self):
         self.assert_baseline_digest()
         for label, value in {
@@ -226,6 +351,16 @@ class VerifiedEnvironmentTests(RejectionAssertions):
         environment["EXTRA"] = "1"
         self.assertEqual(verified, ENV_BASELINE)
         self.assertEqual(verified_environment(make_spec(), ENV_BASELINE), ENV_BASELINE)
+
+    def test_verified_environment_returns_the_first_snapshot_only(self):
+        first = dict(ENV_BASELINE)
+        later = {"LANG": "C", "PATH": "/evil"}
+        probe = SnapshotMapping(first, later)
+        verified = verified_environment(make_spec(), probe)
+        self.assertEqual(verified, first)
+        self.assertIs(type(verified), dict)
+        self.assertIsNot(verified, first)
+        self.assertEqual(probe.reads, 1)
 
     def test_mismatching_environment_is_rejected(self):
         spec = make_spec()
@@ -321,6 +456,72 @@ class BootIdTests(RejectionAssertions):
         patched_open = mock.patch("builtins.open", fake_open)
         with platform, patched_open:
             yield
+
+    @contextlib.contextmanager
+    def patched_darwin_boot_id(self, *payloads, **options):
+        """Serve a fake ``libSystem.sysctlbyname`` on the darwin branch.
+
+        The patch replaces ``ctypes.CDLL`` only, so the declarations, the buffer
+        arithmetic and the UTF-8/format checks stay the real ones.  The cases run
+        on every platform: nothing here reads this machine's boot session.
+        """
+        sysctlbyname = FakeSysctlbyname(*payloads, **options)
+
+        def fake_cdll(name, *args, **kwargs):
+            return FakeLibc(sysctlbyname)
+
+        with mock.patch.object(sys, "platform", "darwin"), mock.patch.object(ctypes, "CDLL", fake_cdll):
+            yield sysctlbyname
+
+    def test_darwin_declares_the_sysctlbyname_prototype_and_returns_the_uuid(self):
+        upper = LINUX_BOOT_ID_LEGAL.upper()
+        with self.patched_darwin_boot_id(upper.encode("utf-8")) as sysctlbyname:
+            self.assertEqual(boot_id(), upper)
+        # The declared prototype is part of the contract: a size argument typed
+        # as a plain int would truncate the reported length on a 64-bit ABI.
+        self.assertEqual(sysctlbyname.argtypes, DARWIN_ARGUMENT_TYPES)
+        self.assertIs(sysctlbyname.restype, ctypes.c_int)
+        self.assertEqual([call[0] for call in sysctlbyname.calls], [b"kern.bootsessionuuid"] * 2)
+
+    def test_darwin_branch_is_not_cached(self):
+        second = "999e4567-e89b-12d3-a456-426614174000"
+        with self.patched_darwin_boot_id(
+            LINUX_BOOT_ID_LEGAL.encode("utf-8"), second.encode("utf-8")
+        ):
+            self.assertEqual(boot_id(), LINUX_BOOT_ID_LEGAL)
+            self.assertEqual(boot_id(), second)
+
+    def test_darwin_branch_rejects_a_failed_size_or_read_call(self):
+        for label, options in {
+            "size call fails": {"length_status": 1},
+            "size call reports zero": {"reported_length": 0},
+            "read call fails": {"value_status": 1},
+        }.items():
+            with self.subTest(label):
+                with self.patched_darwin_boot_id(b"x" * 36, **options):
+                    self.assert_rejected(boot_id, "E_RUNTIME_IDENTITY")
+
+    def test_darwin_branch_rejects_illegal_content(self):
+        legal = LINUX_BOOT_ID_LEGAL.encode("utf-8")
+        for label, payload in {
+            "not utf-8": b"\xff\xfe\xff\xfe\xff\xfe\xff\xfe",
+            "not a uuid": b"not-a-boot-id",
+            "empty payload": b"",
+            "truncated uuid": legal[:-1],
+            "prefixed uuid": b"boot_id=" + legal,
+            "embedded nul": LINUX_BOOT_ID_LEGAL[:24].encode("utf-8") + b"\x00" + LINUX_BOOT_ID_LEGAL[24:].encode("utf-8"),
+        }.items():
+            with self.subTest(label):
+                with self.patched_darwin_boot_id(payload):
+                    self.assert_rejected(boot_id, "E_RUNTIME_IDENTITY")
+
+    def test_darwin_branch_keeps_the_reported_text(self):
+        # A legal value proves the baseline before every rejection above, and
+        # the platform's own upper-case spelling is preserved verbatim.
+        upper = LINUX_BOOT_ID_LEGAL.upper()
+        with self.patched_darwin_boot_id(upper.encode("utf-8"), upper.encode("utf-8")):
+            self.assertEqual(boot_id(), upper)
+            self.assertRegex(boot_id(), BOOT_ID_TEXT)
 
     def test_linux_branch_returns_legal_boot_id_stripped_and_never_cached(self):
         second = "999e4567-e89b-12d3-a456-426614174000"
@@ -499,6 +700,119 @@ class ResolveExecutableTests(RejectionAssertions):
                     "E_RUNTIME_ENVIRONMENT",
                 )
 
+    def test_path_entries_must_be_absolute(self):
+        tool = script_executable(self.directory, "identity-tool")
+        directory = self.directory
+        self.assertEqual(self.resolved("identity-tool"), os.path.realpath(tool))
+        # Several absolute entries are legal, in any order.
+        self.assertEqual(
+            resolve_executable("identity-tool", cwd=directory, environment={"PATH": "/usr/bin:" + directory}),
+            os.path.realpath(tool),
+        )
+        for label, path in {
+            "relative entry": "./bin:" + directory,
+            "bare entry": "bin:" + directory,
+            "tilde entry": "~/bin:" + directory,
+            "empty entry in the middle": directory + "::/usr/bin",
+            "empty entry in front": ":" + directory,
+            "empty entry at the end": directory + ":",
+            "entry is only empty": "",
+            "one relative entry between absolute ones": "/usr/bin:bin:/bin",
+        }.items():
+            with self.subTest(label):
+                self.assert_rejected(
+                    lambda path=path: resolve_executable(
+                        "identity-tool", cwd=directory, environment={"PATH": path}
+                    ),
+                    "E_RUNTIME_IDENTITY",
+                )
+
+    def test_bare_name_never_falls_back_to_the_parent_path(self):
+        tool = script_executable(self.directory, "identity-tool")
+        # The inherited PATH really does contain ``sh``: the only thing that can
+        # keep the lookup from finding it is the missing explicit PATH.
+        inherited = shutil.which("sh", path=os.environ.get("PATH", ""))
+        self.assertTrue(inherited and os.path.isfile(inherited), inherited)
+        with mock.patch.dict(os.environ, {"PATH": os.environ.get("PATH", "")}):
+            for label, environment in {
+                "PATH key missing": {"LANG": "C"},
+                "PATH empty": {"PATH": ""},
+                "other keys only": {"LANG": "C", "HOME": "/work/tree"},
+            }.items():
+                with self.subTest(label):
+                    self.assert_rejected(
+                        lambda environment=environment: resolve_executable(
+                            "sh", cwd=self.directory, environment=environment
+                        ),
+                        "E_RUNTIME_IDENTITY",
+                    )
+        self.assertEqual(self.resolved("identity-tool"), os.path.realpath(tool))
+
+    def test_argv0_and_cwd_character_rules_are_rejected(self):
+        tool = script_executable(self.directory, "identity-tool")
+        self.assertEqual(self.resolved("identity-tool"), os.path.realpath(tool))
+        for label, argv0 in {
+            "nul": "identity-tool\x00",
+            "control character": "identity\x01-tool",
+            "newline": "identity-tool\n",
+            "delete": "identity-tool\x7f",
+            "lone high surrogate": "identity\ud800-tool",
+            "lone low surrogate": "identity\udfff-tool",
+            "str subclass": PathSubclass("identity-tool"),
+        }.items():
+            with self.subTest(f"argv0 {label}"):
+                self.assert_rejected(
+                    lambda argv0=argv0: resolve_executable(
+                        argv0, cwd=self.directory, environment=dict(self.environment)
+                    ),
+                    "E_RUNTIME_IDENTITY",
+                )
+        for label, cwd in {
+            "nul": self.directory + "\x00",
+            "control character": self.directory + "\x01",
+            "newline": self.directory + "\n",
+            "lone high surrogate": self.directory + "\ud800",
+            "str subclass": PathSubclass(self.directory),
+        }.items():
+            with self.subTest(f"cwd {label}"):
+                self.assert_rejected(
+                    lambda cwd=cwd: resolve_executable(
+                        "identity-tool", cwd=cwd, environment=dict(self.environment)
+                    ),
+                    "E_RUNTIME_IDENTITY",
+                )
+
+    def test_platform_path_errors_map_to_identity_errors(self):
+        tool = script_executable(self.directory, "identity-tool")
+        self.assertEqual(self.resolved("./identity-tool"), os.path.realpath(tool))
+        # ``./identity-tool`` exercises every path operation the explicit-path
+        # branch uses: join, isabs, realpath, isfile and access.
+        operations = {
+            "os.path.join": (os.path, "join"),
+            "os.path.isabs": (os.path, "isabs"),
+            "os.path.realpath": (os.path, "realpath"),
+            "os.path.isfile": (os.path, "isfile"),
+            "os.access": (os, "access"),
+        }
+        for label, (owner, attribute) in operations.items():
+            for failure in (OSError, ValueError, UnicodeEncodeError("utf-8", "x", 0, 1, "surrogates")):
+                with self.subTest(operation=label, error=type(failure).__name__):
+                    with mock.patch.object(owner, attribute, side_effect=failure):
+                        self.assert_rejected(
+                            lambda: resolve_executable(
+                                "./identity-tool", cwd=self.directory, environment=dict(self.environment)
+                            ),
+                            "E_RUNTIME_IDENTITY",
+                        )
+        self.assertEqual(self.resolved("./identity-tool"), os.path.realpath(tool))
+
+    def test_shutil_which_errors_map_to_identity_errors(self):
+        tool = script_executable(self.directory, "identity-tool")
+        self.assertEqual(self.resolved("identity-tool"), os.path.realpath(tool))
+        with mock.patch.object(shutil, "which", side_effect=ValueError):
+            self.assert_rejected(lambda: self.resolved("identity-tool"), "E_RUNTIME_IDENTITY")
+        self.assertEqual(self.resolved("identity-tool"), os.path.realpath(tool))
+
 
 class FileSha256Tests(RejectionAssertions):
     def setUp(self):
@@ -580,11 +894,70 @@ class FileSha256Tests(RejectionAssertions):
                 self.assert_rejected(lambda target=target: file_sha256(target), "E_RUNTIME_IDENTITY")
 
     def test_non_text_path_is_rejected_with_a_runtime_error_code(self):
+        path = self.write("payload", b"identity payload\n")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
         for label, target in {"none": None, "integer": 17}.items():
             with self.subTest(label):
                 with self.assertRaises(RuntimeErrorCode) as caught:
                     file_sha256(target)
                 self.assertEqual(caught.exception.code, "E_RUNTIME_IDENTITY")
+
+    def test_non_str_path_is_rejected_before_any_os_call(self):
+        path = self.write("payload", b"identity payload\n")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+        for label, target in {
+            "boolean": True,
+            "bytes": b"payload",
+            "pathlib Path": pathlib.Path(path),
+            "os.PathLike object": FakePathLike(path),
+            "str subclass": PathSubclass(path),
+        }.items():
+            with self.subTest(label):
+                self.assert_rejected(lambda target=target: file_sha256(target), "E_RUNTIME_IDENTITY")
+        # The legal baseline still hashes after every rejection above.
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+
+    def test_open_descriptor_is_not_a_path_and_stays_open(self):
+        path = self.write("payload", b"identity payload\n")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+        with tempfile.TemporaryFile() as handle:
+            handle.write(b"descriptor bytes")
+            handle.flush()
+            handle.seek(0)
+            descriptor = handle.fileno()
+            offset_before = os.lseek(descriptor, 0, os.SEEK_CUR)
+            self.assert_rejected(lambda: file_sha256(descriptor), "E_RUNTIME_IDENTITY")
+            # Still open, and not read: a path that is really a descriptor must
+            # never be consumed, hashed or closed by the identity capture.
+            os.fstat(descriptor)
+            self.assertEqual(os.lseek(descriptor, 0, os.SEEK_CUR), offset_before)
+            self.assertEqual(offset_before, 0)
+            self.assertEqual(handle.read(), b"descriptor bytes")
+
+    def test_paths_with_control_characters_or_surrogates_are_rejected(self):
+        path = self.write("payload", b"identity payload\n")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+        for label, target in {
+            "empty": "",
+            "nul in the middle": path + "\x00",
+            "newline": path + "\n",
+            "delete": path + "\x7f",
+            "lone high surrogate": path + "\ud800",
+            "lone low surrogate": "\udfff" + path,
+        }.items():
+            with self.subTest(label):
+                self.assert_rejected(lambda target=target: file_sha256(target), "E_RUNTIME_IDENTITY")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores file permissions")
+    def test_unreadable_file_is_rejected(self):
+        path = self.write("unreadable", b"identity payload\n")
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
+        os.chmod(path, 0o000)
+        self.addCleanup(os.chmod, path, 0o644)
+        self.assert_rejected(lambda: file_sha256(path), "E_RUNTIME_IDENTITY")
+        os.chmod(path, 0o644)
+        self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
 
 
 class CaptureProcessIdentityTests(RejectionAssertions):
@@ -609,6 +982,26 @@ class CaptureProcessIdentityTests(RejectionAssertions):
                 "pid": os.getpid(),
                 "boot_id": identity.boot_id,
                 "executable_sha256": expected_digest,
+                "worktree_id": "wt-1",
+            },
+        )
+
+    def test_interpreter_identity_asserts_every_canonical_field(self):
+        # The live interpreter is a real executable regular file, so all four
+        # fields can be asserted without any fake: the captured boot id equals
+        # a fresh boot_id() read and the digest equals a fresh file_sha256.
+        executable = os.path.realpath(sys.executable)
+        identity = capture_process_identity(os.getpid(), executable=executable, worktree_id="wt-1")
+        self.assertEqual(identity.pid, os.getpid())
+        self.assertEqual(identity.boot_id, boot_id())
+        self.assertEqual(identity.worktree_id, "wt-1")
+        self.assertEqual(identity.executable_sha256, file_sha256(executable))
+        self.assertEqual(
+            identity.to_dict(),
+            {
+                "pid": os.getpid(),
+                "boot_id": identity.boot_id,
+                "executable_sha256": identity.executable_sha256,
                 "worktree_id": "wt-1",
             },
         )

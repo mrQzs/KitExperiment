@@ -67,15 +67,27 @@ def _scalar_text(value: str) -> bool:
     return True
 
 
-def _validated_environment(environment: Any) -> Mapping[str, str]:
-    """Validate an explicit environment mapping or raise ``E_RUNTIME_ENVIRONMENT``.
+def _environment_snapshot(environment: Any) -> dict[str, str]:
+    """Read an explicit environment mapping exactly once into a plain ``dict``.
+
+    The snapshot is taken before anything else looks at the mapping, so a
+    mapping whose contents change between reads (a live view, a lazily built
+    proxy, a hostile ``items()``) can never be validated as one mapping and then
+    digested, resolved or returned as another.  Only the snapshot is used from
+    here on, which is also what makes the digest depend on content alone.
+    """
+    if not isinstance(environment, collections.abc.Mapping):
+        raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment must be a mapping")
+    return dict(environment.items())
+
+
+def _validated_snapshot(variables: dict[str, str]) -> dict[str, str]:
+    """Validate one already-snapshotted environment or raise ``E_RUNTIME_ENVIRONMENT``.
 
     Names must be non-empty text without ``=`` (a ``name=value`` block has no
     other legal syntax); values may be empty.  Both are ordinary scalar text.
     """
-    if not isinstance(environment, collections.abc.Mapping):
-        raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment must be a mapping")
-    for name, value in environment.items():
+    for name, value in variables.items():
         if type(name) is not str or not name:
             raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment name must be non-empty text")
         if "=" in name:
@@ -87,7 +99,19 @@ def _validated_environment(environment: Any) -> Mapping[str, str]:
                 "E_RUNTIME_ENVIRONMENT",
                 "environment entry contains a control or non-scalar character",
             )
-    return environment
+    return variables
+
+
+def _validated_environment(environment: Any) -> dict[str, str]:
+    """Snapshot and validate an explicit environment mapping."""
+    return _validated_snapshot(_environment_snapshot(environment))
+
+
+def _environment_document(variables: dict[str, str]) -> str:
+    """Return the canonical SHA-256 of one already-snapshotted environment."""
+    payload = {"schema": _ENVIRONMENT_SCHEMA, "variables": dict(variables)}
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def environment_digest(environment: Mapping[str, str]) -> str:
@@ -98,10 +122,7 @@ def environment_digest(environment: Mapping[str, str]) -> str:
     as UTF-8, so the digest depends on the mapping's content only and never on
     its iteration order.
     """
-    variables = _validated_environment(environment)
-    payload = {"schema": _ENVIRONMENT_SCHEMA, "variables": dict(variables)}
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _environment_document(_validated_environment(environment))
 
 
 def verified_environment(spec: InvocationSpec, environment: Mapping[str, str]) -> dict[str, str]:
@@ -115,9 +136,13 @@ def verified_environment(spec: InvocationSpec, environment: Mapping[str, str]) -
     """
     if type(spec) is not InvocationSpec:
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "verified_environment requires an InvocationSpec")
-    if environment_digest(environment) != spec.environment_sha256:
+    # Exactly one read of the caller's mapping: the snapshot is validated,
+    # digested and returned, so a mapping that changes afterwards can neither
+    # pass verification nor be handed to the supervisor in a second shape.
+    snapshot = _validated_environment(environment)
+    if _environment_document(snapshot) != spec.environment_sha256:
         raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment digest does not match the invocation spec")
-    return dict(environment)
+    return dict(snapshot)
 
 
 def _validated_boot_id(text: str, source: str) -> str:
@@ -128,7 +153,10 @@ def _validated_boot_id(text: str, source: str) -> str:
 
 def _darwin_boot_id() -> str:
     """Read ``kern.bootsessionuuid`` through `sysctlbyname` in libSystem."""
-    import ctypes
+    try:
+        import ctypes
+    except ImportError as exc:  # pragma: no cover - platform failure
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"ctypes is unavailable: {exc}") from exc
 
     # ``CDLL(None)`` is the main program handle, which on macOS resolves the
     # libSystem symbols the interpreter is already linked against.  It needs no
@@ -139,6 +167,18 @@ def _darwin_boot_id() -> str:
         raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"libSystem is unavailable: {exc}") from exc
     if not hasattr(libc, "sysctlbyname"):
         raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "sysctlbyname is unavailable")
+    # Declare the prototype explicitly: without ``argtypes`` the size argument
+    # would be passed as a 32-bit int and the returned length could be read back
+    # from the wrong stack word, so a successful query reported as a failure (or
+    # the reverse).
+    libc.sysctlbyname.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    libc.sysctlbyname.restype = ctypes.c_int
     length = ctypes.c_size_t(0)
     if libc.sysctlbyname(_DARWIN_BOOT_ID_SYSCTL, None, ctypes.byref(length), None, 0) != 0:
         raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "sysctlbyname(kern.bootsessionuuid) length query failed")
@@ -184,6 +224,32 @@ def boot_id() -> str:
     raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "boot id is not available on this platform")
 
 
+def _validated_identity_text(value: Any, label: str) -> str:
+    """Return ``value`` when it is exactly non-empty scalar text."""
+    if type(value) is not str or not value:
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"{label} must be non-empty text")
+    if not _scalar_text(value):
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"{label} contains a control or non-scalar character")
+    return value
+
+
+def _path_lookup_value(environment: dict[str, str]) -> str:
+    """Return ``environment["PATH"]`` once every entry is an absolute path."""
+    if "PATH" not in environment or not environment["PATH"]:
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "environment PATH is required to resolve a bare argv0")
+    path_value = environment["PATH"]
+    for entry in path_value.split(":"):
+        # A relative or empty entry would be resolved against the supervisor's
+        # own working directory, so a bare name could escape the explicit
+        # environment; every entry has to name an absolute directory.
+        if not entry or not entry.startswith("/"):
+            raise RuntimeErrorCode(
+                "E_RUNTIME_IDENTITY",
+                f"environment PATH entry {entry!r} is not an absolute path",
+            )
+    return path_value
+
+
 def resolve_executable(argv0: str, *, cwd: str, environment: Mapping[str, str]) -> str:
     """Resolve ``argv0`` against an explicit ``environment`` and ``cwd``.
 
@@ -194,27 +260,37 @@ def resolve_executable(argv0: str, *, cwd: str, environment: Mapping[str, str]) 
     resolve to a binary the caller did not name.  The result is the real path of
     an executable regular file, or ``E_RUNTIME_IDENTITY``.
     """
-    if type(argv0) is not str or not argv0:
-        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "argv0 must be non-empty text")
-    if type(cwd) is not str or not cwd:
-        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "cwd must be non-empty text")
-    _validated_environment(environment)
-    if "/" in argv0:
-        candidate = argv0 if os.path.isabs(argv0) else os.path.join(cwd, argv0)
-    else:
-        if "PATH" not in environment or not environment["PATH"]:
-            raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "environment PATH is required to resolve a bare argv0")
-        candidate = shutil.which(argv0, path=environment["PATH"])
-        if candidate is None:
-            raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} was not found on environment PATH")
-    resolved = os.path.realpath(candidate)
-    if not os.path.isfile(resolved) or not os.access(resolved, os.X_OK):
-        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} does not resolve to an executable regular file")
+    _validated_identity_text(argv0, "argv0")
+    _validated_identity_text(cwd, "cwd")
+    snapshot = _validated_environment(environment)
+    try:
+        if "/" in argv0:
+            candidate = argv0 if os.path.isabs(argv0) else os.path.join(cwd, argv0)
+        else:
+            candidate = shutil.which(argv0, path=_path_lookup_value(snapshot))
+            if candidate is None:
+                raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} was not found on environment PATH")
+        # ``realpath`` follows symlinks, so the identity always names the file
+        # the kernel would exec, never the link a caller happened to type.
+        resolved = os.path.realpath(candidate)
+        if not os.path.isfile(resolved) or not os.access(resolved, os.X_OK):
+            raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} does not resolve to an executable regular file")
+    except RuntimeErrorCode:
+        raise
+    except (OSError, ValueError, UnicodeError) as exc:
+        # Path arithmetic on hostile text (embedded NULs, surrogates, endless
+        # symlink loops) must fail closed as an identity error rather than leak
+        # a platform exception into the caller.
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} could not be resolved") from exc
     return resolved
 
 
 def file_sha256(path: str) -> str:
     """Return the lowercase SHA-256 of a regular file, read in bounded chunks."""
+    # The path is validated as text before any ``os`` call, so an integer or a
+    # boolean cannot be handed to ``os.path`` as a file descriptor (and closed)
+    # and a path-like object cannot be opened as a side channel.
+    _validated_identity_text(path, "path")
     try:
         if not os.path.isfile(path):
             raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"{path!r} is not a regular file")
@@ -228,7 +304,7 @@ def file_sha256(path: str) -> str:
         return digest.hexdigest()
     except RuntimeErrorCode:
         raise
-    except (OSError, TypeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError, UnicodeError) as exc:
         # Missing files, directories, unreadable files and non-text paths all
         # fail closed rather than falling back to a weaker identity.
         raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"{path!r} could not be hashed") from exc
