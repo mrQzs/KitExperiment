@@ -78,7 +78,12 @@ def _environment_snapshot(environment: Any) -> dict[str, str]:
     """
     if not isinstance(environment, collections.abc.Mapping):
         raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment must be a mapping")
-    return dict(environment.items())
+    try:
+        return dict(environment.items())
+    except (TypeError, ValueError) as exc:
+        # A mapping that breaks the protocol (pairs of the wrong length,
+        # unhashable keys) is rejected like any other invalid environment.
+        raise RuntimeErrorCode("E_RUNTIME_ENVIRONMENT", "environment mapping could not be read") from exc
 
 
 def _validated_snapshot(variables: dict[str, str]) -> dict[str, str]:
