@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-runtime-contract-port",
+  "plan_version": 1,
+  "title": "Pi exact Code-Kit runtime contract port with observation mapping",
+  "repository": "KitExperiment",
+  "base_sha": "60f2d15b86a6b00f13f36f1307ce2143fa07f096",
+  "risk_level": "high",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "bb",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "powershell"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/runtime.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_runtime_contract_port.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/adapter.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-c",
+        "from pathlib import Path; p=Path(r'tests/test_runtime_contract_port.py'); assert p.exists() and p.stat().st_size>0; print('PI_RUNTIME_PORT_ARTIFACT_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_PORT_ARTIFACT_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.runtime import ALLOWED_TRANSITIONS, LIFECYCLE, InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert LIFECYCLE == ('NEW','STARTING','STARTED','STOPPING','STOPPED','FAILED','START_UNKNOWN'); assert ALLOWED_TRANSITIONS['START_UNKNOWN'] == {'STARTED','STOPPING','FAILED'}; assert tuple(validate_argv(['python','', 'x\\n'])) == ('python','','x\\n'); print('PI_RUNTIME_PORT_API_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_PORT_API_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "逐项实现 canonical Code-Kit runtime 常量、RuntimeErrorCode/旧 RuntimeErrorSM 兼容、validate_argv、InvocationSpec.digest、四字段 ProcessIdentity 和 frozen Lifecycle.transition(expected_generation)。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "classify_start 解析 run_id/environment_sha256/state/process_identity 并区分 NOT_STARTED/STARTED/START_UNKNOWN/IDENTITY_MISMATCH；reconcile(expected InvocationSpec, observed Mapping) 返回 status/run_id/expected_environment_sha256/observed_environment_sha256/replay_allowed 五键 mapping。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "START_UNKNOWN 只有 generation fence 后可恢复；身份不匹配、stale generation、未知/不完整 cleanup、非终止状态不能 replay；终止且 identity match、cleanup_confirmed 才可 replay。",
+      "evidence": [
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "测试直接使用 Code-Kit 调用形状，覆盖 ordinary empty/newline args、C1/surrogate/NUL、constructor immediate validation、digest、Lifecycle transitions/generation、start observation mismatch、reconcile mapping/replay gate 和旧运行 API。",
+      "evidence": [
+        "V02"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "无依赖、无凭据/联网/真实 provider；native Windows/macOS process cleanup 仍 NOT_RUN/BLOCKED。",
+      "evidence": [
+        "V02",
+        "V04"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 1,
+    "max_wall_seconds_per_attempt": 1500,
+    "max_wall_seconds_total": 1500,
+    "cost_budget": null
+  }
+}
