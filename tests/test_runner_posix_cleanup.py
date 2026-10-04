@@ -83,7 +83,7 @@ class RunnerPosixCleanupTests(unittest.TestCase):
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                 "time.sleep(30)\n")
         result, wall = self.run_tree(code)
-        self.assertIn(b"early", result.stdout)
+        self.assertEqual(result.stdout, b"early")
         self.assertEqual(result.stderr, b"")
         self.assertEqual(result.stop_reason, "timeout_killed")
         self.assertEqual(result.cleanup, "verified")
@@ -101,10 +101,12 @@ class RunnerPosixCleanupTests(unittest.TestCase):
                    "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                    "time.sleep(30)\n")
-        leader = ("import subprocess, sys, signal, time\n"
+        leader = ("import os, subprocess, sys, signal, time\n"
                   "sys.stdout.write('leader-out')\n"
                   "sys.stdout.flush()\n"
                   "subprocess.Popen([sys.executable, '-c', %r, sys.argv[1]])\n"
+                  "while not os.path.exists(sys.argv[1]):\n"
+                  "    time.sleep(0.02)\n"
                   "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                   "time.sleep(30)\n" % escaped)
         result, wall = self.run_tree(leader, str(pid_file))
@@ -112,7 +114,7 @@ class RunnerPosixCleanupTests(unittest.TestCase):
             self.addCleanup(self.kill_pid, int(pid_file.read_text().strip()))
         self.assertEqual(result.stop_reason, "timeout_killed")
         self.assertEqual(result.cleanup, "incomplete")
-        self.assertIn(b"leader-out", result.stdout)
+        self.assertEqual(result.stdout, b"leader-out")
         self.assertLess(wall, WALL_BOUND)
 
     def kill_pid(self, pid: int) -> None:
