@@ -144,7 +144,7 @@
     },
     {
       "id": "D03",
-      "text": "generation 每次有效 transition 递增，stale expected_generation、identity mismatch、shell/NUL/C1/surrogate/坏 SHA 在构造或调用入口 fail closed；旧 Invocation/ProcessResult/SubprocessRunner API 不回归。",
+      "text": "generation 每次有效 transition 递增，stale expected_generation、identity mismatch、shell/NUL/surrogate/坏 SHA 在构造或调用入口 fail closed；保留 Code-Kit 对普通参数空串/换行的兼容；旧 Invocation/ProcessResult/SubprocessRunner API 不回归。",
       "evidence": [
         "V02",
         "V03",
@@ -153,7 +153,7 @@
     },
     {
       "id": "D04",
-      "text": "新测试直接调用 Code-Kit 参考形状，覆盖 immediate constructor validation、digest、START_UNKNOWN recovery、stale transition、identity mismatch、reconcile replay gate 和非法 argv。",
+      "text": "新测试直接调用 Code-Kit 参考形状，覆盖 immediate constructor validation、digest、普通参数空尾/换行、START_UNKNOWN recovery、stale transition、identity mismatch、reconcile replay gate 和非法 argv。",
       "evidence": [
         "V02"
       ]

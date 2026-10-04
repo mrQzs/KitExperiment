@@ -29,12 +29,12 @@
 - KitExperiment 现有 `Invocation`、`ProcessResult`、`SubprocessRunner` 必须保持兼容。
 
 ## Behavior contract
-- `validate_argv(command, *, shell=False)` 的调用形状和 fail-closed 语义保持参考：shell carrier 拒绝；argv 必须非空；NUL、控制字符（含 C1 0x80–0x9f）和 surrogate 拒绝。
+- `validate_argv(command, *, shell=False)` 的调用形状和 fail-closed 语义保持参考：shell carrier 拒绝；argv 必须非空；NUL 和 surrogate 拒绝；保持 Code-Kit 允许普通参数中的空字符串/换行，只拒绝 executable 的空值和 CR/LF。
 - `InvocationSpec` 必须使用 Code-Kit 的字段 `request_id, run_id, command, cwd, environment_sha256, timeout_seconds, shell=False`；在 `__post_init__` 立即校验；提供 `.digest()`，不要以 `.validate()` 才校验替代。
 - `ProcessIdentity` 构造器必须接受且只要求 `pid, boot_id, executable_sha256, worktree_id`，不能强制新增 request/run/creation 字段；在构造时拒绝坏值。
 - `Lifecycle` 默认必须是 `state='NEW', generation=0, identity=None`，提供 `transition(state, *, identity=None, expected_generation=None)`；每次有效 transition generation+1，START_UNKNOWN 不是不可恢复 terminal，旧 identity 不得在 STOPPING/FAILED 中替换。
 - `classify_start(*, handoff_accepted, started_observation, expected)` 与 `reconcile(expected, observed)` 参数签名必须和参考一致；返回状态/键保持可被参考调用方读取。未知启动不得被标成 NOT_STARTED，replay 仅允许明确 NOT_STARTED 或终止身份和 cleanup 完整证据。
-- 所有新增测试必须直接调用这些参考形状；不得只测候选自定义 API。
+- 所有新增测试必须直接调用这些参考形状；不得只测候选自定义 API。测试还必须证明普通参数的空尾参数与换行保持兼容。
 
 ## Steps
 1. 阅读 AGENTS.md、当前 runtime.py 和 Code-Kit 参考实现，先写兼容测试。
@@ -71,4 +71,5 @@
 ## Forbidden
 - 不修改合同、AGENTS.md、`.agent/`、设计材料。
 - 不删除、跳过或弱化既有测试；不提交、不推送、不合并、不部署。
+
 
