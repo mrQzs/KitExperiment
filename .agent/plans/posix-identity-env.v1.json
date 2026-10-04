@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "task_id": "posix-identity-env",
+  "plan_version": 1,
+  "title": "Explicit environment digest and native process identity",
+  "repository": "KitExperiment",
+  "base_sha": "84c372682d25c1ac8e23e4964be736be70da43bb",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [],
+    "allowed_new_files": [
+      "sentinelmesh/process_identity.py",
+      "tests/test_process_identity.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_process_identity.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.process_identity import environment_digest as d; assert d({'LANG': 'C', 'PATH': '/usr/bin:/bin'}) == 'fa0f07ab1a352dd1ee7596bc244caa6649e742dfe9f800f455ef68c822f75cde'; assert d({}) == '16f1bf80d85f8f89ba69f102a9a8a35f07dd8b0ac4b26cb68a9c0b46e29fde7e'; print('ENV_DIGEST_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "ENV_DIGEST_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-c",
+        "import subprocess; from sentinelmesh.process_identity import boot_id; native = subprocess.run(['sysctl', '-n', 'kern.bootsessionuuid'], capture_output=True, text=True, check=True).stdout.strip(); assert boot_id() == native == boot_id(); print('BOOT_ID_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "BOOT_ID_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.process_identity; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "环境摘要与核对（Behavior contract 第 1、2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "boot_id 采集与失败关闭（第 3 条）",
+      "evidence": [
+        "V01",
+        "V03"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "可执行文件解析、文件摘要与身份组装（第 4–6 条）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "导入无副作用（第 7 条）",
+      "evidence": [
+        "V04"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "已有测试不退化，所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "V07",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1500,
+    "max_wall_seconds_total": 3000,
+    "cost_budget": null
+  }
+}
