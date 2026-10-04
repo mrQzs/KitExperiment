@@ -52,8 +52,10 @@ OBSERVATION_NAME = "observation.json"
 _HANDOFF_SCHEMA = "sentinelmesh-handoff-v1"
 _OBSERVATION_SCHEMA = "sentinelmesh-observation-v1"
 
-# Record byte ceiling: 64 KiB, the same bound the design states.  A record that
-# does not fit is not a record produced by `record_supervised_run`.
+# Record byte ceiling: 64 KiB, the same bound the design states.  It holds on
+# both sides: a record that would not fit is refused before it is written (a
+# handoff that could never be read back would start a run whose replay can
+# never be decided), and no more than this many bytes are ever read.
 _MAX_RECORD_BYTES = 65536
 _RECORD_MODE = 0o600
 
@@ -113,7 +115,12 @@ def _write_record(evidence_dir: str, name: str, content: Mapping[str, Any]) -> N
     only when the bytes are already durable, and it is the only step that can see
     the destination: a record that exists is never overwritten or removed.
     """
-    raw = canonical_json(content)
+    try:
+        raw = canonical_json(content)
+    except ValueError as exc:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not canonical JSON: {exc}") from exc
+    if len(raw) > _MAX_RECORD_BYTES:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} would exceed {_MAX_RECORD_BYTES} bytes")
     path = os.path.join(evidence_dir, name)
     partial = os.path.join(evidence_dir, "." + name + ".partial")
     descriptor: Optional[int] = None
@@ -124,12 +131,16 @@ def _write_record(evidence_dir: str, name: str, content: Mapping[str, Any]) -> N
             created = True
             _write_all(descriptor, raw)
             os.fsync(descriptor)
-        finally:
+        except BaseException:
             if descriptor is not None:
                 try:
                     os.close(descriptor)
                 except OSError:
                     pass
+            raise
+        # A close that fails after a successful write is reported, not ignored:
+        # the record is only published once every step has succeeded.
+        os.close(descriptor)
         os.link(partial, path)
     except OSError as exc:
         raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be recorded: {exc}") from exc
@@ -180,7 +191,10 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
     try:
         # ``O_NOFOLLOW``: a record that arrives through a link can be swapped
         # between the check and the read, so it is refused rather than followed.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        # ``O_NONBLOCK``: opening a FIFO for reading would otherwise wait for a
+        # writer forever, before the regular-file check below could refuse it;
+        # it changes nothing for a regular file.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -193,7 +207,11 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not a regular file")
         if info.st_size > _MAX_RECORD_BYTES:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} exceeds {_MAX_RECORD_BYTES} bytes")
-        raw = _read_all(descriptor)
+        # The size above is only an early refusal: a file that grows after the
+        # fstat is still read no further than one byte past the ceiling.
+        raw = _read_at_most(descriptor, _MAX_RECORD_BYTES + 1)
+        if len(raw) > _MAX_RECORD_BYTES:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} exceeds {_MAX_RECORD_BYTES} bytes")
     except RuntimeErrorCode:
         raise
     except OSError as exc:
@@ -231,14 +249,28 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
     return parsed
 
 
-def _read_all(descriptor: int) -> bytes:
-    """Read every remaining byte of ``descriptor``."""
+def _entry_exists(path: str) -> bool:
+    """Return whether ``path`` names any directory entry, a dangling link included."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{os.path.basename(path)} could not be checked: {exc}") from exc
+    return True
+
+
+def _read_at_most(descriptor: int, limit: int) -> bytes:
+    """Read until EOF or until ``limit`` bytes are in hand, whichever comes first."""
     chunks = []
-    while True:
-        chunk = os.read(descriptor, 1 << 16)
+    total = 0
+    while total < limit:
+        chunk = os.read(descriptor, min(1 << 16, limit - total))
         if not chunk:
-            return b"".join(chunks)
+            break
         chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
 
 
 def _decision(status: str, spec: InvocationSpec, observed: Optional[str]) -> dict[str, Any]:
@@ -275,6 +307,12 @@ def record_supervised_run(
         # ``supervise`` only calls this once its own input checks have passed, so
         # the specification is an ``InvocationSpec`` by the time it runs and the
         # content can be built here instead of before the validations ran.
+        # Neither record may exist yet: a stale observation would survive this
+        # run's failed publish and be read back as its outcome, allowing a replay
+        # of a run that did start (found reviewing attempt-001).
+        for name in (HANDOFF_NAME, OBSERVATION_NAME):
+            if _entry_exists(os.path.join(evidence_dir, name)):
+                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} already exists in the evidence directory")
         _write_record(evidence_dir, HANDOFF_NAME, _handoff_content(spec))
 
     run = supervise(

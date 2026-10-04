@@ -57,7 +57,7 @@ from .process_identity import (
     resolve_executable,
     verified_environment,
 )
-from .runtime import InvocationSpec, Lifecycle, ProcessIdentity, RuntimeErrorCode
+from .runtime import InvocationSpec, Lifecycle, ProcessIdentity, RuntimeErrorCode, _runtime_text
 
 # Bounded shutdown windows.  After a timeout or a cancellation the whole process
 # group is asked to terminate, and only if the leader is still alive after the
@@ -131,9 +131,16 @@ def _reject_credential_names(snapshot: Mapping[str, str], allowed: frozenset[str
 
 
 def _validated_worktree_id(worktree_id: Any) -> str:
-    """Return ``worktree_id`` once it is exactly non-empty scalar text."""
+    """Return ``worktree_id`` once it is exactly non-empty scalar text.
+
+    It must also pass the text rule `ProcessIdentity` applies after the start
+    (`_runtime_text`, which also refuses the C1 controls U+0080-U+009F): an id
+    refused only there raised after ``Popen`` and left the child running
+    unsupervised (found reviewing posix-reconcile-integration a001).
+    """
     if type(worktree_id) is not str or not worktree_id or not _scalar_text(worktree_id):
         raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "worktree_id must be non-empty scalar text")
+    _runtime_text(worktree_id, "E_RUNTIME_IDENTITY", "worktree_id")
     return worktree_id
 
 
@@ -331,9 +338,9 @@ def supervise(
     Every check runs before anything is created or started, in the order that
     lets a caller learn the most specific rejection: platform, invocation shape,
     working directory, environment digest against the locked spec, credential
-    names, worktree id, executable identity, evidence directory.  Nothing is
-    written to the evidence directory and no process is started until all of them
-    pass.
+    names, worktree id, executable identity, evidence directory, ``before_start``
+    hook.  Nothing is written to the evidence directory and no process is started
+    until all of them pass.
 
     Returns a `SupervisedRun` whose ``observation`` can be handed straight to
     `sentinelmesh.runtime.reconcile`.  A cancellation is reported, never
