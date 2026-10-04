@@ -25,15 +25,15 @@
 
 ## Repository facts
 - 当前基线没有上一候选的实现：上一 attempt 已 REVISE、未集成；当前全量基线为 65 passed。
-- Code-Kit 参考文件是规划端只读输入：`D:\Code\Code-Kit\scripts\codekit\runtime.py`。逐项保留它的公开签名和构造字段。
+- 本合同内嵌 Code-Kit runtime 的 canonical API 形状；执行器只需按下列字段和签名实现，不得读取 worktree 之外的路径。
 - KitExperiment 现有 `Invocation`、`ProcessResult`、`SubprocessRunner` 必须保持兼容。
 
 ## Behavior contract
-- `validate_argv(command, *, shell=False)` 的调用形状和 fail-closed 语义保持参考：shell carrier 拒绝；argv 必须非空；NUL 和 surrogate 拒绝；保持 Code-Kit 允许普通参数中的空字符串/换行，只拒绝 executable 的空值和 CR/LF。
-- `InvocationSpec` 必须使用 Code-Kit 的字段 `request_id, run_id, command, cwd, environment_sha256, timeout_seconds, shell=False`；在 `__post_init__` 立即校验；提供 `.digest()`，不要以 `.validate()` 才校验替代。
-- `ProcessIdentity` 构造器必须接受且只要求 `pid, boot_id, executable_sha256, worktree_id`，不能强制新增 request/run/creation 字段；在构造时拒绝坏值。
-- `Lifecycle` 默认必须是 `state='NEW', generation=0, identity=None`，提供 `transition(state, *, identity=None, expected_generation=None)`；每次有效 transition generation+1，START_UNKNOWN 不是不可恢复 terminal，旧 identity 不得在 STOPPING/FAILED 中替换。
-- `classify_start(*, handoff_accepted, started_observation, expected)` 与 `reconcile(expected, observed)` 参数签名必须和参考一致；返回状态/键保持可被参考调用方读取。未知启动不得被标成 NOT_STARTED，replay 仅允许明确 NOT_STARTED 或终止身份和 cleanup 完整证据。
+- `validate_argv(command, *, shell=False)` 的调用形状和参考语义固定：shell carrier 拒绝；argv 非空；仅 argv[0] 要求非空且不得 CR/LF；所有项拒绝 NUL/surrogate；普通参数允许空字符串与换行。绝对 cwd 和大写/标点 opaque id 也必须保留，只拒绝空值、控制字符和 surrogate。
+- `InvocationSpec` 必须使用且只要求 Code-Kit 的字段 `request_id, run_id, command, cwd, environment_sha256, timeout_seconds, shell=False`；在 `__post_init__` 立即校验；提供 `.digest()`，可额外提供返回 self 的 `.validate()` 兼容方法但不能延迟校验。
+- `ProcessIdentity` 构造器必须接受且只要求 `pid, boot_id, executable_sha256, worktree_id`，不能强制新增 request/run/creation/controller 字段；在构造时拒绝坏值。
+- `Lifecycle` 默认必须是 `state='NEW', generation=0, identity=None`，提供 `transition(state, *, identity=None, expected_generation=None)`；每次有效 transition generation+1，START_UNKNOWN 可在 expected_generation 下转为 STARTED/STOPPING/FAILED，旧 identity 不得在 STOPPING/FAILED 中替换；不完整 TERMINAL 必须拒绝。
+- `classify_start(*, handoff_accepted, started_observation, expected)` 与 `reconcile(expected, observed)` 参数签名必须和参考一致；返回状态/键保持参考调用方可读取。未知启动不得被标成 NOT_STARTED，replay 仅允许明确 NOT_STARTED 或终止身份和 cleanup 完整证据。`RuntimeErrorSM` 必须保留旧异常类型并提供 Code-Kit 风格 `.code` 属性/格式化文本，必要时提供 `RuntimeErrorCode` 兼容别名。
 - 所有新增测试必须直接调用这些参考形状；不得只测候选自定义 API。测试还必须证明普通参数的空尾参数与换行保持兼容。
 
 ## Steps
