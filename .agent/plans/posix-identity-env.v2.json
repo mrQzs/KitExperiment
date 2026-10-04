@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "task_id": "posix-identity-env",
+  "plan_version": 2,
+  "title": "Close descriptor, path-error and snapshot gaps in process identity",
+  "repository": "KitExperiment",
+  "base_sha": "1af4d04801d6704d34a1a2e8447960999ee22e07",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/process_identity.py",
+      "tests/test_process_identity.py"
+    ],
+    "allowed_new_files": [],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py",
+      "tests/test_process_identity_probes.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_process_identity.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_process_identity_probes.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.process_identity import environment_digest as d; assert d({'LANG': 'C', 'PATH': '/usr/bin:/bin'}) == 'fa0f07ab1a352dd1ee7596bc244caa6649e742dfe9f800f455ef68c822f75cde'; assert d({}) == '16f1bf80d85f8f89ba69f102a9a8a35f07dd8b0ac4b26cb68a9c0b46e29fde7e'; print('ENV_DIGEST_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "ENV_DIGEST_OK"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-c",
+        "import subprocess; from sentinelmesh.process_identity import boot_id; native = subprocess.run(['sysctl', '-n', 'kern.bootsessionuuid'], capture_output=True, text=True, check=True).stdout.strip(); assert boot_id() == native == boot_id(); print('BOOT_ID_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "BOOT_ID_OK"
+      ]
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.process_identity; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "`file_sha256` 拒绝非 str 路径且不触碰描述符（Behavior contract 第 3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`resolve_executable` 的输入校验、PATH 绝对条目与异常映射（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "映射快照与 ctypes 声明（第 1、4 条），v1 行为不退化",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03",
+        "V04",
+        "V05"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "补齐 Step 3 的测试，不自行做变异检查",
+      "evidence": [
+        "V01",
+        "review"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "全量测试不退化，所有修改在允许集合内",
+      "evidence": [
+        "V06",
+        "V07",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1500,
+    "max_wall_seconds_total": 3000,
+    "cost_budget": null
+  }
+}
