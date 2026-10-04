@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-runtime-identity",
+  "plan_version": 1,
+  "title": "Pi port Code-Kit runtime identity and lifecycle contracts",
+  "repository": "KitExperiment",
+  "base_sha": "5f43cdf32ba029c3bc045871d8b753c024159366",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "bb",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "powershell"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/runtime.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_runtime_identity_contract.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/adapter.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-c",
+        "from pathlib import Path; p=Path(r'tests/test_runtime_identity_contract.py'); assert p.exists() and p.stat().st_size>0; print('PI_RUNTIME_IDENTITY_ARTIFACT_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_IDENTITY_ARTIFACT_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.runtime import InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; print('PI_RUNTIME_IDENTITY_API_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_IDENTITY_API_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "将 Code-Kit runtime.py 的纯函数/数据契约兼容移植到 SentinelMesh：InvocationSpec、ProcessIdentity、Lifecycle、validate_argv、classify_start、reconcile，严格校验 argv、身份、代际和 START_UNKNOWN。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "START_UNKNOWN、IDENTITY_MISMATCH、STOPPED/FAILED 等结果保持保守语义；未经明确 reconcile 证据不得 replay，旧 Invocation/ProcessResult/SubprocessRunner API 和现有测试不回归。",
+      "evidence": [
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "新增测试覆盖 Code-Kit 对应的 identity mismatch、START_UNKNOWN 禁止重发、生命周期 identity fence、generation fence、terminal cleanup replay，以及非法 argv/NUL。",
+      "evidence": [
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "无依赖、无凭据、无联网、无真实 provider/CLI；未验证的原生 Windows/macOS 清理保持 NOT_RUN/BLOCKED。",
+      "evidence": [
+        "V02",
+        "V04"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 1,
+    "max_wall_seconds_per_attempt": 900,
+    "max_wall_seconds_total": 900,
+    "cost_budget": null
+  }
+}
