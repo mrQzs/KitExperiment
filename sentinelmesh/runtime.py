@@ -530,10 +530,16 @@ class SubprocessRunner:
 
     @staticmethod
     def _signal_group(pgid: int, sig: int) -> None:
-        """Signal the whole process group; a missing group is already clean."""
+        """Signal the whole process group; a missing group is already clean.
+
+        macOS reports ``EPERM`` for a group whose only member is an unreaped
+        zombie (measured 2026-10-04), e.g. a leader that obeyed SIGTERM while an
+        escaped descendant still holds its pipe.  That is not a reason to abort
+        the shutdown: the drain and reap steps decide whether cleanup is verified.
+        """
         try:
             os.killpg(pgid, sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
 
     def _shutdown_group(self, proc: Any, pgid: int) -> tuple[bytes, bytes, bool, bool]:

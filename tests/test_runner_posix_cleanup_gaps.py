@@ -97,6 +97,30 @@ class RunnerPosixCleanupGaps(unittest.TestCase):
         self.assertEqual((result.stop_reason, result.cleanup), ("timeout_killed", "incomplete"))
         self.assertEqual(result.exit_code, -signal.SIGKILL)
 
+    def test_zombie_leader_with_an_escaped_pipe_holder_does_not_raise(self):
+        # The leader obeys SIGTERM and becomes an unreaped zombie while an escaped
+        # descendant keeps the pipe open; macOS then answers the group SIGKILL with
+        # EPERM, which must not escape run() (found reviewing posix-supervisor a001).
+        pid_dir = Path(tempfile.mkdtemp(prefix="runner-gaps-"))
+        self.addCleanup(shutil.rmtree, pid_dir, True)
+        pid_file = pid_dir / "escaped.pid"
+        escaped = ("import os, signal, sys, time\n"
+                   "os.setsid()\n"
+                   "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                   "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                   "time.sleep(30)\n")
+        leader = ("import os, subprocess, sys, time\n"
+                  "subprocess.Popen([sys.executable, '-c', %r, sys.argv[1]])\n"
+                  "while not os.path.exists(sys.argv[1]):\n"
+                  "    time.sleep(0.02)\n"
+                  "time.sleep(30)\n" % escaped)
+        result, wall = self.run_tree(leader, str(pid_file))
+        if pid_file.exists() and pid_file.read_text().strip():
+            self.addCleanup(self.kill_pid, int(pid_file.read_text().strip()))
+        self.assertLess(wall, WALL_BOUND)
+        self.assertEqual((result.stop_reason, result.cleanup), ("timeout_killed", "incomplete"))
+        self.assertEqual(result.exit_code, -signal.SIGTERM)
+
     def test_graceful_timeout_keeps_every_byte_exactly_once(self):
         # Output written before SIGTERM is returned once, not duplicated (M13).
         leader = ("import sys, time\n"
