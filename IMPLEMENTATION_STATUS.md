@@ -15,6 +15,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Runtime and adapters | `runtime.py`, `adapter.py` | bounded invocation, argv/env/input validation and normalized vendor events |
 | POSIX runner cleanup (native macOS) | `runtime.py` `SubprocessRunner` POSIX branch | real process-tree tests on macOS 15.7.9: group SIGTERM, then group SIGKILL, bounded reads, and `cleanup="verified"` only once the pipes reached EOF and the group is empty; runs return within about timeout + 5 s; Windows branch unchanged |
 | Process identity and explicit environment | `process_identity.py` | pinned environment digest (golden vectors) and verification against `InvocationSpec.environment_sha256` from one snapshot; macOS boot session UUID via `sysctlbyname` (native), Linux branch patched only; PATH resolution from the explicit environment with absolute entries only; file SHA-256; canonical `ProcessIdentity` |
+| Native POSIX supervisor (macOS) | `posix_supervisor.py` | real process-tree tests on macOS 15.7.9: the child receives exactly the explicit environment (credential-shaped names only when allowlisted, names recorded but never values); exclusive 0600 evidence files; on timeout or cancellation, group SIGTERM then group SIGKILL; stragglers reaped until the group is confirmed empty; EPERM from zombie-only groups tolerated; interrupts during the stop and reap windows absorbed without moving their deadlines; a lifecycle record and a five-key observation that `reconcile` consumes. Not yet wired into adapters or the scheduler |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
@@ -27,7 +28,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 245 passed
+python -m pytest -q                 286 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -53,7 +54,9 @@ the output pipe, `cleanup` was reported `verified` with descendants still
 alive, and output was duplicated on the kill path. Attempt-001
 (`step/step-5-preview`, thinking `high`) passed against a seven-case planner
 oracle and was integrated as `136657c`. The planner closed four mutation gaps
-in `fd57f49`.
+in `fd57f49`. While reviewing the supervisor, the planner measured that macOS
+answers EPERM, not ESRCH, when a group's only members are unreaped zombies,
+and fixed the resulting crash in this runner in `74b4d62`.
 
 Process identity is recorded in `.agent/reviews/posix-identity-env/`:
 - Attempt-001 was REVISE. `file_sha256(True)` read and closed file
@@ -63,14 +66,31 @@ Process identity is recorded in `.agent/reviews/posix-identity-env/`:
   rules, so it was also REVISE. With the budget spent, the planner completed
   the work in `2191050`.
 
+The native supervisor is recorded in `.agent/reviews/posix-supervisor/`:
+- Attempt-001 was REVISE. The observation was rewritten to `START_UNKNOWN`
+  instead of keeping the leader's outcome. A `PermissionError` from a group
+  kill escaped `supervise()`. A second interrupt during the stop phase
+  escaped as well.
+- Attempt-002 fixed all three. It was REVISE because an interrupt at the
+  grace deadline could report `timeout_killed` for a leader that had already
+  exited, and because no test pinned the 0.05 s reap poll. With the budget
+  spent, the planner completed the work in `cd7c918`. The completion added
+  `tests/test_posix_supervisor_gaps.py`.
+- Known limits:
+  - a descendant that calls `setsid()` leaves the group and is not reaped;
+  - an interrupt that lands in the few bytecodes outside the guarded waits
+    still escapes;
+  - a leader that survives SIGKILL for 2 s is reported with `exit_code`
+    `None` and an unconfirmed cleanup, which blocks replay.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
 approved evidence: real Pi/Claude provider CLI calls, credentials and network
-access, native Windows Job Objects, native Linux process supervision, the
-full macOS supervisor (identity capture, explicit environment, reconcile
-observations; only the legacy runner's cleanup has native macOS evidence),
-three-platform parity, distributed storage/locking, billing reconciliation,
+access, native Windows Job Objects, native Linux process supervision,
+wiring the macOS supervisor into adapters, the scheduler and reconcile-driven
+replay (the supervisor itself has native macOS evidence), three-platform
+parity, distributed storage/locking, billing reconciliation,
 production migration and rollback, CI artifact federation, and a real
 heterogeneous provider chain. Offline fixtures never upgrade these rows to
 `PASS`.
