@@ -13,6 +13,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Config and approvals | `config.py`, `approvals.py` | profile precedence, CAS, input-lock and revocation checks |
 | Plugins and workflows | `plugins.py`, `workflows.py` | seven trusted manifests; bugfix/documentation/regression DAG recipes |
 | Runtime and adapters | `runtime.py`, `adapter.py` | bounded invocation, argv/env/input validation and normalized vendor events |
+| POSIX runner cleanup (native macOS) | `runtime.py` `SubprocessRunner` POSIX branch | real process-tree tests on macOS 15.7.9: group SIGTERM, then group SIGKILL, bounded reads, and `cleanup="verified"` only once the pipes reached EOF and the group is empty; runs return within about timeout + 5 s; Windows branch unchanged |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
@@ -25,7 +26,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 158 passed
+python -m pytest -q                 175 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -45,11 +46,21 @@ three planner oracles and was accepted with an exception: the executor again
 wrote fixed `/tmp` scratch files. It was integrated as `2c3c115`; the planner
 closed four test-coverage gaps in `8e09793`.
 
+The POSIX runner fix is recorded in `.agent/reviews/runner-posix-cleanup/`.
+Before it, on macOS, a 1 s timeout blocked for 20.1 s while a descendant held
+the output pipe, `cleanup` was reported `verified` with descendants still
+alive, and output was duplicated on the kill path. Attempt-001
+(`step/step-5-preview`, thinking `high`) passed against a seven-case planner
+oracle and was integrated as `136657c`. The planner closed four mutation gaps
+in `fd57f49`.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
 approved evidence: real Pi/Claude provider CLI calls, credentials and network
-access, native Windows Job Objects, native macOS/Linux process supervision,
+access, native Windows Job Objects, native Linux process supervision, the
+full macOS supervisor (identity capture, explicit environment, reconcile
+observations; only the legacy runner's cleanup has native macOS evidence),
 three-platform parity, distributed storage/locking, billing reconciliation,
 production migration and rollback, CI artifact federation, and a real
 heterogeneous provider chain. Offline fixtures never upgrade these rows to

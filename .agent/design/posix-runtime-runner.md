@@ -31,6 +31,8 @@
 
 ## 3. 拆分建议（每份一个主要结果，可独立验证）
 
+进度：第 0 份 `runner-posix-cleanup` 已集成（`136657c`，规划端补测 `fd57f49`），并顺带修正了旧 runner 在强杀路径上重复输出的问题。
+
 1. `posix-identity-env`：环境摘要校验，加上 boot_id 与可执行文件摘要的采集（纯函数，加平台探针），低到中风险。
 2. `posix-supervisor`：进程组监督、文件输出、超时与宽限、SIGKILL 升级、残留确认、观察记录，高风险。用真实子进程树做原生测试：忽略 SIGTERM 的孙进程、占用输出的孙进程、快速退出、spawn 失败、取消。
 3. `posix-reconcile-integration`：把监督器的观察记录接入 reconcile 的重放判定，端到端测试“超时且清理完成可以重放 / 清理未确认不可重放 / spawn 未知不可重放”。
