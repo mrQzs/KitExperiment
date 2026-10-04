@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "task_id": "posix-reconcile-integration",
+  "plan_version": 1,
+  "title": "Durable start records and a replay gate for the supervisor",
+  "repository": "KitExperiment",
+  "base_sha": "f0668df6de8ecd501db51e73575200f62824affa",
+  "risk_level": "high",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/posix_supervisor.py"
+    ],
+    "allowed_new_files": [
+      "sentinelmesh/supervised_record.py",
+      "tests/test_supervised_record.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/core.py",
+      "tests/test_supervised_record_oracle.py",
+      "tests/test_posix_supervisor.py",
+      "tests/test_posix_supervisor_oracle.py",
+      "tests/test_posix_supervisor_probes.py",
+      "tests/test_posix_supervisor_gaps.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_record_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_record.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_posix_supervisor_oracle.py",
+        "tests/test_posix_supervisor_probes.py",
+        "tests/test_posix_supervisor_gaps.py",
+        "tests/test_posix_supervisor.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.supervised_record; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "监督器钩子（Behavior contract 第 1 条），已有监督器行为不变",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "记录文件的写入与读取（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "`record_supervised_run` 与 `replay_decision`（第 3、4 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "导入无副作用（第 5 条）",
+      "evidence": [
+        "V07"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "Step 4 的测试齐全，不自行做变异检查",
+      "evidence": [
+        "V02",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "全量测试不退化，所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V04",
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
