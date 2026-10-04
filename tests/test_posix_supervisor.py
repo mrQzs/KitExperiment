@@ -3,8 +3,10 @@
 These cases cover what the planner oracle leaves open: the order between
 adjacent validation rules, the platform guard, the evidence rollback when only
 the second file can be created, allowlist typing, uppercase-substring credential
-matching, descriptor hygiene, the unconfirmed-cleanup path, lifecycle
-generations and the absence of environment values in the returned records.
+matching, descriptor hygiene, the unconfirmed-cleanup path, the bounded stop and
+reap windows (interrupts absorbed, refused signals tolerated, poll interval),
+lifecycle generations and the absence of environment values in the returned
+records.
 
 Convention followed throughout: every rejection case first proves that a legal
 baseline run succeeds, then changes exactly one input (or, for the ordering
@@ -19,6 +21,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -26,9 +29,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import sentinelmesh.posix_supervisor as posix_supervisor
 from sentinelmesh.posix_supervisor import (
     _CREDENTIAL_MARKERS,
     _KILL_WAIT_SECONDS,
+    _REAP_POLL_SECONDS,
     _REAP_SECONDS,
     _TERM_GRACE_SECONDS,
     SupervisedRun,
@@ -44,6 +49,19 @@ BASE_TIMEOUT = 10
 BASE_ENV = {"LANG": "C", "PATH": "/usr/bin:/bin"}
 OK_CODE = "import sys; sys.stdout.write('ok'); sys.stderr.write('bad')"
 GARBAGE = b"\x00\x01\x02 not an executable image\n"
+# A leader that refuses SIGTERM and sleeps, so the grace wait runs its full second
+# and only the SIGKILL ends it.
+IGNORE_TERM_SLEEP = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+# Same leader, but it reports readiness first: a cancellation can then be injected
+# once the process really exists.
+IGNORE_TERM_READY = ("import signal, sys, time\n"
+                     "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                     "open(sys.argv[1], 'w').close()\n"
+                     "time.sleep(30)\n")
+# A leader that exits at once but leaves a straggler behind in its group.
+STRAGGLER_LEADER = ("import subprocess, sys\n"
+                    "subprocess.Popen([sys.executable, '-c', %r])\n"
+                    "print('leader-done')\n" % IGNORE_TERM_SLEEP)
 
 
 @unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
@@ -103,6 +121,33 @@ class PosixSupervisorTests(unittest.TestCase):
             os.killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+    def never_empty_group(self):
+        """Return a patch where the signal-0 probe always answers "still alive"."""
+        real_killpg = os.killpg
+
+        def never_empty(pgid, sig):
+            if sig == 0:
+                # Pretend the process group keeps a member forever; every real
+                # signal is still delivered to the real group.
+                return 0
+            return real_killpg(pgid, sig)
+
+        return mock.patch.object(os, "killpg", never_empty)
+
+    def interrupt_first_wait(self, ready):
+        """Return a patch that raises ``KeyboardInterrupt`` in the first wait."""
+        real_wait = subprocess.Popen.wait
+
+        def interrupt_first(proc, *args, **kwargs):
+            if proc.returncode is None and not ready.exists():
+                deadline = time.monotonic() + 10
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                raise KeyboardInterrupt
+            return real_wait(proc, *args, **kwargs)
+
+        return mock.patch.object(subprocess.Popen, "wait", interrupt_first)
 
     def start_failed_run(self):
         """One run whose exec fails: an evidence pair, no process."""
@@ -257,33 +302,136 @@ class PosixSupervisorTests(unittest.TestCase):
 
     # 7. unconfirmed cleanup ------------------------------------------------
 
-    def test_unconfirmed_cleanup_is_start_unknown(self):
-        real_killpg = os.killpg
+    def assert_unconfirmed(self, spec, run, state):
+        """One run whose group was never confirmed empty keeps the leader's outcome."""
+        self.assertIs(run.observation["cleanup_confirmed"], False)
+        self.assertIs(run.stragglers_killed, True)
+        self.assertEqual(set(run.observation), {"run_id", "environment_sha256", "state",
+                                                "process_identity", "cleanup_confirmed"})
+        # Rule 8 of the v1 contract: the observation keeps the leader's outcome;
+        # only the lifecycle records that the start state is unknown, so
+        # ``reconcile`` still sees the outcome and refuses the replay on the
+        # cleanup fact instead of on a rewritten state.
+        self.assertEqual(run.observation["state"], state)
+        self.assertEqual(run.lifecycle, Lifecycle("START_UNKNOWN", 4, run.identity))
+        record = reconcile(spec, run.observation)
+        self.assertEqual((record["status"], record["replay_allowed"]), (state, False))
 
-        def never_empty(pgid, sig):
-            if sig == 0:
-                # Pretend the process group keeps a member forever; every real
-                # signal is still delivered to the real group.
-                return 0
-            return real_killpg(pgid, sig)
-
+    def test_unconfirmed_cleanup_keeps_the_stopped_outcome(self):
         spec = self.spec(OK_CODE)
-        with mock.patch.object(os, "killpg", never_empty):
+        with self.never_empty_group():
             started = time.monotonic()
             run = self.call(spec)
             wall = time.monotonic() - started
         self.addCleanup(self.kill_group, run.identity.pid)
         self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0))
-        self.assertIs(run.stragglers_killed, True)
-        self.assertIs(run.observation["cleanup_confirmed"], False)
-        self.assertEqual(run.lifecycle, Lifecycle("START_UNKNOWN", 4, run.identity))
-        self.assertEqual(run.observation["state"], "START_UNKNOWN")
-        record = reconcile(spec, run.observation)
-        self.assertEqual((record["status"], record["replay_allowed"]), ("START_UNKNOWN", False))
+        self.assert_unconfirmed(spec, run, "STOPPED")
         # The unconfirmed group is polled for at most the documented window.
         self.assertLess(wall, _REAP_SECONDS + 5.0)
 
-    # 8. no environment value leaks ----------------------------------------
+    def test_unconfirmed_cleanup_keeps_the_cancelled_outcome(self):
+        ready = self.work / "ready"
+        spec = self.spec(IGNORE_TERM_READY, str(ready), timeout=30)
+        with self.never_empty_group(), self.interrupt_first_wait(ready):
+            run = self.call(spec)
+        self.addCleanup(self.kill_group, run.identity.pid)
+        self.assertTrue(ready.exists(), "the leader was not ready before the interrupt")
+        # A cancellation still escalates: the leader refuses SIGTERM, so the
+        # group is SIGKILLed and the leader's outcome is a failed run.
+        self.assertEqual((run.stop_reason, run.exit_code), ("cancelled", -signal.SIGKILL))
+        self.assert_unconfirmed(spec, run, "FAILED")
+
+    def test_unconfirmed_cleanup_keeps_the_killed_outcome(self):
+        spec = self.spec(IGNORE_TERM_SLEEP, timeout=1)
+        with self.never_empty_group():
+            run = self.call(spec)
+        self.addCleanup(self.kill_group, run.identity.pid)
+        self.assertEqual((run.stop_reason, run.exit_code), ("timeout_killed", -signal.SIGKILL))
+        self.assert_unconfirmed(spec, run, "FAILED")
+
+    # 8. stop and reap windows ----------------------------------------------
+
+    def test_interrupt_during_the_wait_after_the_kill_is_absorbed(self):
+        """An interrupt inside the post-SIGKILL window is absorbed, not re-raised."""
+        real_wait = subprocess.Popen.wait
+        waits = []
+        interrupted = []
+
+        def interrupt_after_the_kill(proc, *args, **kwargs):
+            waits.append(time.monotonic())
+            # The leader refuses SIGTERM: the first wait times out, the grace
+            # wait times out, the group is killed, and only the wait after the
+            # kill is interrupted once.
+            if len(waits) == 3:
+                interrupted.append(time.monotonic())
+                raise KeyboardInterrupt
+            return real_wait(proc, *args, **kwargs)
+
+        spec = self.spec(IGNORE_TERM_SLEEP, timeout=1)
+        with mock.patch.object(subprocess.Popen, "wait", interrupt_after_the_kill):
+            run = self.call(spec)
+        self.addCleanup(self.kill_group, run.identity.pid)
+        self.assertEqual(len(interrupted), 1, "the wait after the kill was not interrupted")
+        self.assertEqual((run.stop_reason, run.exit_code), ("timeout_killed", -signal.SIGKILL))
+        self.assertIs(run.stragglers_killed, False)
+        self.assertIs(run.observation["cleanup_confirmed"], True)
+        self.assertEqual(run.observation["state"], "FAILED")
+        self.assertEqual(run.lifecycle, Lifecycle("FAILED", 4, run.identity))
+
+    def test_reap_poll_never_sleeps_longer_than_the_interval_bound(self):
+        """Every sleep of the leftover poll stays inside the documented bound."""
+        sleeps = []
+
+        class recording_time:
+            @staticmethod
+            def monotonic():
+                return time.monotonic()
+
+            @staticmethod
+            def sleep(seconds):
+                sleeps.append(seconds)
+                time.sleep(seconds)
+
+        spec = self.spec(OK_CODE)
+        with self.never_empty_group(), mock.patch.object(posix_supervisor, "time", recording_time):
+            run = self.call(spec)
+        self.addCleanup(self.kill_group, run.identity.pid)
+        self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0))
+        self.assertIs(run.observation["cleanup_confirmed"], False)
+        self.assertGreaterEqual(len(sleeps), 2, "the leftover poll did not cycle during its window")
+        for seconds in sleeps:
+            self.assertLessEqual(seconds, _REAP_POLL_SECONDS,
+                                 "a leftover poll slept longer than the interval bound")
+        self.assertLessEqual(sum(sleeps), _REAP_SECONDS + _REAP_POLL_SECONDS,
+                             "the leftover poll slept past its window")
+
+    def test_permission_error_from_the_reap_kill_does_not_escape(self):
+        """A refused SIGKILL in the reap phase still reports the leftovers."""
+        real_killpg = os.killpg
+
+        def kill_denied(pgid, sig):
+            result = real_killpg(pgid, sig)
+            if sig == signal.SIGKILL:
+                # The kernel refuses the signal (macOS answers EPERM for a group
+                # of unreaped zombies); the report of the kill is still refused
+                # only after the real signal has been delivered.
+                raise PermissionError("operation not permitted")
+            return result
+
+        spec = self.spec(STRAGGLER_LEADER)
+        with mock.patch.object(os, "killpg", kill_denied):
+            run = self.call(spec)
+        self.addCleanup(self.kill_group, run.identity.pid)
+        # The leader exited on its own, so the only SIGKILL of this run is the
+        # one the reap phase sends to a group that still holds a straggler.
+        self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0))
+        self.assertIs(run.stragglers_killed, True)
+        self.assertIs(run.observation["cleanup_confirmed"], True,
+                      "the delivered SIGKILL emptied the group, so the reap confirmed it")
+        self.assertEqual(run.observation["state"], "STOPPED")
+        self.assertEqual(run.lifecycle, Lifecycle("STOPPED", 4, run.identity))
+
+    # 9. no environment value leaks ----------------------------------------
 
     def test_allowlisted_credential_values_never_reach_the_records(self):
         secret = "sekret-value-1234"

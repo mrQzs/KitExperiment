@@ -23,7 +23,10 @@ What one run guarantees:
 * on timeout or cancellation the group is SIGTERMed, then SIGKILLed as a group
   inside bounded windows, and the leftovers are reaped until the group is
   confirmed empty.  ``cleanup_confirmed=False`` (no false "clean" report) is
-  what blocks a replay in `reconcile`.
+  what blocks a replay in `reconcile`;
+* an interrupt that arrives while the stop or reap windows are running is
+  absorbed: those steps finish inside their original deadlines, because the
+  group still has to be killed and reaped before the run can report anything.
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code and starts no process,
@@ -179,10 +182,18 @@ def _remove_evidence(path: str) -> None:
 
 
 def _signal_group(pgid: int, sig: int) -> None:
-    """Signal the whole process group; a group that is already gone is clean."""
+    """Signal the whole process group; a report of failure never stops the run.
+
+    ``ProcessLookupError`` means the group is already gone, and
+    ``PermissionError`` means the kernel refused the signal (macOS answers EPERM
+    for a group whose only members are unreaped zombies, measured 2026-10-04).
+    Neither says the group is empty: only the signal-0 probe in
+    `_group_alive` decides that, so a failed send is ignored and the bounded
+    steps that follow continue to run.
+    """
     try:
         os.killpg(pgid, sig)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
 
 
@@ -201,6 +212,28 @@ def _group_alive(pgid: int) -> bool:
     return True
 
 
+def _wait_for_leader(proc: "subprocess.Popen[bytes]", seconds: float) -> bool:
+    """Wait up to ``seconds`` for the leader; return whether it exited.
+
+    A ``KeyboardInterrupt`` that arrives while the group is being stopped is
+    absorbed: the escalation and the reaping must still happen, and they happen
+    inside their original windows, so the wait is retried with whatever time is
+    left of ``seconds`` instead of ending early.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False
+        try:
+            proc.wait(timeout=remaining)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+        except KeyboardInterrupt:
+            continue
+
+
 def _stop_group(proc: "subprocess.Popen[bytes]", stop_reason: str) -> str:
     """Stop the leader's whole group; return the upgraded stop reason.
 
@@ -211,18 +244,12 @@ def _stop_group(proc: "subprocess.Popen[bytes]", stop_reason: str) -> str:
     operator decision, so its reason is kept.
     """
     _signal_group(proc.pid, signal.SIGTERM)
-    try:
-        proc.wait(timeout=_TERM_GRACE_SECONDS)
+    if _wait_for_leader(proc, _TERM_GRACE_SECONDS):
         return stop_reason
-    except subprocess.TimeoutExpired:
-        pass
     _signal_group(proc.pid, signal.SIGKILL)
     if stop_reason == "timeout":
         stop_reason = "timeout_killed"
-    try:
-        proc.wait(timeout=_KILL_WAIT_SECONDS)
-    except subprocess.TimeoutExpired:
-        pass
+    _wait_for_leader(proc, _KILL_WAIT_SECONDS)
     return stop_reason
 
 
@@ -233,17 +260,24 @@ def _reap_group(pgid: int) -> tuple[bool, bool]:
     descendants.  They are killed as a group and the group is polled until it is
     confirmed empty; if it is still not empty after ``_REAP_SECONDS`` the run
     reports an unconfirmed cleanup instead of claiming the group is clean.
+
+    A ``KeyboardInterrupt`` raised by a probe or by the poll interval is absorbed
+    and the poll restarts: neither the interval bound nor the deadline moves, so
+    the run still reports a confirmed cleanup whenever the group really empties.
     """
     if not _group_alive(pgid):
         return False, True
     _signal_group(pgid, signal.SIGKILL)
     deadline = time.monotonic() + _REAP_SECONDS
     while True:
-        if not _group_alive(pgid):
-            return True, True
-        if time.monotonic() >= deadline:
-            return True, False
-        time.sleep(min(_REAP_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        try:
+            if not _group_alive(pgid):
+                return True, True
+            if time.monotonic() >= deadline:
+                return True, False
+            time.sleep(min(_REAP_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        except KeyboardInterrupt:
+            continue
 
 
 def _observation_of(
@@ -374,11 +408,14 @@ def supervise(
 
     exit_code = proc.returncode
     state = "STOPPED" if stop_reason == "completed" and exit_code == 0 else "FAILED"
-    if not cleanup_confirmed:
-        # An unconfirmed group may still hold a live descendant, so the run's
-        # start state is unknown; ``reconcile`` refuses the replay.
-        state = "START_UNKNOWN"
-    lifecycle = lifecycle.transition(state)
+    if cleanup_confirmed:
+        lifecycle = lifecycle.transition(state)
+    else:
+        # An unconfirmed group may still hold a live descendant, so only the
+        # lifecycle records that this run's start state is unknown: the
+        # observation keeps the leader's outcome next to the cleanup fact, and
+        # ``reconcile`` refuses a replay on that fact.
+        lifecycle = lifecycle.transition("START_UNKNOWN")
     return SupervisedRun(
         stop_reason,
         exit_code,
