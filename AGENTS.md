@@ -30,3 +30,8 @@ Code-Kit/SentinelMesh control-plane contracts.
 Pi tasks use `step-5-preview` with `high` thinking through the repository
 dispatcher. Contracts, `.agent/`, and AGENTS.md are control-plane inputs and
 must not be changed by an executor.
+
+Executors run validation commands directly; the tool already returns the full
+output and exit code. If output must be shortened, use
+`T=$(mktemp -d); <command> > "$T/out" 2>&1; echo "exit=$?"; tail -n 20 "$T/out"; rm -rf "$T"`.
+Never write fixed paths such as `/tmp/v01.txt` (two attempts did).
