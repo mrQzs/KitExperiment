@@ -96,3 +96,15 @@
 - 证据边界：
   - 进程崩溃时记录保持一致（链接是原子的）；
   - 断电后的持久性不验证：不对目录做 fsync，macOS 的 fsync 也不等于 F_FULLFSYNC。记为 NOT_RUN。
+
+进度（2026-10-05）：第 3 份 `posix-reconcile-integration` 已集成：
+- 提交：oracle `a27525e`、a001 `a2c0e71`（ACCEPTED_WITH_EXCEPTION），规划端补全 `c12a88f`。
+- 接受的收紧：
+  - 观察记录内层取值的类型也要正确（`run_id`、`environment_sha256`、`state` 是 str；`process_identity` 恰好四键，pid 是 int、其余是 str；`cleanup_confirmed` 是 bool），否则报 `E_RUNTIME_EVIDENCE`；
+  - 写入只删除本次调用创建的 partial 文件。
+- 规划端补全修正了合同遗漏：
+  - 交接之前确认两份记录都不存在。没有这一步时，旧的观察记录会被当成本次运行的结果，放行一次确实启动过的运行；
+  - 读取加 `O_NONBLOCK`（遇到 FIFO 不再阻塞），最多读 65537 字节；
+  - 写入前检查不超过 65536 字节，成功路径上 close 失败也报错；
+  - 监督器在启动前按 `ProcessIdentity` 的字符规则校验 `worktree_id`。
+- 仍未做：接入 `Scheduler` 与 adapter；断电后的持久性（NOT_RUN）。
