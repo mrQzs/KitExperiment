@@ -14,6 +14,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Plugins and workflows | `plugins.py`, `workflows.py` | seven trusted manifests; bugfix/documentation/regression DAG recipes |
 | Runtime and adapters | `runtime.py`, `adapter.py` | bounded invocation, argv/env/input validation and normalized vendor events |
 | POSIX runner cleanup (native macOS) | `runtime.py` `SubprocessRunner` POSIX branch | real process-tree tests on macOS 15.7.9: group SIGTERM, then group SIGKILL, bounded reads, and `cleanup="verified"` only once the pipes reached EOF and the group is empty; runs return within about timeout + 5 s; Windows branch unchanged |
+| Process identity and explicit environment | `process_identity.py` | pinned environment digest (golden vectors) and verification against `InvocationSpec.environment_sha256` from one snapshot; macOS boot session UUID via `sysctlbyname` (native), Linux branch patched only; PATH resolution from the explicit environment with absolute entries only; file SHA-256; canonical `ProcessIdentity` |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
@@ -26,7 +27,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 175 passed
+python -m pytest -q                 245 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -53,6 +54,14 @@ alive, and output was duplicated on the kill path. Attempt-001
 (`step/step-5-preview`, thinking `high`) passed against a seven-case planner
 oracle and was integrated as `136657c`. The planner closed four mutation gaps
 in `fd57f49`.
+
+Process identity is recorded in `.agent/reviews/posix-identity-env/`:
+- Attempt-001 was REVISE. `file_sha256(True)` read and closed file
+  descriptor 1, NUL paths leaked `ValueError`, and the executor ran its own
+  mutation driver in a temp copy.
+- Attempt-002 fixed the code, but three rejection tests were masked by other
+  rules, so it was also REVISE. With the budget spent, the planner completed
+  the work in `2191050`.
 
 ## Explicitly not proven by this repository
 
