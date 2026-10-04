@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "task_id": "pi-runtime-kit-compat",
+  "plan_version": 1,
+  "title": "Pi exact Code-Kit runtime identity API compatibility",
+  "repository": "KitExperiment",
+  "base_sha": "9c97134396cce23e0e47694030b53d3c728e9d41",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "bb",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash",
+      "powershell"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/runtime.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_runtime_identity_kit_contract.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/adapter.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-c",
+        "from pathlib import Path; p=Path(r'tests/test_runtime_identity_kit_contract.py'); assert p.exists() and p.stat().st_size>0; print('PI_RUNTIME_KIT_ARTIFACT_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_KIT_ARTIFACT_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-c",
+        "import inspect; from sentinelmesh.runtime import InvocationSpec, ProcessIdentity, Lifecycle, classify_start, reconcile, validate_argv; assert list(inspect.signature(validate_argv).parameters)==['command','shell']; assert list(inspect.signature(classify_start).parameters)==['handoff_accepted','started_observation','expected']; assert list(inspect.signature(reconcile).parameters)==['expected','observed']; ProcessIdentity(1,'boot','a'*64,'wt'); print('PI_RUNTIME_KIT_API_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "PI_RUNTIME_KIT_API_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "严格兼容 Code-Kit runtime 的公共构造器和签名：validate_argv(command, *, shell=False)、InvocationSpec 四元字段与立即校验/digest、ProcessIdentity(pid/boot_id/executable_sha256/worktree_id)、Lifecycle NEW/0/transition(expected_generation)。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "classify_start(handoff_accepted, started_observation, expected) 与 reconcile(expected, observed) 的参数顺序、返回键和保守语义对齐；START_UNKNOWN 允许在 generation fence 下对账为 STARTED/STOPPING/FAILED，不能盲重发。",
+      "evidence": [
+        "V02",
+        "V05"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "generation 每次有效 transition 递增，stale expected_generation、identity mismatch、shell/NUL/surrogate/坏 SHA 在构造或调用入口 fail closed；保留 Code-Kit 对普通参数空串/换行的兼容；旧 Invocation/ProcessResult/SubprocessRunner API 不回归。",
+      "evidence": [
+        "V02",
+        "V03",
+        "V04"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "新测试直接调用 Code-Kit 参考形状，覆盖 immediate constructor validation、digest、普通参数空尾/换行、START_UNKNOWN recovery、stale transition、identity mismatch、reconcile replay gate 和非法 argv。",
+      "evidence": [
+        "V02"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "无依赖、无凭据/联网/真实 provider；跨平台 native cleanup 仍明确 NOT_RUN/BLOCKED。",
+      "evidence": [
+        "V02",
+        "V04"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 1,
+    "max_wall_seconds_per_attempt": 1200,
+    "max_wall_seconds_total": 1200,
+    "cost_budget": null
+  }
+}
