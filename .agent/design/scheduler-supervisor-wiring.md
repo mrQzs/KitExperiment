@@ -1,6 +1,6 @@
 # 设计说明：把原生监督器与重放判定接入 Scheduler（macOS）
 
-状态：草稿（2026-10-05），第 5 节的语义待用户决定
+状态：用户已确认第 5 节的语义（2026-10-05），按第 6 节拆分合同
 前置：POSIX 监督第 0–3 份合同已集成（`.agent/design/posix-runtime-runner.md`）：`supervise()`、`record_supervised_run()`、`replay_decision()`
 
 ## 1. 为什么做
@@ -45,7 +45,9 @@ SentinelMesh 的设计已经规定了接法：
 - `Scheduler` 是内存原型（07 附录原型），不是持久账本；跨进程的 controller 崩溃用“新建 Scheduler 并重放事件”之类的方式模拟，不声称持久恢复。
 - 不调用真实 provider CLI，测试只启动本地 `python -c` 进程。
 
-## 5. 待用户决定的语义
+## 5. 用户决定（2026-10-05，均选推荐项）
+
+下面每题第一个选项即用户的选择。
 
 1. **清理未确认的落点**：
    - 复用 START_UNKNOWN（与 Code-Kit 参考账本的 `mark_start_unknown` 一致：保留资源与预留，停止 request，原因 RECOVERY_REQUIRED），在事件里写明原因是清理未确认；
@@ -59,3 +61,24 @@ SentinelMesh 的设计已经规定了接法：
 4. **controller 换代后的恢复**：
    - 自动按 `replay_decision()` 处理：未启动 → 释放；启动未知或清理未确认 → 保持 START_UNKNOWN；已结束且清理确认 → 进 REVIEW_PENDING；
    - 或只自动处理“未启动”和“未知”，已结束的留给人工。
+
+## 6. 细化设计与合同拆分
+
+用户决定落到 `Scheduler` 上的含义：
+- **新终态 NOT_STARTED**，用于“交接之后已可靠证明未启动”：
+  - 释放资源；
+  - 预算快照只计已知用量（交接时记下的 dispatch 1 次），不再占用其余预留，也不算未知操作；
+  - 尝试照计：`claim()` 本来就按该 task 的全部操作计数。
+  - 不能复用 CANCELLED_NOT_STARTED：快照会整个跳过它，dispatch 计数会丢失。
+- **清理未确认**：用 `unknown(..., reason="CLEANUP_UNCONFIRMED")` 进入 START_UNKNOWN，保留资源与预留，停止 request；原因写进事件。
+- **失败的运行且清理已确认**：照常 `mark_running` 再 `finish(...)`，进 REVIEW_PENDING。
+- **换代恢复**：新增 `recover(...)`，只接受旧代际的在途操作（HANDOFF_ACCEPTED、RUNNING、START_UNKNOWN），并要求 request 已停止。按证据：
+  - NOT_STARTED：进 NOT_STARTED，并释放资源；RUNNING 的操作给出“未启动”的证据视为冲突；
+  - START_UNKNOWN：保持 START_UNKNOWN；
+  - FINISHED（已结束且清理已确认）：进 REVIEW_PENDING。
+
+  接管时把 owner 与 generation 换成新代际的，request 保持停止。
+
+拆成两份合同：
+1. `scheduler-supervised-transitions`：只改 `scheduler.py`。内容为 NOT_STARTED 终态与 `release_proven_unstarted()`、`unknown()` 的原因参数、`mark_running()` 记录进程身份、`recover()`、预算快照的口径。纯内存，用单元级 oracle 验收。
+2. `supervised-operation-bridge`：新增桥接模块，做真实进程的端到端验证，覆盖正常完成、失败退出、超时、清理未确认、exec 失败、交接被拒，以及 controller 被杀后由新代际恢复。
