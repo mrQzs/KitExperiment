@@ -9,7 +9,13 @@ rejection below must name its contract code and leave the ledger unchanged.
 from __future__ import annotations
 
 import unittest
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10: a (str, Enum) member is a str subclass all the same
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 from sentinelmesh.scheduler import ContractError, Scheduler
 

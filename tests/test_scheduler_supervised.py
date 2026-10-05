@@ -8,7 +8,13 @@ request stop flags all frozen).
 from __future__ import annotations
 
 import unittest
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10: a (str, Enum) member is a str subclass all the same
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 from sentinelmesh.scheduler import ContractError, Scheduler
 
@@ -224,16 +230,20 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.assertEqual(self.state_of(reserved), "RESERVED")
 
     def test_unknown_requires_an_exact_str_reason(self):
+        # The rejections hit a live operation, so only the reason is wrong
+        # (planner follow-up: the attempt ran them on a START_UNKNOWN one).
+        live = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        for reason in (S("START_UNKNOWN"), S("CLEANUP_UNCONFIRMED"), Reason.START_UNKNOWN, Reason.CLEANUP):
+            with self.subTest(reason=reason):
+                self.assert_unchanged(self.scheduler.unknown, "E_UNKNOWN_REASON", live, "owner-1", 1, reason=reason)
+        self.assertEqual(self.state_of(live), "HANDOFF_ACCEPTED")
+        # Legal baseline: the default reason is accepted and recorded verbatim.
         op = self.handed_off()
         self.scheduler.mark_running(op, "owner-1", 1)
-        # Legal baseline: the default reason is accepted and recorded verbatim.
         self.scheduler.unknown(op, "owner-1", 1)
         self.assertEqual(self.state_of(op), "START_UNKNOWN")
         self.assertEqual(self.last_event("scheduler.start_unknown")["payload"],
                          {"reason": "START_UNKNOWN"})
-        for reason in (S("START_UNKNOWN"), S("CLEANUP_UNCONFIRMED"), Reason.START_UNKNOWN, Reason.CLEANUP):
-            with self.subTest(reason=reason):
-                self.assert_unchanged(self.scheduler.unknown, "E_UNKNOWN_REASON", op, "owner-1", 1, reason=reason)
 
     def test_unknown_cleanup_unconfirmed_from_handoff_accepted(self):
         op = self.handed_off()

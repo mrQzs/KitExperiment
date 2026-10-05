@@ -697,9 +697,10 @@ class Scheduler:
             raise ContractError("E_CLEANUP_OR_CANDIDATE")
         with self._lock:
             # Step 4: the generation must be the exact current generation.
-            # ``2.0`` and ``True`` compare equal to ``2``, so an equality test
-            # alone would accept them and write a non-``int`` generation into
-            # the operation; only ``type(generation) is int`` is accepted.
+            # ``2.0`` equals ``2`` and ``True`` equals ``1``, so an equality test
+            # alone would accept them (or an int subclass) at the matching
+            # generation and write a non-``int`` generation into the operation;
+            # only ``type(generation) is int`` is accepted.
             if type(generation) is not int or generation != self._generation:
                 raise ContractError("E_FENCED")
             op = self._operations.get(operation)
