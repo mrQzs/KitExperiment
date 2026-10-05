@@ -8,12 +8,36 @@ request stop flags all frozen).
 from __future__ import annotations
 
 import unittest
+from enum import StrEnum
 
 from sentinelmesh.scheduler import ContractError, Scheduler
 
 H1, H2, H3 = "1" * 64, "2" * 64, "3" * 64
 IDENTITY = {"pid": 4242, "boot_id": "12345678-1234-1234-1234-1234567890AB", "executable_sha256": "a" * 64,
             "worktree_id": "wt-1"}
+
+
+class S(str):
+    """A ``str`` subclass: ``isinstance`` accepts it, exact typing does not."""
+
+
+class Hash(StrEnum):
+    FIRST = H1
+    SECOND = H2
+
+
+class Reason(StrEnum):
+    START_UNKNOWN = "START_UNKNOWN"
+    CLEANUP = "CLEANUP_UNCONFIRMED"
+
+
+class Outcome(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    START_UNKNOWN = "START_UNKNOWN"
+
+
+class IdentityDict(dict):
+    """A ``dict`` subclass: ``isinstance`` accepts it, exact typing does not."""
 
 
 class SupervisedTransitionsTest(unittest.TestCase):
@@ -82,23 +106,34 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.scheduler.mark_running(running, "owner-1", 1)
         self.assert_unchanged(self.scheduler.release_proven_unstarted, "E_NOT_STARTED_STATE", running,
                               "owner-1", 1, evidence_hash=H1)
-        other = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        self.scheduler.seed_task("req-1", "task-3", {"dispatches": 5, "tokens": 100}, max_attempts=3)
+        released = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        self.scheduler.release_proven_unstarted(released, "owner-1", 1, evidence_hash=H1)
+        self.assertEqual(self.state_of(released), "NOT_STARTED")
+        # Already in the terminal NOT_STARTED state: a second release of the
+        # same operation is refused and changes nothing.
+        self.assert_unchanged(self.scheduler.release_proven_unstarted, "E_NOT_STARTED_STATE",
+                              released, "owner-1", 1, evidence_hash=H1)
+        other = self.handed_off(task="task-3", key="idem-3", resources=("src/c.py",))
         self.scheduler.unknown(other, "owner-1", 1)
         self.assert_unchanged(self.scheduler.release_proven_unstarted, "E_NOT_STARTED_STATE", other,
                               "owner-1", 1, evidence_hash=H1)
-        # Already in the terminal NOT_STARTED state.
-        self.assert_unchanged(self.scheduler.release_proven_unstarted, "E_NOT_STARTED_STATE",
-                              running, "owner-1", 1, evidence_hash=H1)
 
-    def test_not_started_counts_only_observed_usage(self):
+    def test_not_started_counts_usage_recorded_after_the_release(self):
         op = self.handed_off()
-        self.scheduler.settle(op, {"tokens": 5}, revision=1, final=True)
         self.scheduler.release_proven_unstarted(op, "owner-1", 1, evidence_hash=H1)
+        self.assertEqual(self.state_of(op), "NOT_STARTED")
+        # Usage observed *after* the release is still accepted for the closed
+        # attempt and counts as known usage only.
+        self.assertEqual(self.scheduler.settle(op, {"tokens": 5}, revision=1, final=True),
+                         {"tokens": "APPLIED"})
         snapshot = self.scheduler.snapshot("req-1")
         self.assertEqual(snapshot["dispatches"],
                          {"limit": 5, "known": 1, "held": 0, "unknown_operations": 0, "exposure": 1})
         self.assertEqual(snapshot["tokens"],
                          {"limit": 100, "known": 5, "held": 0, "unknown_operations": 0, "exposure": 5})
+        # The release itself never stops the request.
+        self.assertIsNone(self.scheduler._requests["req-1"].stopped)
 
     def test_not_started_frees_the_concurrency_slot(self):
         self.scheduler.seed_request("req-2", "repo-2", {"dispatches": 2}, concurrency=1)
@@ -122,6 +157,18 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.assertEqual(self.state_of(self.claim(task="task-2", key="idem-2",
                                                    resources=("src/shared.py",))), "RESERVED")
 
+    def test_release_proven_unstarted_requires_an_exact_str_hash(self):
+        op = self.handed_off()
+        other = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        # Legal baseline: an exact ``str`` hash is accepted.
+        self.scheduler.release_proven_unstarted(other, "owner-1", 1, evidence_hash=H1)
+        self.assertEqual(self.state_of(other), "NOT_STARTED")
+        for evidence in (S(H1), Hash.FIRST):
+            with self.subTest(evidence=evidence):
+                self.assert_unchanged(self.scheduler.release_proven_unstarted, "E_EVIDENCE_HASH", op,
+                                      "owner-1", 1, evidence_hash=evidence)
+        self.assertEqual(self.state_of(op), "HANDOFF_ACCEPTED")
+
     # mark_running / unknown ------------------------------------------------
 
     def test_mark_running_stores_a_copy_of_the_identity(self):
@@ -144,6 +191,20 @@ class SupervisedTransitionsTest(unittest.TestCase):
                               process_identity=dict(IDENTITY))
         self.assertEqual(self.state_of(op), "HANDOFF_ACCEPTED")
 
+    def test_mark_running_requires_an_exact_dict_identity(self):
+        op = self.handed_off()
+        # Legal baseline: a plain dict whose keys are exact ``str`` is accepted.
+        self.scheduler.mark_running(op, "owner-1", 1, process_identity=dict(IDENTITY))
+        self.assertEqual(self.state_of(op), "RUNNING")
+        self.assertEqual(self.last_event("run.started")["payload"], {"process_identity": IDENTITY})
+        other = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        bad = (IdentityDict(IDENTITY), {S(key): value for key, value in IDENTITY.items()}, S("pid"), Hash.FIRST)
+        for identity in bad:
+            with self.subTest(identity=identity):
+                self.assert_unchanged(self.scheduler.mark_running, "E_IDENTITY_SHAPE", other, "owner-1", 1,
+                                      process_identity=identity)
+        self.assertEqual(self.state_of(other), "HANDOFF_ACCEPTED")
+
     def test_unknown_rejects_a_none_reason(self):
         op = self.handed_off()
         self.assert_unchanged(self.scheduler.unknown, "E_UNKNOWN_REASON", op, "owner-1", 1, reason=None)
@@ -161,6 +222,18 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.assert_unchanged(self.scheduler.unknown, "E_UNKNOWN_STATE", reserved, "owner-1", 1,
                               reason="CLEANUP_UNCONFIRMED")
         self.assertEqual(self.state_of(reserved), "RESERVED")
+
+    def test_unknown_requires_an_exact_str_reason(self):
+        op = self.handed_off()
+        self.scheduler.mark_running(op, "owner-1", 1)
+        # Legal baseline: the default reason is accepted and recorded verbatim.
+        self.scheduler.unknown(op, "owner-1", 1)
+        self.assertEqual(self.state_of(op), "START_UNKNOWN")
+        self.assertEqual(self.last_event("scheduler.start_unknown")["payload"],
+                         {"reason": "START_UNKNOWN"})
+        for reason in (S("START_UNKNOWN"), S("CLEANUP_UNCONFIRMED"), Reason.START_UNKNOWN, Reason.CLEANUP):
+            with self.subTest(reason=reason):
+                self.assert_unchanged(self.scheduler.unknown, "E_UNKNOWN_REASON", op, "owner-1", 1, reason=reason)
 
     def test_unknown_cleanup_unconfirmed_from_handoff_accepted(self):
         op = self.handed_off()
@@ -296,6 +369,43 @@ class SupervisedTransitionsTest(unittest.TestCase):
                               outcome="NOT_STARTED", evidence_hash=H1)
         self.assert_unchanged(self.scheduler.recover, "E_FENCED", op, "owner-2", 3,
                               outcome="NOT_STARTED", evidence_hash=H1)
+
+    def test_recover_requires_exact_str_values(self):
+        op = self.handed_off()
+        other = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        self.scheduler.rollover()
+        # Legal baseline: exact ``str`` outcome/evidence are accepted.
+        self.scheduler.recover(op, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=H1)
+        self.assertEqual(self.state_of(op), "NOT_STARTED")
+        recover = self.scheduler.recover
+        for outcome in (S("START_UNKNOWN"), Outcome.NOT_STARTED, Outcome.START_UNKNOWN):
+            with self.subTest(outcome=outcome):
+                self.assert_unchanged(recover, "E_RECOVERY_OUTCOME", other, "owner-2", 2,
+                                      outcome=outcome, evidence_hash=H1)
+        for evidence in (S(H1), Hash.FIRST):
+            with self.subTest(evidence=evidence):
+                self.assert_unchanged(recover, "E_EVIDENCE_HASH", other, "owner-2", 2,
+                                      outcome="START_UNKNOWN", evidence_hash=evidence)
+        for candidate in (S(H2), Hash.SECOND):
+            with self.subTest(candidate=candidate):
+                self.assert_unchanged(recover, "E_CLEANUP_OR_CANDIDATE", other, "owner-2", 2,
+                                      outcome="FINISHED", evidence_hash=H1, candidate_hash=candidate)
+        self.assertEqual(self.state_of(other), "HANDOFF_ACCEPTED")
+        self.assertEqual(self.scheduler._operations[other].generation, 1)
+
+    def test_recover_requires_an_exact_int_generation(self):
+        op = self.handed_off()
+        other = self.handed_off(task="task-2", key="idem-2", resources=("src/b.py",))
+        self.scheduler.rollover()
+        # Legal baseline: the exact current generation (an ``int``) is accepted.
+        self.scheduler.recover(op, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=H1)
+        self.assertEqual(self.scheduler._operations[op].generation, 2)
+        for generation in (2.0, True):
+            with self.subTest(generation=generation):
+                self.assert_unchanged(self.scheduler.recover, "E_FENCED", other, "owner-2", generation,
+                                      outcome="NOT_STARTED", evidence_hash=H1)
+        self.assertEqual(self.state_of(other), "HANDOFF_ACCEPTED")
+        self.assertEqual(self.scheduler._operations[other].generation, 1)
 
 
 if __name__ == "__main__":

@@ -530,10 +530,18 @@ class Scheduler:
 
     @staticmethod
     def _identity_copy(process_identity: Any) -> dict[str, Any]:
-        """Validate the process identity mapping and return a private copy."""
-        if not isinstance(process_identity, dict) or set(process_identity) != set(_IDENTITY_FIELDS):
+        """Validate the process identity mapping and return a private copy.
+
+        "Is a mapping" means ``type(value) is dict``: a dict subclass is not
+        accepted.  The copy is taken before any further check so only the copy
+        is inspected (a caller mutating the argument concurrently cannot bypass
+        validation), and every key of the copy must be an exact ``str``.
+        """
+        if type(process_identity) is not dict:
             raise ContractError("E_IDENTITY_SHAPE")
         copy = dict(process_identity)
+        if set(copy) != set(_IDENTITY_FIELDS) or any(type(key) is not str for key in copy):
+            raise ContractError("E_IDENTITY_SHAPE")
         try:
             ProcessIdentity(**copy)
         except RuntimeErrorCode as exc:
@@ -640,7 +648,7 @@ class Scheduler:
 
     def unknown(self, operation: str, owner: str, generation: int, *,
                  reason: str = "START_UNKNOWN") -> None:
-        if not isinstance(reason, str) or reason not in UNKNOWN_REASONS:
+        if type(reason) is not str or reason not in UNKNOWN_REASONS:
             raise ContractError("E_UNKNOWN_REASON")
         with self._lock:
             op = self._owned(operation, owner, generation)
@@ -659,7 +667,7 @@ class Scheduler:
         counted, but the unused reservation and the resource holds are given
         back.  The request is *not* stopped.
         """
-        if not isinstance(evidence_hash, str) or not _HEX64.fullmatch(evidence_hash):
+        if type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
             raise ContractError("E_EVIDENCE_HASH")
         with self._lock:
             op = self._owned(operation, owner, generation)
@@ -678,17 +686,22 @@ class Scheduler:
         request must already be stopped, and the evidence outcome decides the
         resulting state.
         """
-        if not isinstance(outcome, str) or outcome not in RECOVERY_OUTCOMES:
+        if type(outcome) is not str or outcome not in RECOVERY_OUTCOMES:
             raise ContractError("E_RECOVERY_OUTCOME")
-        if not isinstance(evidence_hash, str) or not _HEX64.fullmatch(evidence_hash):
+        if type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
             raise ContractError("E_EVIDENCE_HASH")
         if outcome == "FINISHED":
-            if not isinstance(candidate_hash, str) or not _HEX64.fullmatch(candidate_hash):
+            if type(candidate_hash) is not str or not _HEX64.fullmatch(candidate_hash):
                 raise ContractError("E_CLEANUP_OR_CANDIDATE")
         elif candidate_hash is not None:
             raise ContractError("E_CLEANUP_OR_CANDIDATE")
         with self._lock:
-            self._epoch(generation)
+            # Step 4: the generation must be the exact current generation.
+            # ``2.0`` and ``True`` compare equal to ``2``, so an equality test
+            # alone would accept them and write a non-``int`` generation into
+            # the operation; only ``type(generation) is int`` is accepted.
+            if type(generation) is not int or generation != self._generation:
+                raise ContractError("E_FENCED")
             op = self._operations.get(operation)
             if op is None: raise ContractError("E_OPERATION_UNKNOWN")
             if op.generation >= generation: raise ContractError("E_RECOVERY_NOT_FENCED")
