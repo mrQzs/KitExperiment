@@ -301,7 +301,10 @@ def record_supervised_run(
     ``E_RUNTIME_EVIDENCE`` and starts no process, and an observation that cannot
     be recorded is the same code -- the run is over by then, its handoff is on
     disk, and `replay_decision` reports ``START_UNKNOWN`` for it, which is the
-    conservative answer.
+    conservative answer.  That last error carries the finished run as its
+    ``run`` attribute: the supervised process can write into the evidence
+    directory, so a caller must not have to learn from the disk alone whether
+    a process started.
     """
     def write_handoff() -> None:
         # ``supervise`` only calls this once its own input checks have passed, so
@@ -323,7 +326,11 @@ def record_supervised_run(
         allowed_secret_names=allowed_secret_names,
         before_start=write_handoff,
     )
-    _write_record(evidence_dir, OBSERVATION_NAME, _observation_content(spec, run.observation))
+    try:
+        _write_record(evidence_dir, OBSERVATION_NAME, _observation_content(spec, run.observation))
+    except RuntimeErrorCode as exc:
+        exc.run = run
+        raise
     return run
 
 

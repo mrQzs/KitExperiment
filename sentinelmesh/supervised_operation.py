@@ -23,11 +23,14 @@ ledger stays the single authority for what an operation's state is.
 
 Two rules hold everywhere here:
 
-* **the records decide, not the outcome of the call**.  The state an operation
-  moves to comes from ``replay_decision()``, which reads ``handoff.json`` and
-  ``observation.json`` and nothing else.  A run whose outcome could not be
-  recorded is never reported as finished: the conservative ``START_UNKNOWN`` is
-  the only answer available to a caller that lost the records.
+* **what this process saw comes first, and the records must agree**.  On the
+  live path the supervised child can write into the evidence directory, so a
+  record alone never releases or finishes a run that did start: a process that
+  existed is never ``NOT_STARTED``, and it reaches review only when this call's
+  own records were written and agree with the supervisor's observation.  A run
+  whose outcome could not be recorded is never reported as finished.  Recovery
+  after a rollover has nothing but the records; there ``replay_decision()``
+  decides, which in a same-account setting is correlation, not authentication.
 * **an operation never stays ``RUNNING``**.  ``mark_running`` is a retroactive
   registration of a ``STARTED`` fact the supervisor already observed, so
   ``finish`` can accept it.  If the candidate hash or ``finish`` refuses, the
@@ -174,6 +177,15 @@ def _decision_of(spec: InvocationSpec, evidence_dir: str) -> Optional[dict[str, 
     return dict(decision)
 
 
+def _release(scheduler: Any, operation_id: str, owner: str, generation: int, evidence_dir: str) -> str:
+    """Close a handoff proven not to have started (``NOT_STARTED``)."""
+    # Give the unused reservation and the holds back, keep the dispatch
+    # recorded at handoff, do not stop the request.
+    scheduler.release_proven_unstarted(operation_id, owner, generation,
+                                      evidence_hash=evidence_digest(evidence_dir))
+    return _NOT_STARTED
+
+
 def _settle(
     scheduler: Any,
     *,
@@ -181,48 +193,57 @@ def _settle(
     owner: str,
     generation: int,
     run: Any,
+    error: Optional[str],
+    refused: bool,
     decision: Optional[Mapping[str, Any]],
     evidence_dir: str,
     candidate_hash: Any,
 ) -> str:
     """Move the operation to the state its evidence proves, and return that state.
 
-    Exactly one of the three branches runs, and each names the scheduler
-    migration it uses.  The ``mark_running`` before a ``finish`` is the
-    retroactive registration of a start the supervisor already observed: it is
-    recorded only once a run is known to have existed, and only for a run whose
-    outcome is replayable.
+    On this live path what this process saw comes first, and the records must
+    agree with it: the supervised child can write into the evidence directory,
+    so a record it forged (a NOT_STARTED observation, a clean cleanup, a deleted
+    handoff) must never release or finish a run that did start (found reviewing
+    attempt-001).
+
+    * No process existed when the recorder refused before ``supervise()`` gave
+      back a run (``refused``: rejected input, a handoff that could not be
+      recorded), or when the run never got a process identity (exec failed):
+      ``NOT_STARTED``.
+    * Interrupted before any run came back, only the records can tell, and only
+      an empty pair (nothing handed off) proves ``NOT_STARTED``.
+    * A process existed: ``mark_running`` registers the start retroactively.  The
+      candidate goes to review only when this call's own records were written
+      and the replay decision agrees with the supervisor's observation on the
+      outcome and on a confirmed cleanup; agreement with an unconfirmed cleanup
+      is ``CLEANUP_UNCONFIRMED``, anything else is ``START_UNKNOWN``.
     """
     status = None if decision is None else decision.get("status")
-    if status == "NOT_STARTED":
-        # Proven not to have started: give the unused reservation and the holds
-        # back, keep the dispatch recorded at handoff, do not stop the request.
-        scheduler.release_proven_unstarted(operation_id, owner, generation,
-                                          evidence_hash=evidence_digest(evidence_dir))
-        return _NOT_STARTED
-    if (run is not None and run.identity is not None and status in _STOPPED_OR_FAILED):
-        scheduler.mark_running(operation_id, owner, generation, process_identity=run.identity.to_dict())
-        if decision.get("replay_allowed") is True:
-            # ``cleanup_verified`` is the replay decision's ``replay_allowed``,
-            # never a report from this module: the run ended, its group was
-            # confirmed empty, so the candidate may be reviewed.
-            try:
-                candidate = candidate_hash(evidence_dir)
-                scheduler.finish(operation_id, owner, generation, candidate, True)
-            except BaseException:
-                # A refused candidate still leaves a running operation behind;
-                # that is the "did it start?" case, not a review.
-                scheduler.unknown(operation_id, owner, generation, reason="START_UNKNOWN")
-                raise
-            return _REVIEW_PENDING
-        # The group may still hold a live descendant, so nothing is replayed and
-        # the holds stay until an operator has looked.
-        scheduler.unknown(operation_id, owner, generation, reason="CLEANUP_UNCONFIRMED")
+    if refused or (run is not None and run.identity is None):
+        return _release(scheduler, operation_id, owner, generation, evidence_dir)
+    if run is None:
+        if status == "NOT_STARTED" and decision.get("observed_environment_sha256") is None:
+            return _release(scheduler, operation_id, owner, generation, evidence_dir)
+        scheduler.unknown(operation_id, owner, generation, reason="START_UNKNOWN")
         return _START_UNKNOWN
-    # No usable evidence (nothing recorded, damaged records, an identity nobody
-    # can prove, an outcome that is not a run that ended): investigate, do not
-    # re-dispatch.
-    scheduler.unknown(operation_id, owner, generation, reason="START_UNKNOWN")
+    scheduler.mark_running(operation_id, owner, generation, process_identity=run.identity.to_dict())
+    agreed = error is None and status in _STOPPED_OR_FAILED and run.observation.get("state") == status
+    if agreed and decision.get("replay_allowed") is True and run.observation.get("cleanup_confirmed") is True:
+        try:
+            candidate = candidate_hash(evidence_dir)
+            scheduler.finish(operation_id, owner, generation, candidate, True)
+        except BaseException:
+            # A refused candidate still leaves a running operation behind;
+            # that is the "did it start?" case, not a review.
+            scheduler.unknown(operation_id, owner, generation, reason="START_UNKNOWN")
+            raise
+        return _REVIEW_PENDING
+    # Agreed but unconfirmed: the group may still hold a live descendant, so
+    # nothing is replayed and the holds stay until an operator has looked.
+    # Not agreed: the records do not describe the run that did start.
+    scheduler.unknown(operation_id, owner, generation,
+                      reason="CLEANUP_UNCONFIRMED" if agreed else "START_UNKNOWN")
     return _START_UNKNOWN
 
 
@@ -244,8 +265,9 @@ def run_supervised_operation(
 
     The order is fixed: the invocation is checked against the operation, the
     handoff is accepted, the run happens, and only then is the operation's state
-    decided -- from ``replay_decision``, so a run whose observation was never
-    written is reported as unknown rather than finished.
+    decided -- from what the supervisor returned, checked against
+    ``replay_decision``, so a run whose observation was never written is
+    reported as unknown rather than finished.
 
     ``candidate_hash`` is called with ``evidence_dir`` and must return the
     candidate's hash; it is the caller that knows what the candidate is, not this
@@ -274,19 +296,23 @@ def run_supervised_operation(
             allowed_secret_names=allowed_secret_names,
         )
     except RuntimeErrorCode as exc:
-        # A refused input, an unreadable evidence directory, records that already
-        # exist: nothing started, so the records alone decide the state.
+        # Either the recorder refused before supervise() gave back a run (no
+        # process), or the run ended and its observation could not be recorded,
+        # in which case the error carries that run.
         error = exc.code
+        run = getattr(exc, "run", None)
     except BaseException:
         # An interrupt is the caller's to see, but the handoff it follows is
         # already on disk: the operation is settled from those records first.
         decision = _decision_of(spec, evidence_dir)
         _settle(scheduler, operation_id=operation_id, owner=owner, generation=generation, run=None,
-                decision=decision, evidence_dir=evidence_dir, candidate_hash=candidate_hash)
+                error=None, refused=False, decision=decision, evidence_dir=evidence_dir,
+                candidate_hash=candidate_hash)
         raise
     decision = _decision_of(spec, evidence_dir)
     state = _settle(scheduler, operation_id=operation_id, owner=owner, generation=generation, run=run,
-                    decision=decision, evidence_dir=evidence_dir, candidate_hash=candidate_hash)
+                    error=error, refused=error is not None and run is None, decision=decision,
+                    evidence_dir=evidence_dir, candidate_hash=candidate_hash)
     return {
         "operation_id": operation_id,
         "state": state,
