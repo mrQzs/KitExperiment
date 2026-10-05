@@ -17,6 +17,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Process identity and explicit environment | `process_identity.py` | pinned environment digest (golden vectors) and verification against `InvocationSpec.environment_sha256` from one snapshot; macOS boot session UUID via `sysctlbyname` (native), Linux branch patched only; PATH resolution from the explicit environment with absolute entries only; file SHA-256; canonical `ProcessIdentity` |
 | Native POSIX supervisor (macOS) | `posix_supervisor.py` | real process-tree tests on macOS 15.7.9: the child receives exactly the explicit environment (credential-shaped names only when allowlisted, names recorded but never values); exclusive 0600 evidence files; on timeout or cancellation, group SIGTERM then group SIGKILL; stragglers reaped until the group is confirmed empty; EPERM from zombie-only groups tolerated; interrupts during the stop and reap windows absorbed without moving their deadlines; a lifecycle record and a five-key observation that `reconcile` consumes. Not yet wired into adapters or the scheduler |
 | Supervised start records and replay gate (macOS) | `supervised_record.py`, `posix_supervisor.py` `before_start` | real process-tree tests on macOS 15.7.9: a canonical 0600 handoff recorded before the start and the observation after it (staged with O_EXCL, published by hard link, never overwritten); `replay_decision` reads only those records: a timeout with confirmed cleanup may be replayed; an unconfirmed cleanup, a controller killed after the start (START_UNKNOWN) and records for another invocation may not; damaged, oversized, symlinked or FIFO records fail closed. Crash-consistent only; power-loss durability not verified |
+| Scheduler wiring for supervised runs (macOS) | `scheduler.py` (NOT_STARTED, `release_proven_unstarted`, `unknown` reason, `mark_running` identity, `recover`), `supervised_operation.py` | real process-tree tests on macOS 15.7.9 through the in-memory Scheduler: runs that ended with confirmed cleanup (completed, failed, timed out) go to REVIEW_PENDING with the process identity recorded; an unconfirmed cleanup is START_UNKNOWN (CLEANUP_UNCONFIRMED) with holds kept and the request stopped; a handoff proven not started releases its holds and reservations but keeps the dispatch and the attempt; on the live path what the supervisor returned comes first and forged or contradicting records never release or finish a run; after a rollover the new generation recovers fenced operations from the records on disk. The ledger is the 07 in-memory prototype, not persistent |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
@@ -29,7 +30,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 316 passed
+python -m pytest -q                 397 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -102,14 +103,31 @@ gaps, which the planner closed in `c12a88f` together with
 - a close error after a write was ignored;
 - a `worktree_id` with a C1 control left the child running unsupervised.
 
+The Scheduler wiring is recorded in `.agent/reviews/scheduler-supervised-transitions/`
+and `.agent/reviews/supervised-operation-bridge/`, following the user's decisions
+in `.agent/design/scheduler-supervisor-wiring.md`:
+- `scheduler-supervised-transitions` attempt-001 was REVISE: str subclasses
+  (including `StrEnum`) passed the new checks, changed the ledger and only then
+  failed while the event was encoded. Attempt-002 checked exact types and
+  passed; the planner closed test gaps and made the tests run on Python 3.10
+  in `68b6e05`.
+- `supervised-operation-bridge` attempt-001 was accepted with an exception (it
+  read two files through the main repository's path, read-only). The
+  independent review then showed that the supervised child could forge a
+  NOT_STARTED observation and get a run that did start released. The planner
+  made the live path check the records against what the supervisor returned
+  in `368b91a`. Recovery after a rollover still has only the records; in a
+  same-account setting they are correlation, not authentication.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
 approved evidence: real Pi/Claude provider CLI calls, credentials and network
 access, native Windows Job Objects, native Linux process supervision,
-wiring the macOS supervisor and its replay gate into adapters and the
-scheduler (both have native macOS evidence on their own), power-loss
-durability of the start records, three-platform parity, distributed storage/locking, billing reconciliation,
+wiring the supervised runs into adapters (the Scheduler wiring has native
+macOS evidence on the in-memory ledger), a persistent scheduling ledger,
+power-loss durability of the start records, records that a same-account
+process cannot forge, three-platform parity, distributed storage/locking, billing reconciliation,
 production migration and rollback, CI artifact federation, and a real
 heterogeneous provider chain. Offline fixtures never upgrade these rows to
 `PASS`.

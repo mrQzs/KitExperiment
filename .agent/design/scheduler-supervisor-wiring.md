@@ -82,3 +82,22 @@ SentinelMesh 的设计已经规定了接法：
 拆成两份合同：
 1. `scheduler-supervised-transitions`：只改 `scheduler.py`。内容为 NOT_STARTED 终态与 `release_proven_unstarted()`、`unknown()` 的原因参数、`mark_running()` 记录进程身份、`recover()`、预算快照的口径。纯内存，用单元级 oracle 验收。
 2. `supervised-operation-bridge`：新增桥接模块，做真实进程的端到端验证，覆盖正常完成、失败退出、超时、清理未确认、exec 失败、交接被拒，以及 controller 被杀后由新代际恢复。
+
+## 7. 进度与已知残留（2026-10-05）
+
+- 第 1 份 `scheduler-supervised-transitions` 已集成：
+  - 提交：oracle `0bd883f`、a001 `7566cd5`、v2 探针 `247f578`、a002 `12ba34f`，规划端补测 `68b6e05`；
+  - 新方法一律按精确类型检查（`type(x) is str`、`type(x) is dict`、`type(generation) is int`），被拒绝的调用不改变账本。
+- 第 2 份 `supervised-operation-bridge` 已集成：
+  - 提交：oracle `2bed08a`、a001 `dc06d57`（ACCEPTED_WITH_EXCEPTION），规划端补全 `368b91a`。
+- 实时路径以监督器返回的事实为准，落盘记录必须与之一致：
+  - 记录器在启动前拒绝，或运行没有进程身份：NOT_STARTED；
+  - 有进程身份的运行永不判为 NOT_STARTED；
+  - 进入复审要同时满足：本次调用的记录已写成、落盘判定与内存观察的结局一致、两边都确认了清理；
+  - `record_supervised_run` 在观察记录写不进去时，把运行对象附在抛出的错误上；
+  - 只有被中断、拿不到运行对象时，才只看落盘记录。
+- 已知残留：
+  - 恢复路径只有落盘记录。同账户的被监督进程能写证据目录，所以记录只是关联证据，不是认证（05 文档 4.3.9）；强对抗环境需要 OS 隔离或受信的记录方。
+  - 停在 RUNNING 的窄窗口：`mark_running` 之后落入异步中断，或换代后 `unknown()` 被拒。换代后 `recover()` 能接管。
+  - 已有方法（`finish`、`fixture_verdict`、`handoff`、`_insert_usage`、`_epoch`）对 str 子类或非 int 代际仍有“先改后报错”的路径；`scheduler.recovered` 不含新 owner。另立合同处理。
+  - 账本是内存原型，不做持久化；`resume` 不实现。
