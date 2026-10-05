@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "task_id": "scheduler-supervised-transitions",
+  "plan_version": 1,
+  "title": "Scheduler transitions for supervised runs",
+  "repository": "KitExperiment",
+  "base_sha": "befbba9b95f874d39cc0df6a30a8e4abbcfb761c",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/scheduler.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_scheduler_supervised.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py",
+      "tests/test_scheduler_supervised_oracle.py",
+      "tests/test_reference.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_supervised_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_supervised.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_reference.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.scheduler; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "NOT_STARTED、`release_proven_unstarted` 与快照口径（Behavior contract 第 1、2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`mark_running` 的身份与 `unknown` 的原因（第 3、4 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "`recover` 的检查顺序、接管与三种结果（第 5 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "已有行为不变（第 6 条）",
+      "evidence": [
+        "V03",
+        "V04",
+        "V07"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "Step 3 的测试齐全，不自行做变异检查",
+      "evidence": [
+        "V02",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1500,
+    "max_wall_seconds_total": 3000,
+    "cost_budget": null
+  }
+}
