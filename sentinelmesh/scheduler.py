@@ -17,6 +17,8 @@ import threading
 import uuid
 from typing import Any, Iterable, Mapping
 
+from .runtime import ProcessIdentity, RuntimeErrorCode
+
 _MAX_SAFE_INTEGER = 2**53 - 1
 _IDENTITY_RE = re.compile(r"[a-z][a-z0-9._:-]{0,127}\Z")
 
@@ -319,7 +321,16 @@ class _Task:
 
 LIVE = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN"}
 UNRESOLVED = {"START_UNKNOWN", "REVIEW_PENDING", "ACCEPTED", "REJECTED"}
+# Terminal state for a handoff that is *proven* not to have started.  It is
+# neither live nor unresolved: the operation is closed, but its attempt and its
+# already-observed usage still count.
+NOT_STARTED = "NOT_STARTED"
+# Reasons accepted by ``Scheduler.unknown``; the value is part of the event.
+UNKNOWN_REASONS = frozenset({"START_UNKNOWN", "CLEANUP_UNCONFIRMED"})
+# Outcomes accepted by ``Scheduler.recover`` (evidence of a fenced run).
+RECOVERY_OUTCOMES = frozenset({"NOT_STARTED", "START_UNKNOWN", "FINISHED"})
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_IDENTITY_FIELDS = frozenset({"pid", "boot_id", "executable_sha256", "worktree_id"})
 
 
 class Scheduler:
@@ -407,6 +418,13 @@ class Scheduler:
                     continue
                 obs = op.usage.get(dim)
                 known = 0 if obs is None or obs.amount is None else obs.amount
+                if op.state == NOT_STARTED:
+                    # A handoff proven not to have started keeps only the usage
+                    # already observed (the dispatch recorded at handoff); the
+                    # remaining reservation is given back and the operation is
+                    # never counted as unresolved.
+                    totals[dim]["known"] += known
+                    continue
                 complete = obs is not None and obs.amount is not None and obs.final
                 totals[dim]["known"] += known
                 totals[dim]["held"] += 0 if complete else max(reserved - known, 0)
@@ -510,11 +528,27 @@ class Scheduler:
             )
             self._emit(operation, "scheduler.handoff_accepted", {"generation": generation})
 
-    def mark_running(self, operation: str, owner: str, generation: int) -> None:
+    @staticmethod
+    def _identity_copy(process_identity: Any) -> dict[str, Any]:
+        """Validate the process identity mapping and return a private copy."""
+        if not isinstance(process_identity, dict) or set(process_identity) != set(_IDENTITY_FIELDS):
+            raise ContractError("E_IDENTITY_SHAPE")
+        copy = dict(process_identity)
+        try:
+            ProcessIdentity(**copy)
+        except RuntimeErrorCode as exc:
+            raise ContractError("E_IDENTITY_SHAPE", exc.code) from exc
+        return copy
+
+    def mark_running(self, operation: str, owner: str, generation: int, *,
+                     process_identity: Mapping[str, Any] | None = None) -> None:
+        identity = None if process_identity is None else self._identity_copy(process_identity)
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state != "HANDOFF_ACCEPTED": raise ContractError("E_START_STATE")
-            op.state = "RUNNING"; self._emit(operation, "run.started", {})
+            op.state = "RUNNING"
+            self._emit(operation, "run.started",
+                       {} if identity is None else {"process_identity": identity})
 
     def renew(self, operation: str, owner: str, generation: int, now: int, extension: int) -> None:
         exact_int(now); exact_int(extension)
@@ -604,12 +638,83 @@ class Scheduler:
             op.state = "ACCEPTED" if accepted else "REJECTED"
             self._emit(operation, "run.verdict", {"state": op.state, "evidence": evidence_hash})
 
-    def unknown(self, operation: str, owner: str, generation: int) -> None:
+    def unknown(self, operation: str, owner: str, generation: int, *,
+                 reason: str = "START_UNKNOWN") -> None:
+        if not isinstance(reason, str) or reason not in UNKNOWN_REASONS:
+            raise ContractError("E_UNKNOWN_REASON")
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state not in {"HANDOFF_ACCEPTED", "RUNNING"}: raise ContractError("E_UNKNOWN_STATE")
             op.state = "START_UNKNOWN"; self._requests[op.request_id].stopped = self._requests[op.request_id].stopped or "START_UNKNOWN"
-            self._emit(operation, "scheduler.start_unknown", {})
+            self._emit(operation, "scheduler.start_unknown", {"reason": reason})
+
+    def release_proven_unstarted(self, operation: str, owner: str, generation: int, *,
+                                 evidence_hash: str) -> None:
+        """Close a handoff that is *proven* not to have started.
+
+        Unlike :meth:`cancel_unstarted` this accepts an operation that already
+        reached HANDOFF_ACCEPTED (the candidate was never executed, e.g. exec
+        failed or the supervisor rejected the input before the start).  The
+        attempt still counts and the dispatch recorded at handoff stays
+        counted, but the unused reservation and the resource holds are given
+        back.  The request is *not* stopped.
+        """
+        if not isinstance(evidence_hash, str) or not _HEX64.fullmatch(evidence_hash):
+            raise ContractError("E_EVIDENCE_HASH")
+        with self._lock:
+            op = self._owned(operation, owner, generation)
+            if op.state != "HANDOFF_ACCEPTED": raise ContractError("E_NOT_STARTED_STATE")
+            op.state = NOT_STARTED
+            self._release_resources(op)
+            self._emit(operation, "scheduler.not_started", {"evidence": evidence_hash})
+
+    def recover(self, operation: str, owner: str, generation: int, *, outcome: str,
+                evidence_hash: str, candidate_hash: str | None = None) -> None:
+        """Take over an in-flight operation of a fenced generation from evidence.
+
+        A new controller generation reconstructs what happened to a run it did
+        not start.  Every input is validated before anything is mutated; the
+        operation must be fenced out (``op.generation < generation``), its
+        request must already be stopped, and the evidence outcome decides the
+        resulting state.
+        """
+        if not isinstance(outcome, str) or outcome not in RECOVERY_OUTCOMES:
+            raise ContractError("E_RECOVERY_OUTCOME")
+        if not isinstance(evidence_hash, str) or not _HEX64.fullmatch(evidence_hash):
+            raise ContractError("E_EVIDENCE_HASH")
+        if outcome == "FINISHED":
+            if not isinstance(candidate_hash, str) or not _HEX64.fullmatch(candidate_hash):
+                raise ContractError("E_CLEANUP_OR_CANDIDATE")
+        elif candidate_hash is not None:
+            raise ContractError("E_CLEANUP_OR_CANDIDATE")
+        with self._lock:
+            self._epoch(generation)
+            op = self._operations.get(operation)
+            if op is None: raise ContractError("E_OPERATION_UNKNOWN")
+            if op.generation >= generation: raise ContractError("E_RECOVERY_NOT_FENCED")
+            if op.state not in {"HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN"}:
+                raise ContractError("E_RECOVERY_STATE")
+            if self._requests[op.request_id].stopped is None:
+                raise ContractError("E_RECOVERY_NOT_STOPPED")
+            if outcome == "NOT_STARTED" and op.state == "RUNNING":
+                raise ContractError("E_RECOVERY_CONFLICT")
+            from_generation = op.generation
+            op.owner = owner
+            op.generation = generation
+            if outcome == "NOT_STARTED":
+                op.state = NOT_STARTED
+                self._release_resources(op)
+            elif outcome == "START_UNKNOWN":
+                op.state = "START_UNKNOWN"
+            else:
+                op.state = "REVIEW_PENDING"
+                op.candidate_hash = candidate_hash
+                self._release_resources(op)
+            payload: dict[str, Any] = {"from_generation": from_generation, "outcome": outcome,
+                                       "evidence": evidence_hash, "state": op.state}
+            if outcome == "FINISHED":
+                payload["candidate"] = candidate_hash
+            self._emit(operation, "scheduler.recovered", payload)
 
     def _release_resources(self, op: _Operation) -> None:
         root = self._requests[op.request_id]
