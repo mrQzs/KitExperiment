@@ -653,7 +653,11 @@ class Scheduler:
                 raise ContractError("E_OPERATION_UNKNOWN")
             op = self._operations.get(operation)
             if op is None: raise ContractError("E_OPERATION_UNKNOWN")
-            payload, result, record = self._check_usage(op, op.usage.get(dimension), dimension, call_key,
+            # Only an exact ``str`` may index the recorded usage.  An unhashable
+            # dimension (a list, set or dict) must reach the shape check below and
+            # report ``E_OBSERVATION_SHAPE`` rather than a dict-lookup TypeError.
+            current = op.usage.get(dimension) if type(dimension) is str else None
+            payload, result, record = self._check_usage(op, current, dimension, call_key,
                                                         revision, amount, final, evidence_hash, correction)
             self._record_usage(op, dimension, payload, record)
             self._enforce(op.request_id, op.task_id)
