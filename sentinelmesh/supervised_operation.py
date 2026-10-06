@@ -163,6 +163,19 @@ def _checked_spec(spec: Any, operation_id: Any) -> None:
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "spec.run_id must equal the operation id")
 
 
+def _checked_evidence_dir(evidence_dir: Any) -> None:
+    """Refuse an evidence directory that is not a ``str`` before anything happens.
+
+    Every later step joins record names onto it.  A value that is not a string
+    would otherwise fail only after the handoff, on the release path, and leave
+    the operation HANDOFF_ACCEPTED with its holds.  A string the supervisor
+    rejects (relative, missing, not a directory) still reaches the supervisor
+    and is settled as a handoff proven not to have started.
+    """
+    if type(evidence_dir) is not str:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "evidence_dir must be a string")
+
+
 def _decision_of(spec: InvocationSpec, evidence_dir: str) -> Optional[dict[str, Any]]:
     """Return the replay record, or ``None`` when the records cannot be read.
 
@@ -281,6 +294,7 @@ def run_supervised_operation(
     re-raised unchanged.
     """
     _checked_spec(spec, operation_id)
+    _checked_evidence_dir(evidence_dir)
     # The handoff's guards (owner, generation, stopped request, budget) are
     # re-checked here and their errors are the scheduler's to raise: a refused
     # handoff starts nothing and leaves no record.
@@ -353,6 +367,7 @@ def recover_supervised_operation(
     raise and are not retried or translated here.
     """
     _checked_spec(spec, operation_id)
+    _checked_evidence_dir(evidence_dir)
     decision = _decision_of(spec, evidence_dir)
     digest = evidence_digest(evidence_dir)
     status = None if decision is None else decision.get("status")

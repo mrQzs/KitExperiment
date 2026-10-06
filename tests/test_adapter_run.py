@@ -34,6 +34,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -211,11 +212,17 @@ class AdapterRunGaps(unittest.TestCase):
         self.assertEqual(read_stream(str(evidence))["status"], "ok")  # legal baseline: a regular file
         os.unlink(evidence / STREAM_NAME)
         os.mkfifo(evidence / STREAM_NAME)  # no writer will ever appear
-        started = time.monotonic()
-        outcome = read_stream(str(evidence))
-        elapsed = time.monotonic() - started
-        self.assertEqual(outcome, {"status": "unreadable", "sha256": None, "bytes": None, "events": None})
-        self.assertLess(elapsed, 5.0, "opening a fifo must not wait for a writer")
+        # The read runs in a thread so a reader that blocks makes this case fail
+        # instead of hanging the session (planner fix after review F6).
+        outcomes = []
+        reader = threading.Thread(target=lambda: outcomes.append(read_stream(str(evidence))), daemon=True)
+        reader.start()
+        reader.join(5.0)
+        if reader.is_alive():
+            os.close(os.open(evidence / STREAM_NAME, os.O_WRONLY))  # unblock the reader, then fail
+            reader.join(5.0)
+            self.fail("opening a fifo must not wait for a writer")
+        self.assertEqual(outcomes, [{"status": "unreadable", "sha256": None, "bytes": None, "events": None}])
 
     def test_a_symlink_to_a_stream_is_unreadable(self):
         self.setUp()
@@ -337,6 +344,9 @@ class AdapterRunGaps(unittest.TestCase):
     def test_a_timed_out_run_with_a_confirmed_cleanup_records_its_usage(self):
         self.setUp()
         pid_path = self.work / "sleeper.pid"
+        # Registered before the run, so a failed assertion below never leaves the
+        # sleeper running (planner fix after review F6).
+        self.addCleanup(self.kill_pid_in, pid_path)
         op, evidence = self.operation()
         code = emit(COMPLETE, REPORT_PID_AND_SLEEP)
         started = time.monotonic()
@@ -355,7 +365,6 @@ class AdapterRunGaps(unittest.TestCase):
         # The timeout killed the process group: nothing the run started is left
         # running, which is what "cleanup confirmed" means here.
         self.assertTrue(pid_path.exists(), "the sleeper never reported its pid")
-        self.addCleanup(self.kill_pid_in, pid_path)  # never leave the sleeper running
         pid = int(pid_path.read_text().strip())
         for _ in range(100):
             try:

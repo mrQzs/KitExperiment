@@ -222,5 +222,40 @@ class SupervisedOperationGaps(unittest.TestCase):
         self.assertEqual((outcome["state"], outcome["error"]), ("REVIEW_PENDING", None))
 
 
+    # an evidence directory that is not a string (adapter-supervised-run review, F2) ---------
+
+    def test_an_evidence_directory_that_is_not_a_string_is_refused_before_the_handoff(self):
+        op, evidence = self.operation()
+        before = (self.scheduler.events, dict(self.scheduler._resource_holds))
+        for value in (None, 123, evidence):
+            with self.subTest(evidence_dir=repr(value)):
+                with self.assertRaises(RuntimeErrorCode) as ctx:
+                    run_supervised_operation(self.scheduler, operation_id=op, owner="owner-1", generation=1,
+                                             spec=self.spec(op, "pass"), environment=BASE_ENV, evidence_dir=value,
+                                             worktree_id="wt-1", candidate_hash=self.candidate_hash)
+                self.assertEqual(ctx.exception.code, "E_RUNTIME_EVIDENCE")
+                self.assertEqual((self.scheduler.events, dict(self.scheduler._resource_holds)), before)
+                self.assertEqual((self.state_of(op), os.listdir(evidence)), ("RESERVED", []))
+        # A string the supervisor rejects still settles as a handoff proven not to have started.
+        outcome = run_supervised_operation(self.scheduler, operation_id=op, owner="owner-1", generation=1,
+                                           spec=self.spec(op, "pass"), environment=BASE_ENV,
+                                           evidence_dir=str(self.work / "missing"), worktree_id="wt-1",
+                                           candidate_hash=self.candidate_hash)
+        self.assertEqual((outcome["state"], outcome["error"]), ("NOT_STARTED", "E_RUNTIME_EVIDENCE"))
+
+    def test_recovery_refuses_an_evidence_directory_that_is_not_a_string(self):
+        op, evidence = self.operation()
+        self.scheduler.handoff(op, "owner-1", 1)
+        self.scheduler.rollover()
+        before = self.scheduler.events
+        with self.assertRaises(RuntimeErrorCode) as ctx:
+            bridge.recover_supervised_operation(self.scheduler, operation_id=op, owner="owner-2", generation=2,
+                                                spec=self.spec(op, "pass"), evidence_dir=None,
+                                                candidate_hash=self.candidate_hash)
+        self.assertEqual(ctx.exception.code, "E_RUNTIME_EVIDENCE")
+        self.assertEqual(self.scheduler.events, before)
+        self.assertEqual((self.state_of(op), self.scheduler._operations[op].generation), ("HANDOFF_ACCEPTED", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
