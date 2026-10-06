@@ -19,7 +19,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Supervised start records and replay gate (macOS) | `supervised_record.py`, `posix_supervisor.py` `before_start` | real process-tree tests on macOS 15.7.9: a canonical 0600 handoff recorded before the start and the observation after it (staged with O_EXCL, published by hard link, never overwritten); `replay_decision` reads only those records: a timeout with confirmed cleanup may be replayed; an unconfirmed cleanup, a controller killed after the start (START_UNKNOWN) and records for another invocation may not; damaged, oversized, symlinked or FIFO records fail closed. Crash-consistent only; power-loss durability not verified |
 | Scheduler wiring for supervised runs (macOS) | `scheduler.py` (NOT_STARTED, `release_proven_unstarted`, `unknown` reason, `mark_running` identity, `recover`), `supervised_operation.py` | real process-tree tests on macOS 15.7.9 through the in-memory Scheduler: runs that ended with confirmed cleanup (completed, failed, timed out) go to REVIEW_PENDING with the process identity recorded; an unconfirmed cleanup is START_UNKNOWN (CLEANUP_UNCONFIRMED) with holds kept and the request stopped; a handoff proven not started releases its holds and reservations but keeps the dispatch and the attempt; on the live path what the supervisor returned comes first and forged or contradicting records never release or finish a run; after a rollover the new generation recovers fenced operations from the records on disk. The ledger is the 07 in-memory prototype, not persistent |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
-| Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries |
+| Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries; a rejected Scheduler call leaves the ledger unchanged (exact input types, event payloads encoded before any change, `settle` mappings recorded all or nothing) |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -30,7 +30,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 397 passed
+python -m pytest -q                 465 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -118,6 +118,12 @@ in `.agent/design/scheduler-supervisor-wiring.md`:
   made the live path check the records against what the supervisor returned
   in `368b91a`. Recovery after a rollover still has only the records; in a
   same-account setting they are correlation, not authentication.
+- `scheduler-exact-inputs` (`.agent/reviews/scheduler-exact-inputs/`) made the
+  older Scheduler methods leave the ledger unchanged when they reject a call,
+  and `scheduler.recovered` now names the new owner. Attempt-001 was REVISE:
+  `observe` still let an unhashable dimension escape as `TypeError`. Attempt-002
+  fixed it and passed. `rollover()` at generation 2**53-1 still changes the
+  ledger before it fails; a later contract handles it.
 
 ## Explicitly not proven by this repository
 

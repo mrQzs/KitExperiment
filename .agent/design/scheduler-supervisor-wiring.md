@@ -83,13 +83,21 @@ SentinelMesh 的设计已经规定了接法：
 1. `scheduler-supervised-transitions`：只改 `scheduler.py`。内容为 NOT_STARTED 终态与 `release_proven_unstarted()`、`unknown()` 的原因参数、`mark_running()` 记录进程身份、`recover()`、预算快照的口径。纯内存，用单元级 oracle 验收。
 2. `supervised-operation-bridge`：新增桥接模块，做真实进程的端到端验证，覆盖正常完成、失败退出、超时、清理未确认、exec 失败、交接被拒，以及 controller 被杀后由新代际恢复。
 
-## 7. 进度与已知残留（2026-10-05）
+## 7. 进度与已知残留（2026-10-05，10-06 更新）
 
 - 第 1 份 `scheduler-supervised-transitions` 已集成：
   - 提交：oracle `0bd883f`、a001 `7566cd5`、v2 探针 `247f578`、a002 `12ba34f`，规划端补测 `68b6e05`；
   - 新方法一律按精确类型检查（`type(x) is str`、`type(x) is dict`、`type(generation) is int`），被拒绝的调用不改变账本。
 - 第 2 份 `supervised-operation-bridge` 已集成：
   - 提交：oracle `2bed08a`、a001 `dc06d57`（ACCEPTED_WITH_EXCEPTION），规划端补全 `368b91a`。
+- 第 3 份 `scheduler-exact-inputs` 已集成（2026-10-06）：
+  - 提交：oracle `3cd668d`、`recovered` 的 payload 断言 `66adf6f`、a001 `badf80c`（REVISE）、v2 探针 `aba3308`、a002 `44d9dd2`（PASS）；
+  - `Scheduler` 已有的 15 个修改方法被拒绝时都不改变账本：
+    - 输入按精确类型检查；
+    - 所有检查（包括事件 payload 的规范编码）都在第一次修改之前；
+    - `settle` 的映射全部记录或一项都不记；
+    - `stop` 的原因不能为空；
+    - `scheduler.recovered` 写明接管后的 owner。
 - 实时路径以监督器返回的事实为准，落盘记录必须与之一致：
   - 记录器在启动前拒绝，或运行没有进程身份：NOT_STARTED；
   - 有进程身份的运行永不判为 NOT_STARTED；
@@ -99,5 +107,5 @@ SentinelMesh 的设计已经规定了接法：
 - 已知残留：
   - 恢复路径只有落盘记录。同账户的被监督进程能写证据目录，所以记录只是关联证据，不是认证（05 文档 4.3.9）；强对抗环境需要 OS 隔离或受信的记录方。
   - 停在 RUNNING 的窄窗口：`mark_running` 之后落入异步中断，或换代后 `unknown()` 被拒。换代后 `recover()` 能接管。
-  - 已有方法（`finish`、`fixture_verdict`、`handoff`、`_insert_usage`、`_epoch`）对 str 子类或非 int 代际仍有“先改后报错”的路径；`scheduler.recovered` 不含新 owner。另立合同处理。
+  - `rollover()` 在代际为 2^53−1 时先改后报错：代际加一、所有 request 设为 `RECOVERY_REQUIRED`，然后才在事件编码时报 `E_JSON_INTEGER`。`Scheduler(generation=2**53)` 也会被接受。实际几乎遇不到，另立合同处理。
   - 账本是内存原型，不做持久化；`resume` 不实现。
