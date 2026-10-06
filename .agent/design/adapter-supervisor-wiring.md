@@ -43,6 +43,11 @@
 - **证据**：
   - stdout 按 `supervised_record` 的方式只读：`O_RDONLY | O_NOFOLLOW | O_NONBLOCK`、必须是普通文件、有字节上限；
   - 用量观察的 `evidence_hash` 是 stdout 全部字节的 SHA-256。
+- **信任边界**（adapter-supervised-run 复审，F1）：同账户的子进程能伪造自己的流。
+  - 不跟随符号链接只挡住了链接，改名或硬链接换上来的普通文件照样会被读取；
+  - 用 `setsid` 干净逃逸、不留僵尸的后代，会让监督器判定清理已确认，复审之后它还能改写或追加流。
+
+  所以记录的用量是厂商的声明，不是独立证明。要把它变成证明，需要另立监督器合同，例如在观察记录里写入 stdout 的身份与摘要，或做进程组之外的逃逸检测。
 
 ## 4. 合同拆分
 
@@ -77,4 +82,13 @@
   - 提交：oracle `821a9b1`、a001 `928145a`（PASS）；
   - `sentinelmesh/adapter_protocol.py` 与冻结的参考逐字一致，只改了 import、模块文档字符串与合并后的 `__all__`；
   - 差分 oracle 在描述符、调用、规范化、注册表与穷举的结算序列上与参考完全相同。
-- 下一份：`adapter-supervised-run`（第 4 节第 2 项）。
+- 第 2 份 `adapter-supervised-run` 已集成（2026-10-06）：
+  - 提交：oracle `b0f46b4`、a001 `bba63ec`（PASS）、规划端补全 `9726844`；
+  - 用量必须在 `finish` 之前记入：`finish` 检查预算时，用量不是最终值的操作会把 request 永久停止。所以包装桥接的 `candidate_hash`，它只在结束复审的路径上、操作还是 RUNNING 时被调用；
+  - 规划端补全：桥接在交接之前拒绝非 str 的 `evidence_dir`（原来会让操作停在 HANDOFF_ACCEPTED），并补了交接前检查顺序与两处测试稳健性。
+- 已知残留：
+  - 第 3 节的信任边界（F1）；
+  - `usage_dimensions` 没有与预约维度对账：列入未预约的维度时，要等运行结束才在 `settle` 里报错，操作随之置为 START_UNKNOWN；
+  - `settle` 对异步中断不是全有或全无，但操作与 request 都会停在 START_UNKNOWN；
+  - 子类 adapter 抛出非 `AdapterError` 时，异常在落定之后冒出，调用方拿不到结果；
+  - Pi 原生事件的翻译仍是 NOT_RUN。
