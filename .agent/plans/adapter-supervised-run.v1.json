@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "task_id": "adapter-supervised-run",
+  "plan_version": 1,
+  "title": "Run adapter invocations under the supervisor",
+  "repository": "KitExperiment",
+  "base_sha": "fd66ce31a024356fb9272e617d8e382f73211ee9",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [],
+    "allowed_new_files": [
+      "sentinelmesh/adapter_run.py",
+      "tests/test_adapter_run.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/adapter.py",
+      "tests/test_adapter_run_oracle.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_adapter_run_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_adapter_run.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_operation_oracle.py",
+        "tests/test_supervised_operation.py",
+        "tests/test_supervised_operation_gaps.py",
+        "tests/test_adapter_protocol_reference_oracle.py",
+        "tests/test_adapter_protocol_differential_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.adapter_run; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "`supervised_spec` 与 `read_stream`（Behavior contract 第 1–3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`run_adapter_operation` 的前置检查与流程（第 4 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "用量只在结束复审之前、结果已结算且完整时记入，其余情形一律不记（第 4 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "导入无副作用，已有模块不退化（第 5 条）",
+      "evidence": [
+        "V03",
+        "V04",
+        "V07"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "Step 3 的测试齐全，不自行做变异检查",
+      "evidence": [
+        "V02",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
