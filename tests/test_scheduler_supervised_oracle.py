@@ -151,8 +151,10 @@ class SchedulerSupervisedOracle(unittest.TestCase):
         self.assertTrue(self.scheduler._requests["req-1"].stopped)
         events = [event for event in self.scheduler.events if event["type"] == "scheduler.recovered"]
         self.assertEqual([event["payload"] for event in events], [
-            {"from_generation": 1, "outcome": "START_UNKNOWN", "evidence": H1, "state": "START_UNKNOWN"},
-            {"from_generation": 1, "outcome": "NOT_STARTED", "evidence": H2, "state": "NOT_STARTED"}])
+            {"from_generation": 1, "outcome": "START_UNKNOWN", "evidence": H1, "state": "START_UNKNOWN",
+             "owner": "owner-2"},
+            {"from_generation": 1, "outcome": "NOT_STARTED", "evidence": H2, "state": "NOT_STARTED",
+             "owner": "owner-2"}])
 
     def test_a_finished_run_recovers_into_review(self):
         op = self.handed_off()
@@ -163,7 +165,7 @@ class SchedulerSupervisedOracle(unittest.TestCase):
         self.assertNotIn(("repo-1", "src/a.py"), self.scheduler._resource_holds)
         self.assertEqual(self.last_event("scheduler.recovered")["payload"],
                          {"from_generation": 1, "outcome": "FINISHED", "evidence": H1, "state": "REVIEW_PENDING",
-                          "candidate": H2})
+                          "candidate": H2, "owner": "owner-2"})
         self.scheduler.fixture_verdict(op, H2, True, H3)
         self.assertEqual(self.state_of(op), "ACCEPTED")
 

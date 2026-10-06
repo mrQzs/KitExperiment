@@ -292,7 +292,7 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.assertNotIn(("repo-1", "src/a.py"), self.scheduler._resource_holds)
         self.assertEqual(self.last_event("scheduler.recovered")["payload"],
                          {"from_generation": 1, "outcome": "FINISHED", "evidence": H1,
-                          "state": "REVIEW_PENDING", "candidate": H2})
+                          "state": "REVIEW_PENDING", "candidate": H2, "owner": "owner-2"})
         self.scheduler.fixture_verdict(op, H2, True, H3)
         self.assertEqual(self.state_of(op), "ACCEPTED")
 
@@ -304,7 +304,7 @@ class SupervisedTransitionsTest(unittest.TestCase):
         self.assertEqual(self.state_of(op), "NOT_STARTED")
         self.assertEqual(self.last_event("scheduler.recovered")["payload"],
                          {"from_generation": 1, "outcome": "NOT_STARTED", "evidence": H2,
-                          "state": "NOT_STARTED"})
+                          "state": "NOT_STARTED", "owner": "owner-2"})
         self.assertNotIn(("repo-1", "src/a.py"), self.scheduler._resource_holds)
         # The recovered NOT_STARTED operation is not unresolved any more.
         self.assertEqual(self.scheduler.snapshot("req-1")["tokens"]["unknown_operations"], 0)

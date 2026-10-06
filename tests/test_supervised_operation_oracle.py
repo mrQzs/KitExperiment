@@ -282,7 +282,7 @@ class SupervisedOperationOracle(unittest.TestCase):
         self.assertEqual(outcome["decision"]["status"], "START_UNKNOWN")
         self.assertEqual(self.events_of(op, "scheduler.recovered")[0]["payload"],
                          {"from_generation": 1, "outcome": "START_UNKNOWN", "evidence": evidence_digest(str(evidence)),
-                          "state": "START_UNKNOWN"})
+                          "state": "START_UNKNOWN", "owner": "owner-2"})
         self.assertIn(("repo-1", "src/a.py"), self.scheduler._resource_holds)
 
     def test_a_finished_run_whose_controller_died_recovers_into_review(self):
