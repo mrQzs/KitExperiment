@@ -362,10 +362,22 @@ class Scheduler:
         with self._lock:
             return tuple(json.loads(json.dumps(self._events)))
 
-    def _emit(self, operation_id: str | None, event_type: str, payload: Any) -> None:
+    def _emit(self, operation_id: str | None, event_type: str, payload: Any, *, encoded: bool = False) -> None:
+        if not encoded:
+            payload = self._encode_payload(payload)
         self._events.append({"seq": len(self._events) + 1, "operation_id": operation_id,
                              "type": event_type, "generation": self._generation,
-                             "payload": json.loads(canonical(payload).decode())})
+                             "payload": payload})
+
+    @staticmethod
+    def _encode_payload(payload: Any) -> Any:
+        """Canonical-encode an event payload *before* the ledger is touched.
+
+        Every check that can fail -- ``canonical()`` included -- therefore runs
+        before the first mutation, so a rejected call leaves the ledger (events
+        included) exactly as it was.
+        """
+        return json.loads(canonical(payload).decode())
 
     @staticmethod
     def _caps(caps: Mapping[str, int]) -> dict[str, int]:
@@ -373,7 +385,7 @@ class Scheduler:
             raise ContractError("E_BUDGET_SHAPE")
         result: dict[str, int] = {}
         for key, value in caps.items():
-            if not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key):
+            if type(key) is not str or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key):
                 raise ContractError("E_BUDGET_DIMENSION")
             exact_int(value)
             if value < 0:
@@ -382,14 +394,21 @@ class Scheduler:
         return result
 
     def seed_request(self, request: str, repo: str, caps: Mapping[str, int], concurrency: int = 1) -> None:
+        if type(request) is not str or type(repo) is not str:
+            raise ContractError("E_REQUEST_SHAPE")
         caps2 = self._caps(caps); exact_int(concurrency, positive=True)
         with self._lock:
             if request in self._requests:
                 raise ContractError("E_REQUEST_EXISTS")
+            payload = self._encode_payload({"request_id": request, "repo_id": repo, "caps": caps2})
             self._requests[request] = _Request(repo, caps2, concurrency)
-            self._emit(None, "request.created", {"request_id": request, "repo_id": repo, "caps": caps2})
+            self._emit(None, "request.created", payload, encoded=True)
 
     def seed_task(self, request: str, task: str, caps: Mapping[str, int], max_attempts: int = 3) -> None:
+        if type(request) is not str:
+            raise ContractError("E_REQUEST_UNKNOWN")
+        if type(task) is not str:
+            raise ContractError("E_TASK_SHAPE")
         caps2 = self._caps(caps); exact_int(max_attempts, positive=True)
         with self._lock:
             root = self._requests.get(request)
@@ -439,14 +458,24 @@ class Scheduler:
             return json.loads(json.dumps(self._snapshot(request, task)))
 
     def _epoch(self, generation: int) -> None:
-        if generation != self._generation:
+        # ``1.0`` equals ``1``, ``True`` equals ``1`` and an ``int`` subclass is
+        # equal to its base value, so equality alone would let a foreign
+        # generation through: only an exact ``int`` equal to the current
+        # generation is accepted.
+        if type(generation) is not int or generation != self._generation:
             raise ContractError("E_FENCED")
 
     def _owned(self, operation: str, owner: str, generation: int) -> _Operation:
+        # Generation, operation, owner: an unhashable operation id must not reach
+        # the dict lookup, and a foreign owner must not be compared as equal.
         self._epoch(generation)
+        if type(operation) is not str:
+            raise ContractError("E_OPERATION_UNKNOWN")
         op = self._operations.get(operation)
         if op is None:
             raise ContractError("E_OPERATION_UNKNOWN")
+        if type(owner) is not str:
+            raise ContractError("E_FENCED")
         if op.owner != owner or op.generation != generation:
             raise ContractError("E_FENCED")
         return op
@@ -455,12 +484,20 @@ class Scheduler:
               generation: int, guard_version: int, reservation: Mapping[str, int],
               resource_keys: list[str], now: int = 0, lease: int = 30,
               fail_before_commit: bool = False) -> dict[str, Any]:
+        # The scope (request/task), the idempotency key and the owner must be
+        # exact ``str`` before the intent is fingerprinted and encoded.
+        if type(request) is not str or type(task) is not str:
+            raise ContractError("E_SCOPE_UNKNOWN")
+        if type(key) is not str or type(owner) is not str:
+            raise ContractError("E_CLAIM_SHAPE")
         reservation2 = self._caps(reservation)
         for n in (plan, generation, guard_version, now, lease): exact_int(n)
         if plan <= 0 or generation <= 0 or guard_version <= 0 or lease <= 0 or reservation2.get("dispatches") != 1:
             raise ContractError("E_CLAIM_SHAPE")
-        if (not isinstance(resource_keys, list) or len(set(resource_keys)) != len(resource_keys)
-                or any(not isinstance(x, str) or not x or len(x) > 200 for x in resource_keys)):
+        if (not isinstance(resource_keys, list)
+                or any(type(x) is not str for x in resource_keys)
+                or len(set(resource_keys)) != len(resource_keys)
+                or any(not x or len(x) > 200 for x in resource_keys)):
             raise ContractError("E_RESOURCE_KEYS")
         intent = {"request": request, "task": task, "plan": plan, "owner": owner,
                   "generation": generation, "guard": guard_version, "reservation": reservation2,
@@ -517,6 +554,8 @@ class Scheduler:
                 snap = self._snapshot(op.request_id, scope)
                 if any(v["unknown_operations"] or v["exposure"] > v["limit"] for v in snap.values()):
                     raise ContractError("E_BUDGET_GUARD")
+            payload = self._encode_payload({"generation": generation})
+            dispatch_evidence = digest({"fixture": "local-handoff", "operation": operation})
             op.state = "HANDOFF_ACCEPTED"
             # Dispatch is a local, non-model metric.  Record it exactly once at
             # handoff so a completed operation does not retain an artificial
@@ -524,9 +563,9 @@ class Scheduler:
             # dimension.
             op.usage["dispatches"] = _Usage(
                 call_key="local:" + operation, revision=1, amount=1,
-                final=True, evidence_hash=digest({"fixture": "local-handoff", "operation": operation}),
+                final=True, evidence_hash=dispatch_evidence,
             )
-            self._emit(operation, "scheduler.handoff_accepted", {"generation": generation})
+            self._emit(operation, "scheduler.handoff_accepted", payload, encoded=True)
 
     @staticmethod
     def _identity_copy(process_identity: Any) -> dict[str, Any]:
@@ -554,9 +593,9 @@ class Scheduler:
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state != "HANDOFF_ACCEPTED": raise ContractError("E_START_STATE")
+            payload = self._encode_payload({} if identity is None else {"process_identity": identity})
             op.state = "RUNNING"
-            self._emit(operation, "run.started",
-                       {} if identity is None else {"process_identity": identity})
+            self._emit(operation, "run.started", payload, encoded=True)
 
     def renew(self, operation: str, owner: str, generation: int, now: int, extension: int) -> None:
         exact_int(now); exact_int(extension)
@@ -566,54 +605,109 @@ class Scheduler:
             if op.state not in LIVE - {"START_UNKNOWN"} or now >= op.lease_until: raise ContractError("E_LEASE")
             op.lease_until = max(op.lease_until, now + extension)
 
-    def _insert_usage(self, op: _Operation, dimension: str, call_key: str, revision: int,
-                      amount: int | None, final: bool, evidence_hash: str, correction: bool = False) -> str:
+    def _check_usage(self, op: _Operation, current: _Usage | None, dimension: str, call_key: str,
+                     revision: int, amount: int | None, final: bool, evidence_hash: str,
+                     correction: bool = False) -> tuple[Any, str, _Usage | None]:
+        """Validate one observation *without* touching the ledger.
+
+        Returns the canonical event payload, the result and the record to store
+        (``None`` when the recorded usage is kept: a replay or an older
+        revision).  Every check -- the exact types, the conflicts with the
+        already recorded usage and the canonical encoding of the payload -- runs
+        here, before anything is recorded.
+        """
         exact_int(revision)
-        if revision <= 0 or not isinstance(call_key, str) or not isinstance(final, bool) or not isinstance(correction, bool):
+        if (revision <= 0 or type(dimension) is not str or type(call_key) is not str
+                or not isinstance(final, bool) or not isinstance(correction, bool)):
             raise ContractError("E_OBSERVATION_SHAPE")
         if amount is not None and (type(amount) is not int or amount < 0): raise ContractError("E_OBSERVATION_SHAPE")
         if final and amount is None: raise ContractError("E_UNKNOWN_FINAL")
         if dimension == "dispatches": raise ContractError("E_LOCAL_METRIC_RESERVED")
         if dimension not in op.reservation: raise ContractError("E_OBSERVATION_SCOPE")
-        if not isinstance(evidence_hash, str) or not _HEX64.fullmatch(evidence_hash): raise ContractError("E_OBSERVATION_SHAPE")
-        current = op.usage.get(dimension)
+        if type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash): raise ContractError("E_OBSERVATION_SHAPE")
         if current and current.call_key != call_key: raise ContractError("E_USAGE_KEY")
         if current and revision == current.revision:
             if (current.amount, current.final, current.evidence_hash) != (amount, final, evidence_hash):
                 raise ContractError("E_USAGE_CONFLICT")
-            return "REPLAY"
-        if current and revision < current.revision: return "HISTORICAL_ONLY"
+            return {}, "REPLAY", None
+        if current and revision < current.revision: return {}, "HISTORICAL_ONLY", None
         if current and ((current.amount is not None and (amount is None or amount < current.amount))
                         or (current.final and (not final or amount != current.amount))) and not correction:
             raise ContractError("E_USAGE_CORRECTION_REQUIRED")
-        op.usage[dimension] = _Usage(call_key, revision, amount, final, evidence_hash)
-        self._emit(op.operation_id, "usage.observed", {"dimension": dimension, "call_key": call_key,
-                                                         "revision": revision, "amount": amount,
-                                                         "final": final, "correction": correction,
-                                                         "evidence_hash": evidence_hash})
-        return "APPLIED"
+        payload = self._encode_payload({"dimension": dimension, "call_key": call_key, "revision": revision,
+                                        "amount": amount, "final": final, "correction": correction,
+                                        "evidence_hash": evidence_hash})
+        return payload, "APPLIED", _Usage(call_key, revision, amount, final, evidence_hash)
+
+    def _record_usage(self, op: _Operation, dimension: str, payload: Any, record: _Usage | None) -> None:
+        """Apply an observation validated by :meth:`_check_usage`."""
+        if record is None:
+            return
+        op.usage[dimension] = record
+        self._emit(op.operation_id, "usage.observed", payload, encoded=True)
 
     def observe(self, operation: str, dimension: str, call_key: str, revision: int,
                 amount: int | None, final: bool, evidence_hash: str, correction: bool = False) -> str:
         with self._lock:
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
             op = self._operations.get(operation)
             if op is None: raise ContractError("E_OPERATION_UNKNOWN")
-            result = self._insert_usage(op, dimension, call_key, revision, amount, final, evidence_hash, correction)
+            payload, result, record = self._check_usage(op, op.usage.get(dimension), dimension, call_key,
+                                                        revision, amount, final, evidence_hash, correction)
+            self._record_usage(op, dimension, payload, record)
             self._enforce(op.request_id, op.task_id)
             return result
 
     def settle(self, operation: str, dimension: str | Mapping[str, int], call_key: str | None = None,
                revision: int = 1, amount: int | None = None, final: bool = True,
                evidence_hash: str | None = None, correction: bool = False) -> Any:
-        """Record final usage; accepts either one dimension or a mapping."""
+        """Record final usage; accepts either one dimension or a mapping.
+
+        A mapping is copied first and every entry is validated against the usage
+        recorded by the earlier entries of the same call before the first one is
+        recorded: either the whole mapping is recorded or nothing is.
+        """
         if isinstance(dimension, Mapping):
-            results = {}
-            for key, value in dimension.items():
-                results[key] = self.observe(operation, key, f"local:{operation}:{key}", revision,
-                                             value, final, evidence_hash or digest({"operation": operation, "dimension": key, "value": value}), correction)
-            return results
+            return self._settle_mapping(operation, dimension, revision, final, evidence_hash, correction)
+        # The operation and the dimension are checked before the default call key
+        # and the default evidence hash are derived from them.
+        if type(operation) is not str:
+            raise ContractError("E_OPERATION_UNKNOWN")
+        if type(dimension) is not str:
+            raise ContractError("E_OBSERVATION_SHAPE")
         return self.observe(operation, dimension, call_key or f"local:{operation}:{dimension}", revision,
-                            amount, final, evidence_hash or digest({"operation": operation, "dimension": dimension, "amount": amount}), correction)
+                            amount, final,
+                            evidence_hash or digest({"operation": operation, "dimension": dimension, "amount": amount}),
+                            correction)
+
+    def _settle_mapping(self, operation: str, dimensions: Mapping[str, int], revision: int, final: bool,
+                        evidence_hash: str | None, correction: bool) -> dict[str, str]:
+        if type(operation) is not str:
+            raise ContractError("E_OPERATION_UNKNOWN")
+        # Only this copy is used from here on.
+        items = list(dimensions.items())
+        for key, _value in items:
+            if type(key) is not str:
+                raise ContractError("E_OBSERVATION_SHAPE")
+        with self._lock:
+            op = self._operations.get(operation)
+            if op is None: raise ContractError("E_OPERATION_UNKNOWN")
+            recorded = dict(op.usage)
+            planned: list[tuple[str, Any, _Usage | None, str]] = []
+            for key, value in items:
+                evidence = evidence_hash or digest({"operation": operation, "dimension": key, "value": value})
+                payload, result, record = self._check_usage(op, recorded.get(key), key, f"local:{operation}:{key}",
+                                                            revision, value, final, evidence, correction)
+                if record is not None:
+                    recorded[key] = record
+                planned.append((key, payload, record, result))
+            results: dict[str, str] = {}
+            for key, payload, record, result in planned:
+                self._record_usage(op, key, payload, record)
+                results[key] = result
+                self._enforce(op.request_id, op.task_id)
+            return results
 
     def _enforce(self, request: str, task: str) -> None:
         reason = None
@@ -627,24 +721,30 @@ class Scheduler:
             self._emit(None, "request.stop_observed", {"request_id": request, "reason": reason})
 
     def finish(self, operation: str, owner: str, generation: int, candidate_hash: str, cleanup_verified: bool) -> None:
-        if not isinstance(candidate_hash, str) or not _HEX64.fullmatch(candidate_hash) or cleanup_verified is not True:
+        if type(candidate_hash) is not str or not _HEX64.fullmatch(candidate_hash) or cleanup_verified is not True:
             raise ContractError("E_CLEANUP_OR_CANDIDATE")
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state != "RUNNING": raise ContractError("E_FINISH_STATE")
+            payload = self._encode_payload({"candidate": candidate_hash})
             op.state = "REVIEW_PENDING"; op.candidate_hash = candidate_hash
             self._release_resources(op)
-            self._emit(operation, "run.finished_for_review", {"candidate": candidate_hash})
+            self._emit(operation, "run.finished_for_review", payload, encoded=True)
             self._enforce(op.request_id, op.task_id)
 
     def fixture_verdict(self, operation: str, candidate_hash: str, accepted: bool, evidence_hash: str) -> None:
-        if type(accepted) is not bool or not _HEX64.fullmatch(evidence_hash): raise ContractError("E_VERDICT_SHAPE")
+        if type(accepted) is not bool or type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
+            raise ContractError("E_VERDICT_SHAPE")
         with self._lock:
+            if type(operation) is not str: raise ContractError("E_VERDICT_CANDIDATE")
             op = self._operations.get(operation)
-            if op is None or op.state != "REVIEW_PENDING" or op.candidate_hash != candidate_hash:
+            if (op is None or op.state != "REVIEW_PENDING" or type(candidate_hash) is not str
+                    or op.candidate_hash != candidate_hash):
                 raise ContractError("E_VERDICT_CANDIDATE")
-            op.state = "ACCEPTED" if accepted else "REJECTED"
-            self._emit(operation, "run.verdict", {"state": op.state, "evidence": evidence_hash})
+            state = "ACCEPTED" if accepted else "REJECTED"
+            payload = self._encode_payload({"state": state, "evidence": evidence_hash})
+            op.state = state
+            self._emit(operation, "run.verdict", payload, encoded=True)
 
     def unknown(self, operation: str, owner: str, generation: int, *,
                  reason: str = "START_UNKNOWN") -> None:
@@ -653,8 +753,9 @@ class Scheduler:
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state not in {"HANDOFF_ACCEPTED", "RUNNING"}: raise ContractError("E_UNKNOWN_STATE")
+            payload = self._encode_payload({"reason": reason})
             op.state = "START_UNKNOWN"; self._requests[op.request_id].stopped = self._requests[op.request_id].stopped or "START_UNKNOWN"
-            self._emit(operation, "scheduler.start_unknown", {"reason": reason})
+            self._emit(operation, "scheduler.start_unknown", payload, encoded=True)
 
     def release_proven_unstarted(self, operation: str, owner: str, generation: int, *,
                                  evidence_hash: str) -> None:
@@ -672,9 +773,10 @@ class Scheduler:
         with self._lock:
             op = self._owned(operation, owner, generation)
             if op.state != "HANDOFF_ACCEPTED": raise ContractError("E_NOT_STARTED_STATE")
+            payload = self._encode_payload({"evidence": evidence_hash})
             op.state = NOT_STARTED
             self._release_resources(op)
-            self._emit(operation, "scheduler.not_started", {"evidence": evidence_hash})
+            self._emit(operation, "scheduler.not_started", payload, encoded=True)
 
     def recover(self, operation: str, owner: str, generation: int, *, outcome: str,
                 evidence_hash: str, candidate_hash: str | None = None) -> None:
@@ -696,13 +798,14 @@ class Scheduler:
         elif candidate_hash is not None:
             raise ContractError("E_CLEANUP_OR_CANDIDATE")
         with self._lock:
-            # Step 4: the generation must be the exact current generation.
-            # ``2.0`` equals ``2`` and ``True`` equals ``1``, so an equality test
-            # alone would accept them (or an int subclass) at the matching
-            # generation and write a non-``int`` generation into the operation;
-            # only ``type(generation) is int`` is accepted.
             if type(generation) is not int or generation != self._generation:
                 raise ContractError("E_FENCED")
+            # The new owner is checked with the generation: a foreign owner type
+            # is a fenced call, not a silently stored value.
+            if type(owner) is not str:
+                raise ContractError("E_FENCED")
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
             op = self._operations.get(operation)
             if op is None: raise ContractError("E_OPERATION_UNKNOWN")
             if op.generation >= generation: raise ContractError("E_RECOVERY_NOT_FENCED")
@@ -713,22 +816,28 @@ class Scheduler:
             if outcome == "NOT_STARTED" and op.state == "RUNNING":
                 raise ContractError("E_RECOVERY_CONFLICT")
             from_generation = op.generation
-            op.owner = owner
-            op.generation = generation
             if outcome == "NOT_STARTED":
-                op.state = NOT_STARTED
-                self._release_resources(op)
+                state = NOT_STARTED
             elif outcome == "START_UNKNOWN":
-                op.state = "START_UNKNOWN"
+                state = "START_UNKNOWN"
             else:
-                op.state = "REVIEW_PENDING"
-                op.candidate_hash = candidate_hash
-                self._release_resources(op)
+                state = "REVIEW_PENDING"
+            # The payload names the taking-over owner and is encoded before the
+            # operation is rewritten.
             payload: dict[str, Any] = {"from_generation": from_generation, "outcome": outcome,
-                                       "evidence": evidence_hash, "state": op.state}
+                                       "evidence": evidence_hash, "state": state, "owner": owner}
             if outcome == "FINISHED":
                 payload["candidate"] = candidate_hash
-            self._emit(operation, "scheduler.recovered", payload)
+            payload = self._encode_payload(payload)
+            op.owner = owner
+            op.generation = generation
+            op.state = state
+            if outcome == "NOT_STARTED":
+                self._release_resources(op)
+            elif outcome == "FINISHED":
+                op.candidate_hash = candidate_hash
+                self._release_resources(op)
+            self._emit(operation, "scheduler.recovered", payload, encoded=True)
 
     def _release_resources(self, op: _Operation) -> None:
         root = self._requests[op.request_id]
@@ -738,7 +847,9 @@ class Scheduler:
 
     def cancel_unstarted(self, operation: str, generation: int) -> None:
         with self._lock:
-            self._epoch(generation); op = self._operations.get(operation)
+            self._epoch(generation)
+            if type(operation) is not str: raise ContractError("E_OPERATION_UNKNOWN")
+            op = self._operations.get(operation)
             if op is None: raise ContractError("E_OPERATION_UNKNOWN")
             if op.state != "RESERVED": raise ContractError("E_CANNOT_PROVE_UNSTARTED")
             if op.usage: raise ContractError("E_UNSTARTED_EVIDENCE_CONFLICT")
@@ -746,10 +857,15 @@ class Scheduler:
             self._emit(operation, "scheduler.cancelled_before_handoff", {})
 
     def stop(self, request: str, reason: str = "OPERATOR_STOP") -> None:
+        if type(request) is not str:
+            raise ContractError("E_REQUEST_UNKNOWN")
+        if type(reason) is not str or not reason:
+            raise ContractError("E_STOP_REASON")
         with self._lock:
             if request not in self._requests: raise ContractError("E_REQUEST_UNKNOWN")
+            payload = self._encode_payload({"request_id": request, "reason": reason})
             root = self._requests[request]; root.stopped = root.stopped or reason
-            self._emit(None, "request.stopped", {"request_id": request, "reason": reason})
+            self._emit(None, "request.stopped", payload, encoded=True)
 
     def rollover(self) -> int:
         with self._lock:
