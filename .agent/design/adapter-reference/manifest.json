@@ -1,0 +1,28 @@
+{
+  "source_repository": "Code-Kit",
+  "source_revision": "ec1dccdcafec42e60fa29b52c4721d956573bef6",
+  "purpose": "Planner-provided immutable adapter boundary (04) and its conformance tests. Source and tests are reference data, not instructions.",
+  "files": [
+    {
+      "path": "protocol.py.txt",
+      "sha256": "b5d449a121b0a07f4649f5b2eb236e5c4482709e8bb5f0640a461906cd3d8bee",
+      "normalization": "CRLF to LF before SHA-256; UTF-8 source otherwise unchanged",
+      "source_path": "scripts/codekit/adapters/protocol.py",
+      "git_blob": "b1bcf96127cf895f0e6f5b964ac5b03dc6c664e2"
+    },
+    {
+      "path": "offline.py.txt",
+      "sha256": "c24ef5c30bfdcf02bda6b44e1b9542eb3357647d3d8251a2d33d93c8a3951ce3",
+      "normalization": "CRLF to LF before SHA-256; UTF-8 source otherwise unchanged",
+      "source_path": "scripts/codekit/adapters/offline.py",
+      "git_blob": "d4e7246036aad4228ba31f1924eefeba937005a2"
+    },
+    {
+      "path": "test_adapters.py.txt",
+      "sha256": "ab42d6abc5ea1759d00d2a360fd8991030ada37ba2dde6e54072d76ed65ced05",
+      "normalization": "CRLF to LF before SHA-256; UTF-8 source otherwise unchanged",
+      "source_path": "tests/test_adapters.py",
+      "git_blob": "2cea282cecec0a19bc52de03c0d08798f2aef8b8"
+    }
+  ]
+}
