@@ -73,4 +73,8 @@
 
 ## 7. 进度
 
-（待第 1 份合同集成后填写。）
+- 第 1 份 `adapter-protocol-port` 已集成（2026-10-06）：
+  - 提交：oracle `821a9b1`、a001 `928145a`（PASS）；
+  - `sentinelmesh/adapter_protocol.py` 与冻结的参考逐字一致，只改了 import、模块文档字符串与合并后的 `__all__`；
+  - 差分 oracle 在描述符、调用、规范化、注册表与穷举的结算序列上与参考完全相同。
+- 下一份：`adapter-supervised-run`（第 4 节第 2 项）。

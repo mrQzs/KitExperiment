@@ -12,7 +12,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Baseline | `baseline.py` | read-only Git/worktree/toolchain capture, semantic digest, drift comparison |
 | Config and approvals | `config.py`, `approvals.py` | profile precedence, CAS, input-lock and revocation checks |
 | Plugins and workflows | `plugins.py`, `workflows.py` | seven trusted manifests; bugfix/documentation/regression DAG recipes |
-| Runtime and adapters | `runtime.py`, `adapter.py` | bounded invocation, argv/env/input validation and normalized vendor events |
+| Runtime and adapters | `runtime.py`, `adapter.py`, `adapter_protocol.py` | bounded invocation, argv/env/input validation and normalized vendor events; `adapter_protocol` is a verbatim port of Code-Kit's adapter boundary (strict event sequence, single start and terminal, paired tools, unknown events leave a run unsettled), checked against the frozen reference |
 | POSIX runner cleanup (native macOS) | `runtime.py` `SubprocessRunner` POSIX branch | real process-tree tests on macOS 15.7.9: group SIGTERM, then group SIGKILL, bounded reads, and `cleanup="verified"` only once the pipes reached EOF and the group is empty; runs return within about timeout + 5 s; Windows branch unchanged |
 | Process identity and explicit environment | `process_identity.py` | pinned environment digest (golden vectors) and verification against `InvocationSpec.environment_sha256` from one snapshot; macOS boot session UUID via `sysctlbyname` (native), Linux branch patched only; PATH resolution from the explicit environment with absolute entries only; file SHA-256; canonical `ProcessIdentity` |
 | Native POSIX supervisor (macOS) | `posix_supervisor.py` | real process-tree tests on macOS 15.7.9: the child receives exactly the explicit environment (credential-shaped names only when allowlisted, names recorded but never values); exclusive 0600 evidence files; on timeout or cancellation, group SIGTERM then group SIGKILL; stragglers reaped until the group is confirmed empty; EPERM from zombie-only groups tolerated; interrupts during the stop and reap windows absorbed without moving their deadlines; a lifecycle record and a five-key observation that `reconcile` consumes. Not yet wired into adapters or the scheduler |
@@ -30,7 +30,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 465 passed
+python -m pytest -q                 502 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
