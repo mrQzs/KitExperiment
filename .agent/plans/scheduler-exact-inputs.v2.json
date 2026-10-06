@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "task_id": "scheduler-exact-inputs",
+  "plan_version": 2,
+  "title": "Exact inputs for the older Scheduler methods",
+  "repository": "KitExperiment",
+  "base_sha": "35c65dcbfcc1b58c61b4b1928b34573a9efc631a",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/scheduler.py",
+      "tests/test_scheduler_exact_inputs.py"
+    ],
+    "allowed_new_files": [],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py",
+      "tests/test_scheduler_exact_inputs_oracle.py",
+      "tests/test_scheduler_exact_inputs_probes.py",
+      "tests/test_scheduler_supervised_oracle.py",
+      "tests/test_scheduler_supervised.py",
+      "tests/test_supervised_operation_oracle.py",
+      "tests/test_reference.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_exact_inputs_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "pass"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_exact_inputs_probes.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_exact_inputs.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_supervised_oracle.py",
+        "tests/test_scheduler_supervised.py",
+        "tests/test_scheduler_supervised_probes.py",
+        "tests/test_scheduler_supervised_gaps.py",
+        "tests/test_reference.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "pass"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_operation_oracle.py",
+        "tests/test_supervised_operation.py",
+        "tests/test_supervised_operation_gaps.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "pass"
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V09",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.scheduler; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "`observe` 的不可哈希 dimension 报 `E_OBSERVATION_SHAPE`（第 2 条的 v2 补充）",
+      "evidence": [
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "第 1–6 条的其余规则不退化，导入无副作用",
+      "evidence": [
+        "V01",
+        "V04",
+        "V05",
+        "V06",
+        "V09"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "Step 3 的改正与补测（F2–F4），不自行做变异检查",
+      "evidence": [
+        "V03",
+        "review"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V07",
+        "V08",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1200,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
