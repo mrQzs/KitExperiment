@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "task_id": "scheduler-exact-inputs",
+  "plan_version": 1,
+  "title": "Exact inputs for the older Scheduler methods",
+  "repository": "KitExperiment",
+  "base_sha": "04c981c79c392bdc38d3d5763f3c4dbb6e4c402c",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/scheduler.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_scheduler_exact_inputs.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "sentinelmesh/runtime.py",
+      "tests/test_scheduler_exact_inputs_oracle.py",
+      "tests/test_scheduler_supervised_oracle.py",
+      "tests/test_scheduler_supervised.py",
+      "tests/test_supervised_operation_oracle.py",
+      "tests/test_reference.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_exact_inputs_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_exact_inputs.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_scheduler_supervised_oracle.py",
+        "tests/test_scheduler_supervised.py",
+        "tests/test_scheduler_supervised_probes.py",
+        "tests/test_scheduler_supervised_gaps.py",
+        "tests/test_reference.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_operation_oracle.py",
+        "tests/test_supervised_operation.py",
+        "tests/test_supervised_operation_gaps.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.scheduler; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "被拒绝的调用不改变账本，先检查后修改（Behavior contract 第 1 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "精确类型表（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "`settle` 映射全部记录或一项都不记录（第 3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "`stop` 的原因与 `scheduler.recovered` 的 owner（第 4、5 条）",
+      "evidence": [
+        "V01",
+        "V03",
+        "V04"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "合法调用的行为不退化，导入无副作用（第 6 条与 Non-goals）",
+      "evidence": [
+        "V03",
+        "V04",
+        "V05",
+        "V08"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 3 的测试齐全，不自行做变异检查",
+      "evidence": [
+        "V02",
+        "review"
+      ]
+    },
+    {
+      "id": "D07",
+      "text": "所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V06",
+        "V07",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
