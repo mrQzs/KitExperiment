@@ -347,7 +347,14 @@ def _settle(
         # The child could still hold a descriptor after the reap: what the
         # supervisor digested in memory is the run, and the two files on disk
         # have to be it before anything is reviewed from them.
-        stream_reason = _stream_reason(evidence_dir, getattr(run, "streams", None))
+        try:
+            stream_reason = _stream_reason(evidence_dir, getattr(run, "streams", None))
+        except BaseException:
+            # The check reads both streams again, up to the digest limit each:
+            # an interrupt while it does must not leave the operation RUNNING
+            # (planner completion of attempt-001).
+            scheduler.unknown(operation_id, owner, generation, reason="START_UNKNOWN")
+            raise
         if stream_reason is not None:
             scheduler.unknown(operation_id, owner, generation, reason=stream_reason)
             return _START_UNKNOWN
