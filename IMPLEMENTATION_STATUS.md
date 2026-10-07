@@ -15,12 +15,12 @@ offline evidence from capabilities that require a real provider or platform.
 | Runtime and adapters | `runtime.py`, `adapter.py`, `adapter_protocol.py` | bounded invocation, argv/env/input validation and normalized vendor events; `adapter_protocol` is a verbatim port of Code-Kit's adapter boundary (strict event sequence, single start and terminal, paired tools, unknown events leave a run unsettled), checked against the frozen reference |
 | POSIX runner cleanup (native macOS) | `runtime.py` `SubprocessRunner` POSIX branch | real process-tree tests on macOS 15.7.9: group SIGTERM, then group SIGKILL, bounded reads, and `cleanup="verified"` only once the pipes reached EOF and the group is empty; runs return within about timeout + 5 s; Windows branch unchanged |
 | Process identity and explicit environment | `process_identity.py` | pinned environment digest (golden vectors) and verification against `InvocationSpec.environment_sha256` from one snapshot; macOS boot session UUID via `sysctlbyname` (native), Linux branch patched only; PATH resolution from the explicit environment with absolute entries only; file SHA-256; canonical `ProcessIdentity` |
-| Native POSIX supervisor (macOS) | `posix_supervisor.py` | real process-tree tests on macOS 15.7.9: the child receives exactly the explicit environment (credential-shaped names only when allowlisted, names recorded but never values); exclusive 0600 evidence files; on timeout or cancellation, group SIGTERM then group SIGKILL; stragglers reaped until the group is confirmed empty; EPERM from zombie-only groups tolerated; interrupts during the stop and reap windows absorbed without moving their deadlines; a lifecycle record and a five-key observation that `reconcile` consumes. Not yet wired into adapters or the scheduler |
-| Supervised start records and replay gate (macOS) | `supervised_record.py`, `posix_supervisor.py` `before_start` | real process-tree tests on macOS 15.7.9: a canonical 0600 handoff recorded before the start and the observation after it (staged with O_EXCL, published by hard link, never overwritten); `replay_decision` reads only those records: a timeout with confirmed cleanup may be replayed; an unconfirmed cleanup, a controller killed after the start (START_UNKNOWN) and records for another invocation may not; damaged, oversized, symlinked or FIFO records fail closed. Crash-consistent only; power-loss durability not verified |
+| Native POSIX supervisor (macOS) | `posix_supervisor.py` | real process-tree tests on macOS 15.7.9: the child receives exactly the explicit environment (credential-shaped names only when allowlisted, names recorded but never values); exclusive 0600 evidence files; on timeout or cancellation, group SIGTERM then group SIGKILL; stragglers reaped until the group is confirmed empty; EPERM from zombie-only groups tolerated; interrupts during the stop and reap windows absorbed without moving their deadlines; a lifecycle record and a five-key observation that `reconcile` consumes; both evidence files pinned with a read-only descriptor before the start, and after the reap the facts of each stream (device, inode, byte count, SHA-256) read through the pins block by block, so `streams_match` detects any later append, rewrite, truncation, rename, hard link, symlink or FIFO |
+| Supervised start records and replay gate (macOS) | `supervised_record.py`, `posix_supervisor.py` `before_start` | real process-tree tests on macOS 15.7.9: a canonical 0600 handoff recorded before the start and the observation after it (staged with O_EXCL, published by hard link, never overwritten); `replay_decision` reads only those records: a timeout with confirmed cleanup may be replayed; an unconfirmed cleanup, a controller killed after the start (START_UNKNOWN) and records for another invocation may not; damaged, oversized, symlinked or FIFO records fail closed; observation schema v2 carries the stream facts in a closed `streams` object (v1 records are refused) and `recorded_streams` hands them to recovery. Crash-consistent only; power-loss durability not verified |
 | Scheduler wiring for supervised runs (macOS) | `scheduler.py` (NOT_STARTED, `release_proven_unstarted`, `unknown` reason, `mark_running` identity, `recover`), `supervised_operation.py` | real process-tree tests on macOS 15.7.9 through the in-memory Scheduler: runs that ended with confirmed cleanup (completed, failed, timed out) go to REVIEW_PENDING with the process identity recorded; an unconfirmed cleanup is START_UNKNOWN (CLEANUP_UNCONFIRMED) with holds kept and the request stopped; a handoff proven not started releases its holds and reservations but keeps the dispatch and the attempt; on the live path what the supervisor returned comes first and forged or contradicting records never release or finish a run; after a rollover the new generation recovers fenced operations from the records on disk. The ledger is the 07 in-memory prototype, not persistent |
 | Adapter runs under the supervisor (macOS) | `adapter_run.py` | real-process tests on macOS 15.7.9: a normalized `adapter_protocol.Invocation` runs through the Scheduler bridge; the supervised stdout is read without following links (a regular file within a byte ceiling) as normalized-event JSONL and reduced by the adapter; usage is recorded only for a settled and complete result while the run is still RUNNING, just before `finish`, so a known run never stops the request; every other stream or run state records nothing. The stream format is the normalized adapter protocol, not any vendor's native output |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
-| Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries; a rejected Scheduler call leaves the ledger unchanged (exact input types, event payloads encoded before any change, `settle` mappings recorded all or nothing) |
+| Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries; a rejected Scheduler call leaves the ledger unchanged (exact input types, event payloads encoded before any change, `settle` mappings recorded all or nothing); `operation()` is a read-only view of one operation (request, task, state, owner, generation, reservation); `rollover()` and the constructor refuse a generation beyond 2**53-1 before anything changes |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -31,7 +31,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 538 passed
+python -m pytest -q                 597 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -123,8 +123,8 @@ in `.agent/design/scheduler-supervisor-wiring.md`:
   older Scheduler methods leave the ledger unchanged when they reject a call,
   and `scheduler.recovered` now names the new owner. Attempt-001 was REVISE:
   `observe` still let an unhashable dimension escape as `TypeError`. Attempt-002
-  fixed it and passed. `rollover()` at generation 2**53-1 still changes the
-  ledger before it fails; a later contract handles it.
+  fixed it and passed. `rollover()` at generation 2**53-1 still changed the
+  ledger before it failed; `scheduler-operation-view` fixed that (below).
 
 The adapter wiring is recorded in `.agent/reviews/adapter-protocol-port/` and
 `.agent/reviews/adapter-supervised-run/`, following the planner decisions in
@@ -137,6 +137,27 @@ The adapter wiring is recorded in `.agent/reviews/adapter-protocol-port/` and
   RUNNING. The independent review found that a non-string `evidence_dir` left an
   operation HANDOFF_ACCEPTED; the planner fixed the bridge in `9726844`.
 
+The output stream trust boundary is recorded in
+`.agent/design/stream-trust-boundary.md` (planner decisions E1–E10) and in
+`.agent/reviews/supervisor-stream-facts/` and
+`.agent/reviews/scheduler-operation-view/`:
+- `supervisor-stream-facts` pins both evidence files before the start and,
+  after the reap, records the device, inode, byte count and SHA-256 of each
+  stream in observation schema v2; `streams_match` tells whether the files are
+  still exactly those facts.
+  - Attempt-001 was REVISE. The independent review found three problems: one
+    `ftruncate` on the child's own stdout made the supervisor read (and hold in
+    memory) a sparse file of any size; `streams_match` raised on a path holding
+    a NUL or a lone surrogate; and a rollback removed whatever file the path
+    named.
+  - Decision E10 caps the digest at 256 MiB; a larger stream has no facts.
+  - Attempt-002 fixed all three and passed. The review found one nearly
+    unreachable deviation (an identity `fstat` outside the protected region)
+    and three test gaps; the planner completed them in `d69d45d`.
+- `scheduler-operation-view` passed. `Scheduler.operation()` is a read-only
+  view of one operation, and `rollover()` and the constructor refuse a
+  generation beyond 2**53-1 before anything changes.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
@@ -146,8 +167,11 @@ translating a vendor's native events into the normalized adapter protocol
 (the supervised adapter path has native macOS evidence for that protocol only),
 a persistent scheduling ledger, power-loss durability of the start records,
 records and output streams that a same-account process cannot forge (a
-descendant that escapes the process group with `setsid` is not detected, and can
-still write the stream after review), three-platform parity, distributed storage/locking, billing reconciliation,
+descendant that escapes the process group with `setsid` is still not detected:
+what it writes after the reap no longer matches the recorded stream facts, but
+what it writes before them cannot be told apart from the run's own output, and
+on the recovery path the streams and the records can be forged together),
+three-platform parity, distributed storage/locking, billing reconciliation,
 production migration and rollback, CI artifact federation, and a real
 heterogeneous provider chain. Offline fixtures never upgrade these rows to
 `PASS`.
