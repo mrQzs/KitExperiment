@@ -167,7 +167,7 @@ class PosixSupervisorTests(unittest.TestCase):
         self.assertEqual(
             [field.name for field in dataclasses.fields(SupervisedRun)],
             ["stop_reason", "exit_code", "lifecycle", "observation", "identity", "stdout_path",
-             "stderr_path", "stragglers_killed", "environment_names", "duration_seconds"],
+             "stderr_path", "stragglers_killed", "environment_names", "duration_seconds", "streams"],
         )
         self.assertEqual((_TERM_GRACE_SECONDS, _KILL_WAIT_SECONDS, _REAP_SECONDS), (1.0, 2.0, 2.0))
         self.assertEqual(_CREDENTIAL_MARKERS, ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL", "COOKIE", "AUTH"))

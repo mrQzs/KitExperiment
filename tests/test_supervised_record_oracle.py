@@ -174,9 +174,11 @@ class SupervisedRecordOracle(unittest.TestCase):
         self.assertEqual((evidence / HANDOFF_NAME).read_bytes(), canonical({
             "schema": "sentinelmesh-handoff-v1", "request_id": "req-1", "run_id": "run-1",
             "environment_sha256": spec.environment_sha256, "spec_sha256": spec.digest()}))
+        # Schema v2 (supervisor-stream-facts) adds the stream facts next to the
+        # unchanged observation.
         self.assertEqual((evidence / OBSERVATION_NAME).read_bytes(), canonical({
-            "schema": "sentinelmesh-observation-v1", "spec_sha256": spec.digest(),
-            "observation": dict(run.observation)}))
+            "schema": "sentinelmesh-observation-v2", "spec_sha256": spec.digest(),
+            "observation": dict(run.observation), "streams": run.streams}))
         record = self.decision(spec, evidence)
         self.assertEqual(record, dict(reconcile(spec, run.observation)))
         self.assert_decision(record, spec, "STOPPED", True, spec.environment_sha256)

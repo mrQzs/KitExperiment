@@ -33,9 +33,9 @@ BASE_ENV = {"LANG": "C", "PATH": "/usr/bin:/bin"}
 CANDIDATE = "c" * 64
 FORGE_NOT_STARTED = ("import json, os, sys\n"
                      "d = sys.argv[1]; h = json.load(open(os.path.join(d, 'handoff.json')))\n"
-                     "o = {'schema': 'sentinelmesh-observation-v1', 'spec_sha256': h['spec_sha256'],\n"
+                     "o = {'schema': 'sentinelmesh-observation-v2', 'spec_sha256': h['spec_sha256'],\n"
                      "     'observation': {'run_id': h['run_id'], 'environment_sha256': h['environment_sha256'],\n"
-                     "                     'state': 'NOT_STARTED'}}\n"
+                     "                     'state': 'NOT_STARTED'}, 'streams': None}\n"
                      "open(os.path.join(d, 'observation.json'), 'wb').write(\n"
                      "    (json.dumps(o, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\\n').encode())\n")
 LOCK_DIRECTORY = "import os, sys; os.chmod(sys.argv[1], 0o500)"
