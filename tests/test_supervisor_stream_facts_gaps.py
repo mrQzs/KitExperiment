@@ -5,6 +5,8 @@ unguarded, and one property was missing from the candidate:
 
 * the facts are taken after the group is reaped, so a member of the group that
   writes after the leader exited (and before the reap kills it) is part of them;
+  the member writes on a signal from the wrapped ``_reap_group``, so the order
+  does not depend on how quickly ``Popen.wait`` notices the leader's exit;
 * the digest stops at the size ``fstat`` reported before reading, so a stream
   that grows while it is digested cannot make the read go on;
 * the byte count is what was read, so a stream that shrinks while it is
@@ -24,10 +26,15 @@ found:
   call created: a file another process put at the path is left alone, and the
   pin is compared with the write descriptor, not with whatever the path names.
 
+The review of attempt-002 added three more (planner completion): a symlink put
+at a created path is left alone (only ``lstat`` tells it from this call's own
+file), facts over the limit are refused before any file is opened, and an
+identity that cannot be read refuses the start with every descriptor closed.
+
 Each case starts real local ``python`` processes.  The first one controls the
-timing through ``posix_supervisor._reap_group``: the reap waits until the
-member has written, so a correct supervisor always passes, and one that took the
-facts before the reap misses the member's write.
+timing through ``posix_supervisor._reap_group``: the wrapper lets the member
+write and waits for it before reaping, so a correct supervisor always passes,
+and one that took the facts before the reap always misses the member's write.
 """
 from __future__ import annotations
 
@@ -52,15 +59,14 @@ from sentinelmesh.runtime import InvocationSpec, RuntimeErrorCode
 PY = os.path.realpath(sys.executable)
 BASE_ENV = {"LANG": "C", "PATH": "/usr/bin:/bin"}
 BLOCK = 1 << 16
-# The leader writes and exits at once.  A member of its group waits until it
-# has been reparented (the leader is gone), writes, signals and sleeps until the
-# reap kills it.
+# The leader writes and exits at once.  A member of its group waits for the
+# ``go`` file, writes, signals and sleeps until the reap kills it.
 WRITES_AFTER_THE_LEADER = ("import os, sys, time\n"
-                           "marker = sys.argv[1]\n"
+                           "go, marker = sys.argv[1:3]\n"
                            "os.write(1, b'leader\\n')\n"
-                           "leader = os.getpid()\n"
                            "if os.fork() == 0:\n"
-                           "    while os.getppid() == leader:\n"
+                           "    deadline = time.monotonic() + 20\n"
+                           "    while not os.path.exists(go) and time.monotonic() < deadline:\n"
                            "        time.sleep(0.005)\n"
                            "    os.write(1, b'member\\n')\n"
                            "    open(marker, 'w').close()\n"
@@ -110,17 +116,23 @@ class StreamFactsGaps(unittest.TestCase):
         return (info.st_dev, info.st_ino) == (path.st_dev, path.st_ino)
 
     def test_the_facts_are_taken_after_the_reap(self):
-        marker = self.work / "member-wrote"
+        go, marker = self.work / "go", self.work / "member-wrote"
         real_reap = posix_supervisor._reap_group
 
         def reap_once_the_member_wrote(pgid):
+            # The member writes only now: after the leader was waited for and
+            # before the group is reaped.  A supervisor that took the facts
+            # before the reap has already taken them, so it misses this write
+            # every time (planner completion of attempt-002: waiting for the
+            # leader to be reparented left the order to the scheduler).
+            go.touch()
             deadline = time.monotonic() + 10
             while not marker.exists() and time.monotonic() < deadline:
                 time.sleep(0.005)
             return real_reap(pgid)
 
         with mock.patch.object(posix_supervisor, "_reap_group", reap_once_the_member_wrote):
-            run = self.supervise(self.spec(WRITES_AFTER_THE_LEADER, str(marker)))
+            run = self.supervise(self.spec(WRITES_AFTER_THE_LEADER, str(go), str(marker)))
         self.assertTrue(marker.exists(), "the member never wrote")
         self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0))
         self.assertEqual((run.stragglers_killed, run.observation["cleanup_confirmed"]), (True, True))
@@ -251,9 +263,20 @@ class StreamFactsGaps(unittest.TestCase):
         os.truncate(self.evidence / "stdout.log", huge)
         claimed = dict(run.streams, stdout=dict(run.streams["stdout"], bytes=huge))
         asked, patched = self.reads_of_stdout()
-        with patched:
+        real_open = os.open
+        opened = []
+
+        def counting_open(path, flags, *args, **kwargs):
+            if os.path.dirname(os.fsdecode(path)) == str(self.evidence):
+                opened.append(os.fsdecode(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        with patched, mock.patch.object(os, "open", counting_open):
             self.assertIs(streams_match(str(self.evidence), claimed), False)
         self.assertEqual(asked, [], "facts over the limit were checked by reading")
+        # Refused before any file is opened, not after an open and an fstat
+        # (planner completion of attempt-002).
+        self.assertEqual(opened, [], "facts over the limit were checked by opening the files")
 
     def test_streams_match_refuses_a_path_it_cannot_encode(self):
         run = self.supervise(self.spec("import os\nos.write(1, b'leader\\n')\n"))
@@ -307,6 +330,68 @@ class StreamFactsGaps(unittest.TestCase):
         self.assertEqual(stderr.read_bytes(), b"foreign\n", "another process's file was removed")
         # The file this call created and still owned is gone; the one moved away stays.
         self.assertEqual(sorted(os.listdir(self.evidence)), ["moved.log", "stderr.log"])
+
+
+    # planner completion of attempt-002 -----------------------------------------
+
+    def test_a_symlink_put_at_a_created_path_is_left_alone(self):
+        # The created file is moved away and a link to it takes its place before
+        # the pin: following the link (``stat``) would see this call's own inode
+        # and remove the link; only ``lstat`` sees a link that is not this file.
+        real_open = os.open
+        marker = self.work / "started"
+        moved = self.evidence / "moved.log"
+        stdout = self.evidence / "stdout.log"
+
+        def linking_open(path, flags, *args, **kwargs):
+            if (flags & os.O_ACCMODE) == os.O_RDONLY and os.fsdecode(path) == str(stdout) and not moved.exists():
+                os.rename(stdout, moved)
+                os.symlink(moved, stdout)
+            return real_open(path, flags, *args, **kwargs)
+
+        before = fd_count()
+        with mock.patch.object(os, "open", linking_open):
+            with self.assertRaises(RuntimeErrorCode) as ctx:
+                self.supervise(self.spec(MARK, str(marker)))
+        self.assertEqual(ctx.exception.code, "E_RUNTIME_EVIDENCE")
+        time.sleep(0.3)
+        self.assertFalse(marker.exists(), "a process started")
+        self.assertTrue(stdout.is_symlink(), "the link another process put there was removed")
+        self.assertEqual(os.readlink(stdout), str(moved))
+        self.assertEqual(sorted(os.listdir(self.evidence)), ["moved.log", "stdout.log"])
+        self.assertEqual(fd_count(), before)
+
+    def test_an_evidence_file_that_cannot_be_identified_starts_nothing(self):
+        # The fstat that records which file was created fails: the start is
+        # refused with the evidence code, every descriptor is closed, and the
+        # file - which nothing now proves is this call's - is not removed.
+        real_open, real_fstat = os.open, os.fstat
+        created = []
+        failed = []
+
+        def recording_open(path, flags, *args, **kwargs):
+            descriptor = real_open(path, flags, *args, **kwargs)
+            if flags & os.O_EXCL and os.fsdecode(path) == str(self.evidence / "stdout.log"):
+                created.append(descriptor)
+            return descriptor
+
+        def failing_fstat(descriptor):
+            if created and descriptor == created[0] and not failed:
+                failed.append(descriptor)
+                raise OSError(errno.EIO, "Input/output error")
+            return real_fstat(descriptor)
+
+        marker = self.work / "started"
+        before = fd_count()
+        with mock.patch.object(os, "open", recording_open), mock.patch.object(os, "fstat", failing_fstat):
+            with self.assertRaises(RuntimeErrorCode) as ctx:
+                self.supervise(self.spec(MARK, str(marker)))
+        self.assertEqual(ctx.exception.code, "E_RUNTIME_EVIDENCE")
+        self.assertEqual(failed, created, "the identity of the created file was never taken")
+        time.sleep(0.3)
+        self.assertFalse(marker.exists(), "a process started")
+        self.assertEqual(fd_count(), before, "a descriptor leaked")
+        self.assertEqual(os.listdir(self.evidence), ["stdout.log"])
 
 
 if __name__ == "__main__":

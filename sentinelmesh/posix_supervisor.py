@@ -246,11 +246,12 @@ def _open_pinned(evidence_dir: str, name: str, write_fd: int) -> int:
     return pinned
 
 
-def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int, int, int]:
+def _open_evidence_files(evidence_dir: str) -> tuple[Any, ...]:
     """Create and pin both evidence files, rolling everything back on failure.
 
     Returns ``(stdout_path, stderr_path, stdout_write_fd, stderr_write_fd,
-    stdout_pin_fd, stderr_pin_fd)``.  Both files are created and pinned here,
+    stdout_pin_fd, stderr_pin_fd, stdout_identity, stderr_identity)``.  Both
+    files are created and pinned here,
     before the ``before_start`` hook, so a run whose evidence cannot be pinned
     never reaches a hook or a ``Popen``.
 
@@ -263,17 +264,23 @@ def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int, int, in
     """
     stdout_path = os.path.join(evidence_dir, _STDOUT_NAME)
     stderr_path = os.path.join(evidence_dir, _STDERR_NAME)
-    created: list[tuple[str, tuple[int, int]]] = []
+    # Each created file is registered before its identity is taken: a file whose
+    # identity could not be read stays registered with ``None`` and is closed but
+    # not removed, because nothing proves the path still names it (planner
+    # completion of attempt-002).
+    created: list[list[Any]] = []
     stdout_fd: Optional[int] = None
     stdout_pin: Optional[int] = None
     stderr_fd: Optional[int] = None
     stderr_pin: Optional[int] = None
     try:
         stdout_fd = _open_evidence(evidence_dir, _STDOUT_NAME)
-        created.append((stdout_path, _identity_of(stdout_fd)))
+        created.append([stdout_path, None])
+        created[-1][1] = _identity_of(stdout_fd, _STDOUT_NAME)
         stdout_pin = _open_pinned(evidence_dir, _STDOUT_NAME, stdout_fd)
         stderr_fd = _open_evidence(evidence_dir, _STDERR_NAME)
-        created.append((stderr_path, _identity_of(stderr_fd)))
+        created.append([stderr_path, None])
+        created[-1][1] = _identity_of(stderr_fd, _STDERR_NAME)
         stderr_pin = _open_pinned(evidence_dir, _STDERR_NAME, stderr_fd)
     except BaseException:
         # Whatever failed (an OSError, an identity mismatch, an interrupt), the
@@ -286,18 +293,23 @@ def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int, int, in
         for path, identity in created:
             _remove_own_evidence(path, identity)
         raise
-    return stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin
+    return (stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin,
+            created[0][1], created[1][1])
 
 
-def _identity_of(descriptor: int) -> tuple[int, int]:
-    """Return ``(st_dev, st_ino)`` of an open descriptor, taken once.
+def _identity_of(descriptor: int, name: str) -> tuple[int, int]:
+    """Return ``(st_dev, st_ino)`` of an open descriptor, or raise ``E_RUNTIME_EVIDENCE``.
 
     It is read from the write descriptor immediately after the ``O_EXCL``
     creation, so a later rollback can tell the file this call created from
     whatever the path has come to name: the path alone says nothing about which
-    file is standing on it.
+    file is standing on it.  It is taken once, inside the rollback, so a failure
+    here closes everything and starts nothing like any other evidence failure.
     """
-    info = os.fstat(descriptor)
+    try:
+        info = os.fstat(descriptor)
+    except OSError as exc:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be identified: {exc}") from exc
     return (info.st_dev, info.st_ino)
 
 
@@ -311,7 +323,7 @@ def _close_fd(descriptor: Optional[int]) -> None:
         pass
 
 
-def _remove_own_evidence(path: str, identity: tuple[int, int]) -> None:
+def _remove_own_evidence(path: str, identity: Optional[tuple[int, int]]) -> None:
     """Remove an evidence file only while the path still holds the created one.
 
     The file is unlinked only if ``lstat`` shows a regular file whose
@@ -322,6 +334,8 @@ def _remove_own_evidence(path: str, identity: tuple[int, int]) -> None:
     would destroy evidence this call never created, while the file this call
     created and that was renamed away stays where it was moved to.
     """
+    if identity is None:
+        return
     try:
         info = os.lstat(path)
     except OSError:
@@ -721,11 +735,11 @@ def supervise(
     if before_start is not None and not callable(before_start):
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_start must be callable")
 
-    stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin = _open_evidence_files(evidence)
-    # What each write descriptor was, taken once, so a cleanup below can tell the
-    # file this call created from whatever has taken its place at the path.
-    stdout_identity = _identity_of(stdout_fd)
-    stderr_identity = _identity_of(stderr_fd)
+    # The identities of the two write descriptors come back with them, taken once
+    # inside the rollback, so a cleanup below can tell the file this call created
+    # from whatever has taken its place at the path.
+    (stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin,
+     stdout_identity, stderr_identity) = _open_evidence_files(evidence)
     # The two pins outlive the start: they are what the stream facts are read
     # through once the group is reaped, so every way out of this call closes
     # them -- a failed hook, a failed exec, a normal return, and an exception
