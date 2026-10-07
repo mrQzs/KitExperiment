@@ -12,7 +12,12 @@ every refusal: prove the legal baseline first, then change exactly one thing.
 * that reading for `streams_match` is bounded by the recorded byte count, even
   when ``fstat`` understates what the file holds;
 * that the new ``streams`` field of `SupervisedRun` stays optional, and that the
-  facts a record hands back are a fresh value.
+  facts a record hands back are a fresh value;
+* version 2: that a rollback and a failing hook remove only the evidence file
+  this call created, that a stream over ``MAX_STREAM_DIGEST_BYTES`` is not
+  digested (and that a fact exactly at the limit still checks out), and that a
+  stream whose ``fstat`` fails while the facts are taken is ``None`` while the
+  run still reports.
 
 Every case kills whatever it started, even when an assertion fails, and a
 ``KeyboardInterrupt`` a test raises itself is caught rather than allowed to end
@@ -20,6 +25,7 @@ the pytest session.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import shutil
@@ -32,6 +38,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from sentinelmesh import posix_supervisor
 from sentinelmesh.posix_supervisor import SupervisedRun, streams_match, supervise
 from sentinelmesh.process_identity import environment_digest
 from sentinelmesh.runtime import InvocationSpec, RuntimeErrorCode, reconcile
@@ -64,6 +71,26 @@ WRITE_BOTH_THEN_SLEEP = ("import os, signal, sys, time\n"
                          "open(sys.argv[1], 'w').close()\n"
                          "time.sleep(30)\n")
 APPENDED = b"appended after the reap"
+# Writes one line on each stream and exits, for the legal baselines below.
+WRITE_BOTH = "import os\nos.write(1, b'out-1\\nout-2\\n')\nos.write(2, b'err-1\\n')\n"
+# Writes exactly ``argv[1]`` bytes on stdout, so a stream of a chosen size exists.
+WRITE_N = "import os, sys\nos.write(1, b'x' * int(sys.argv[1]))\n"
+# Marks itself ready by writing its pid, then sleeps.  ``start_new_session``
+# makes it a group leader, so a run that must not start can be cleaned up by
+# killing that group.
+MARK_THEN_SLEEP = ("import os, sys, time\n"
+                   "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                   "time.sleep(30)\n")
+# Moves its own stdout file aside, puts a forged one at the path and marks the
+# rename, so a later ``fstat`` of the pinned descriptor can be told apart from
+# the ``fstat`` of the file the path names.
+RENAME_STDOUT_ASIDE = ("import os, sys\n"
+                       "d, marker = sys.argv[1], sys.argv[2]\n"
+                       "os.write(1, b'out\\n')\n"
+                       "os.rename(os.path.join(d, 'stdout.log'), os.path.join(d, 'moved.log'))\n"
+                       "with open(os.path.join(d, 'stdout.log'), 'wb') as forged:\n"
+                       "    forged.write(b'forged\\n')\n"
+                       "open(marker, 'w').close()\n")
 
 
 def sha(raw: bytes) -> str:
@@ -307,6 +334,161 @@ class StreamFactsExecutor(unittest.TestCase):
         first["stderr"] = None
         self.assertEqual(recorded_streams(spec, str(evidence)), run.streams)
         self.assertEqual(replay_decision(spec, str(evidence)), dict(reconcile(spec, run.observation)))
+
+    # version 2: only one's own evidence file is ever removed ----------------
+
+    def assert_nothing_started(self, marker: Path):
+        """Wait, then assert the marker is absent and kill anything that made it."""
+        self.addCleanup(self.kill_group_of, marker)
+        time.sleep(0.3)
+        self.assertFalse(marker.exists(), "a process started")
+
+    def kill_group_of(self, marker: Path):
+        # Nothing is expected to have started; if a refusal were broken, the
+        # child of a ``MARK_THEN_SLEEP`` run would otherwise outlive the test.
+        try:
+            pid = int(marker.read_text().strip())
+        except (OSError, ValueError):
+            return
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def test_a_pin_on_a_substituted_stderr_keeps_the_substitute(self):
+        real_open = os.open
+        baseline = self.evidence_dir()
+        run = self.supervise(self.spec(WRITE_BOTH), baseline)
+        self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0), "legal baseline")
+        self.assertEqual(sorted(os.listdir(baseline)), ["stderr.log", "stdout.log"], "legal baseline")
+
+        evidence = self.evidence_dir()
+        moved = evidence / "moved.log"
+        stderr = evidence / "stderr.log"
+        marker = self.work / "started-stderr-pin"
+
+        def substituting_open(path, flags, *args, **kwargs):
+            # Just before the stderr pin is opened, another process moves the
+            # created file away and puts its own at the path.
+            if ((flags & os.O_ACCMODE) == os.O_RDONLY
+                    and os.fsdecode(path) == str(stderr) and not moved.exists()):
+                os.rename(stderr, moved)
+                descriptor = real_open(str(stderr), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.write(descriptor, b"foreign\n")
+                os.close(descriptor)
+            return real_open(path, flags, *args, **kwargs)
+
+        before = fd_count()
+        with mock.patch.object(os, "open", substituting_open):
+            code = self.code_of(self.supervise, self.spec(MARK_THEN_SLEEP, str(marker)), evidence)
+        self.assertEqual(code, "E_RUNTIME_EVIDENCE")
+        self.assert_nothing_started(marker)
+        self.assertEqual(stderr.read_bytes(), b"foreign\n", "another process's file was removed")
+        # The stdout this call created is still on its path and goes with the
+        # refused start; the one moved away stays where it was moved to.
+        self.assertEqual(sorted(os.listdir(evidence)), ["moved.log", "stderr.log"])
+        self.assertEqual(moved.read_bytes(), b"", "the created file was not left where it was moved")
+        self.assertEqual(fd_count(), before, "the refused pin leaked descriptors")
+
+    def test_a_failing_hook_keeps_a_substituted_stdout(self):
+        # The baseline: a hook that raises without touching anything leaves no
+        # evidence at all, because both files are still this call's own.
+        baseline = self.evidence_dir()
+        with self.assertRaises(ValueError):
+            self.supervise(self.spec(WRITE_BOTH), baseline, before_start=self.failing_hook)
+        self.assertEqual(os.listdir(baseline), [], "the legal baseline left evidence behind")
+
+        evidence = self.evidence_dir()
+        stdout = evidence / "stdout.log"
+        marker = self.work / "started-hook-substitution"
+
+        def substitute_then_fail():
+            os.rename(stdout, evidence / "moved.log")
+            stdout.write_bytes(b"foreign\n")
+            raise ValueError("hook failed")
+
+        before = fd_count()
+        with self.assertRaises(ValueError):
+            self.supervise(self.spec(MARK_THEN_SLEEP, str(marker)), evidence,
+                           before_start=substitute_then_fail)
+        self.assert_nothing_started(marker)
+        self.assertEqual(stdout.read_bytes(), b"foreign\n", "another process's file was removed")
+        # The stderr this call created is still on its path and goes with the
+        # start that never happened; the stdout moved away stays where it was
+        # moved, and the file that took its place is left alone.
+        self.assertEqual(sorted(os.listdir(evidence)), ["moved.log", "stdout.log"])
+        self.assertEqual((evidence / "moved.log").read_bytes(), b"",
+                         "the created file was not left where it was moved")
+        self.assertEqual(fd_count(), before, "the failing hook leaked descriptors")
+
+    def failing_hook(self):
+        raise ValueError("hook failed")
+
+    # version 2: the digest limit is read from the module when it is needed ---
+
+    def test_a_fact_exactly_at_the_digest_limit_still_checks_out(self):
+        evidence = self.evidence_dir()
+        with mock.patch.object(posix_supervisor, "MAX_STREAM_DIGEST_BYTES", 1000):
+            run = self.supervise(self.spec(WRITE_N, "1000"), evidence)
+        self.assertEqual(run.streams["stdout"]["bytes"], 1000, "legal baseline")
+        with mock.patch.object(posix_supervisor, "MAX_STREAM_DIGEST_BYTES", 1000):
+            self.assertIs(streams_match(str(evidence), run.streams), True, "legal baseline")
+
+        # One byte more is beyond the limit the module is made to have.  The file
+        # is made to agree with the claim, so only the limit can refuse it, and
+        # it has to be refused without a single read.
+        grown = b"x" * 1001
+        with open(evidence / "stdout.log", "ab") as handle:
+            handle.write(b"x")
+        inode = os.lstat(evidence / "stdout.log").st_ino
+        claimed = dict(run.streams, stdout=dict(run.streams["stdout"], bytes=1001, sha256=sha(grown)))
+        real_read = os.read
+        asked = []
+
+        def counting_read(descriptor, count):
+            if os.fstat(descriptor).st_ino == inode:
+                asked.append(count)
+            return real_read(descriptor, count)
+
+        with mock.patch.object(os, "read", counting_read):
+            with mock.patch.object(posix_supervisor, "MAX_STREAM_DIGEST_BYTES", 1000):
+                self.assertIs(streams_match(str(evidence), claimed), False)
+        self.assertEqual(asked, [], "a fact over the limit was checked by reading")
+        self.assertIs(streams_match(str(evidence), run.streams), False,
+                      "the file grew, so the recorded facts no longer describe it")
+
+    def test_a_stream_that_cannot_be_stated_while_digesting_is_null(self):
+        evidence = self.evidence_dir()
+        renamed = evidence / "moved.log"
+        marker = self.work / "renamed"
+        # The legal baseline: without the failing ``fstat`` the fact describes the
+        # file the child moved away, because it is read through the pin.
+        baseline = self.evidence_dir()
+        baseline_marker = self.work / "renamed-baseline"
+        run = self.supervise(self.spec(RENAME_STDOUT_ASIDE, str(baseline), str(baseline_marker)), baseline)
+        self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0), "legal baseline")
+        self.assertEqual(run.streams["stdout"], facts_of(baseline / "moved.log"), "legal baseline")
+        self.assertIs(streams_match(str(baseline), run.streams), False, "legal baseline")
+
+        real_fstat, real_lstat = os.fstat, os.lstat
+
+        def failing_fstat(descriptor):
+            info = real_fstat(descriptor)
+            # The pinned descriptor names the file the child moved away, which is
+            # not the file the path names any more: that is the digest's own
+            # ``fstat``, never the one the pin was proved with.
+            if marker.exists() and info.st_ino == real_lstat(renamed).st_ino:
+                raise OSError(errno.EIO, "Input/output error")
+            return info
+
+        with mock.patch.object(os, "fstat", failing_fstat):
+            run = self.supervise(self.spec(RENAME_STDOUT_ASIDE, str(evidence), str(marker)), evidence)
+        self.assertTrue(marker.exists(), "the child never renamed its stdout")
+        self.assertEqual((run.stop_reason, run.exit_code), ("completed", 0))
+        self.assertIsNone(run.streams["stdout"], "a stream whose fstat failed was not recorded as null")
+        self.assertEqual(run.streams["stderr"], facts_of(evidence / "stderr.log"))
+        self.assertEqual(renamed.read_bytes(), b"out\n", "the facts were not read through the pin")
+        self.assertIs(streams_match(str(evidence), run.streams), False)
 
 
 if __name__ == "__main__":

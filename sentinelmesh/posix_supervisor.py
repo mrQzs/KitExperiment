@@ -21,13 +21,15 @@ What one run guarantees:
   directory, never to pipes, so a descendant holding the output open cannot make
   the supervisor hang.  Both files are created, then each is *pinned* with a
   second, read-only descriptor opened by path and proved by ``fstat`` to be the
-  very file the write descriptor created, so the facts about the two streams are
-  read from the file the child actually wrote to, never from whatever the path
-  happens to name later;
-* a caller may pass a ``before_start`` hook that runs once after those two
-  files exist and have been pinned, and before ``Popen``; if it raises, the two
-  files are removed and the exception is re-raised unchanged, so nothing starts
-  and no evidence of an attempt that never happened survives;
+  very file the write descriptor created - compared with the write descriptor,
+  never with whatever the path happens to name - so the facts about the two
+  streams are read from the file the child actually wrote to;
+* a rollback, and the cleanup of a ``before_start`` hook that raised, removes an
+  evidence file only while the path still holds the file this call created
+  (same ``st_dev``/``st_ino``): a file another process put at the path is left
+  alone, and a file this call created that was renamed away stays where it was
+  moved to.  The caller's own exception is re-raised unchanged, so nothing
+  starts and no evidence of an attempt that never happened survives;
 * on timeout or cancellation the group is SIGTERMed, then SIGKILLed as a group
   inside bounded windows, and the leftovers are reaped until the group is
   confirmed empty.  ``cleanup_confirmed=False`` (no false "clean" report) is
@@ -43,10 +45,14 @@ What one run guarantees:
 * once the group is reaped, every run that started a process carries
   ``streams``: for each stream the device, inode, byte count and SHA-256 of what
   the pinned descriptor can read, bounded by the size ``fstat`` reports at that
-  moment.  A stream that cannot be read at all is recorded as ``None`` rather
-  than failing the run, and `streams_match` later answers whether the two files
-  still are exactly those facts, so a write that arrives after the reap - by a
-  descendant that escaped the group, or by a path substitution - is detectable.
+  moment and by ``MAX_STREAM_DIGEST_BYTES``.  The digest is computed one block at
+  a time, in bounded memory and bounded time, and a stream larger than that
+  limit - a child that stretched its own file with ``ftruncate`` writes nothing -
+  is recorded as ``None`` without a single byte being read.  A stream that cannot
+  be read at all is likewise ``None`` rather than a failed run, and
+  `streams_match` later answers whether the two files still are exactly those
+  facts, so a write that arrives after the reap - by a descendant that escaped
+  the group, or by a path substitution - is detectable.
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code and starts no process,
@@ -102,10 +108,18 @@ _STREAM_NAMES = ("stdout", "stderr")
 # that carried anything else could not be compared against a file later.
 _FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
 _SHA256_ALPHABET = frozenset("0123456789abcdef")
-# Read granularity for a stream fact and for the `streams_match` check.  The
-# bound is never the block size: a fact reads up to the size ``fstat`` reported,
-# and the check reads at most one byte more than the recorded byte count.
+# Read granularity for a stream fact and for the `streams_match` check.  No read
+# ever asks for more than this at once, and no digest ever holds more than one
+# block: a stream is digested block by block, so the supervisor's memory does not
+# grow with what the child wrote.
 _BLOCK_BYTES = 1 << 16
+# Upper bound on the size of a stream that is digested at all.  It is read from
+# this module *when* a fact is taken and when a recorded fact is checked, so a
+# test may lower it.  A stream beyond it has no fact and nothing of it is read:
+# a child can stretch its own output file to any size with ``ftruncate`` without
+# writing a byte (a sparse file), and reading that would keep the supervisor from
+# ever returning a run.
+MAX_STREAM_DIGEST_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -120,7 +134,9 @@ class SupervisedRun:
     ``streams`` is ``None`` when no process ever started, and otherwise the
     ``{"stdout": fact-or-None, "stderr": fact-or-None}`` mapping computed from
     the pinned descriptors once the group was reaped: what the two evidence
-    files held at that moment, not what the paths hold later.
+    files held at that moment, not what the paths hold later.  A stream beyond
+    ``MAX_STREAM_DIGEST_BYTES``, and one that could not be read at all, is
+    ``None``.
     """
 
     stop_reason: str
@@ -240,36 +256,49 @@ def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int, int, in
 
     Nothing may have started and no evidence of an attempt that did not happen
     may survive, so every descriptor opened by this call is closed and every
-    file this call created is removed.  A file this call did *not* create (the
-    second ``O_EXCL`` open fails exactly when the name is taken) is left as it
-    was found.
+    file this call created is removed.  The removal is by identity, never by
+    path alone: a file this call did *not* create (the second ``O_EXCL`` open
+    fails exactly when the name is taken), or a file that took the place of one
+    it created after the pin failed, is left exactly as it was found.
     """
     stdout_path = os.path.join(evidence_dir, _STDOUT_NAME)
     stderr_path = os.path.join(evidence_dir, _STDERR_NAME)
-    created: list[str] = []
+    created: list[tuple[str, tuple[int, int]]] = []
     stdout_fd: Optional[int] = None
     stdout_pin: Optional[int] = None
     stderr_fd: Optional[int] = None
     stderr_pin: Optional[int] = None
     try:
         stdout_fd = _open_evidence(evidence_dir, _STDOUT_NAME)
-        created.append(stdout_path)
+        created.append((stdout_path, _identity_of(stdout_fd)))
         stdout_pin = _open_pinned(evidence_dir, _STDOUT_NAME, stdout_fd)
         stderr_fd = _open_evidence(evidence_dir, _STDERR_NAME)
-        created.append(stderr_path)
+        created.append((stderr_path, _identity_of(stderr_fd)))
         stderr_pin = _open_pinned(evidence_dir, _STDERR_NAME, stderr_fd)
     except BaseException:
         # Whatever failed (an OSError, an identity mismatch, an interrupt), the
         # start did not happen: close everything this call opened and remove
-        # only the files this call created.
+        # only the files this call created and still owns at their path.
         _close_fd(stderr_pin)
         _close_fd(stderr_fd)
         _close_fd(stdout_pin)
         _close_fd(stdout_fd)
-        for path in created:
-            _remove_evidence(path)
+        for path, identity in created:
+            _remove_own_evidence(path, identity)
         raise
     return stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin
+
+
+def _identity_of(descriptor: int) -> tuple[int, int]:
+    """Return ``(st_dev, st_ino)`` of an open descriptor, taken once.
+
+    It is read from the write descriptor immediately after the ``O_EXCL``
+    creation, so a later rollback can tell the file this call created from
+    whatever the path has come to name: the path alone says nothing about which
+    file is standing on it.
+    """
+    info = os.fstat(descriptor)
+    return (info.st_dev, info.st_ino)
 
 
 def _close_fd(descriptor: Optional[int]) -> None:
@@ -282,8 +311,23 @@ def _close_fd(descriptor: Optional[int]) -> None:
         pass
 
 
-def _remove_evidence(path: str) -> None:
-    """Remove an evidence file this call created, ignoring a missing file."""
+def _remove_own_evidence(path: str, identity: tuple[int, int]) -> None:
+    """Remove an evidence file only while the path still holds the created one.
+
+    The file is unlinked only if ``lstat`` shows a regular file whose
+    ``(st_dev, st_ino)`` is exactly the identity the write descriptor had right
+    after this call created it.  A path that now names somebody else's file, a
+    path that no longer names anything, a path that cannot be inspected at all
+    or anything that is not a regular file is left untouched - unlinking there
+    would destroy evidence this call never created, while the file this call
+    created and that was renamed away stays where it was moved to.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return
+    if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != identity:
+        return
     try:
         os.unlink(path)
     except OSError:
@@ -419,20 +463,27 @@ def _observation_of(
     }
 
 
-def _read_at_most(descriptor: int, limit: int) -> bytes:
-    """Read until EOF or until ``limit`` bytes are in hand, whichever comes first."""
-    chunks = []
+def _digest_blocks(descriptor: int, limit: int) -> tuple[int, Optional[str]]:
+    """Digest at most ``limit`` bytes of ``descriptor``, one block at a time.
+
+    Returns ``(bytes_read, digest)``, or ``(bytes_read, None)`` when a read failed
+    with an ``OSError`` and the caller has to answer a mismatch.  The digest is
+    updated block by block, never by joining the blocks first, so the memory this
+    needs stays bounded by ``_BLOCK_BYTES`` whatever the stream holds, and every
+    piece handed to the hash is at most one block.
+    """
+    digest = hashlib.sha256()
     total = 0
     while total < limit:
         try:
             chunk = os.read(descriptor, min(_BLOCK_BYTES, limit - total))
         except OSError:
-            break
+            return total, None
         if not chunk:
             break
-        chunks.append(chunk)
+        digest.update(chunk)
         total += len(chunk)
-    return b"".join(chunks)
+    return total, digest.hexdigest()
 
 
 def _fact_of(descriptor: int) -> Optional[dict[str, Any]]:
@@ -444,6 +495,13 @@ def _fact_of(descriptor: int) -> Optional[dict[str, Any]]:
     shrinking one simply stops early.  ``pread`` is used rather than a positional
     read so the digest could not be disturbed by another read of the file.
 
+    A stream whose reported size is beyond ``MAX_STREAM_DIGEST_BYTES`` - read
+    from this module when the fact is taken - has no fact at all and not one byte
+    of it is read: a child can stretch its own output to any size with
+    ``ftruncate`` without writing anything, and reading that would keep the
+    supervisor from ever returning a run.  The digest is otherwise built one block
+    at a time, so the memory this needs does not grow with what the child wrote.
+
     An ``OSError`` makes this stream's fact ``None`` instead of failing the run:
     a process has already run, and an error raised there would tell the caller
     the start was refused (see `sentinelmesh.supervised_record`).  Any other
@@ -453,13 +511,15 @@ def _fact_of(descriptor: int) -> Optional[dict[str, Any]]:
     """
     try:
         info = os.fstat(descriptor)
-        chunks = []
+        if info.st_size > MAX_STREAM_DIGEST_BYTES:
+            return None
+        digest = hashlib.sha256()
         total = 0
         while total < info.st_size:
             chunk = os.pread(descriptor, min(_BLOCK_BYTES, info.st_size - total), total)
             if not chunk:
                 break
-            chunks.append(chunk)
+            digest.update(chunk)
             total += len(chunk)
     except OSError:
         return None
@@ -467,7 +527,7 @@ def _fact_of(descriptor: int) -> Optional[dict[str, Any]]:
         "device": info.st_dev,
         "inode": info.st_ino,
         "bytes": total,
-        "sha256": hashlib.sha256(b"".join(chunks)).hexdigest(),
+        "sha256": digest.hexdigest(),
     }
 
 
@@ -493,6 +553,11 @@ def _valid_facts(value: Any) -> bool:
     byte count of ``True`` would stand for one byte, and a digest in upper case
     would never compare equal to the one computed here.  A device number may be
     negative, an inode or a byte count may not.
+
+    A byte count beyond ``MAX_STREAM_DIGEST_BYTES`` - read from this module when
+    the fact is checked - is refused here, before any file is opened: a fact the
+    supervisor would never have produced cannot describe a stream it read, and
+    checking it would mean reading a file nobody can bound.
     """
     if type(value) is not dict or frozenset(value) != _FACT_KEYS:
         return False
@@ -500,6 +565,8 @@ def _valid_facts(value: Any) -> bool:
         if type(value[key]) is not int:
             return False
     if value["inode"] < 0 or value["bytes"] < 0:
+        return False
+    if value["bytes"] > MAX_STREAM_DIGEST_BYTES:
         return False
     return _is_sha256_text(value["sha256"])
 
@@ -512,64 +579,79 @@ def _stream_matches(path: str, fact: Mapping[str, Any]) -> bool:
     against the recorded device, inode and size: a file that took the original's
     place, a renamed-away original and a truncated one all differ there.  Only
     then are bytes compared, at most ``fact["bytes"] + 1`` of them, so a file
-    that grew after the fact was taken is refused without reading it whole.
+    that grew after the fact was taken is refused without reading it whole, and
+    they are digested one block at a time so the check stays bounded too.
 
     Nothing here raises: an ``OSError`` (a missing file, a permission refusal, a
     read failure) is a mismatch, never an exception, because the question is
-    asked about evidence a caller may no longer be able to inspect.
+    asked about evidence a caller may no longer be able to inspect; and a
+    ``ValueError`` - a path holding a NUL or a character the platform cannot
+    encode, such as a lone surrogate - is a mismatch as well, since such a path
+    names no file this run could have written.  The descriptor is closed on
+    every way out, including the ones that answer ``False``.
     """
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except (OSError, ValueError):
+            return False
+        try:
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode):
+                    return False
+                if (info.st_dev, info.st_ino, info.st_size) != (
+                    fact["device"],
+                    fact["inode"],
+                    fact["bytes"],
+                ):
+                    return False
+                read, digest = _digest_blocks(descriptor, fact["bytes"] + 1)
+            except OSError:
+                return False
+            if digest is None or read != fact["bytes"]:
+                return False
+            return digest == fact["sha256"]
+        finally:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    except ValueError:
+        # A path that cannot even be turned into bytes names no file; anything
+        # else that could still surface as a ValueError is a mismatch too.
         return False
-    try:
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode):
-                return False
-            if (info.st_dev, info.st_ino, info.st_size) != (
-                fact["device"],
-                fact["inode"],
-                fact["bytes"],
-            ):
-                return False
-            raw = _read_at_most(descriptor, fact["bytes"] + 1)
-        except OSError:
-            return False
-        if len(raw) != fact["bytes"]:
-            return False
-        return hashlib.sha256(raw).hexdigest() == fact["sha256"]
-    finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
 
 
 def streams_match(evidence_dir: Any, streams: Any) -> bool:
     """Return whether both evidence files still are exactly ``streams``.
 
     ``streams`` must be the mapping a `SupervisedRun` carried: exactly the two
-    stream names, each holding a closed fact.  A stream whose fact is ``None``
-    could not be read when the run ended, and no file can be shown to be what
-    nobody could read, so such a mapping is refused.  Anything malformed, and any
-    argument of the wrong type, is a ``False`` rather than an exception: the
-    caller is asking a question about evidence it does not own, and a wrong
-    answer must never look like a refusal to answer.
+    stream names, each holding a closed fact whose byte count is within
+    ``MAX_STREAM_DIGEST_BYTES``.  A stream whose fact is ``None`` could not be
+    read when the run ended, and no file can be shown to be what nobody could
+    read, so such a mapping is refused.  Anything malformed, and any argument of
+    the wrong type, is a ``False`` rather than an exception: the caller is asking
+    a question about evidence it does not own, and a wrong answer must never look
+    like a refusal to answer - not even for an evidence directory whose path the
+    platform cannot encode.
     """
-    if type(evidence_dir) is not str:
-        return False
-    if type(streams) is not dict or frozenset(streams) != set(_STREAM_NAMES):
-        return False
-    facts: dict[str, Any] = {}
-    for name in _STREAM_NAMES:
-        fact = streams[name]
-        if not _valid_facts(fact):
+    try:
+        if type(evidence_dir) is not str:
             return False
-        facts[name] = fact
-    return all(
-        _stream_matches(os.path.join(evidence_dir, name + ".log"), facts[name]) for name in _STREAM_NAMES
-    )
+        if type(streams) is not dict or frozenset(streams) != set(_STREAM_NAMES):
+            return False
+        facts: dict[str, Any] = {}
+        for name in _STREAM_NAMES:
+            fact = streams[name]
+            if not _valid_facts(fact):
+                return False
+            facts[name] = fact
+        return all(
+            _stream_matches(os.path.join(evidence_dir, name + ".log"), facts[name]) for name in _STREAM_NAMES
+        )
+    except (OSError, ValueError):
+        return False
 
 
 def supervise(
@@ -599,10 +681,14 @@ def supervise(
     before ``Popen``.  It is where a caller records its own handoff evidence; if
     it raises, this call removes the two evidence files it created and re-raises
     the same exception, so no process is started and no half-written evidence
-    is left behind (see `sentinelmesh.supervised_record`).
+    is left behind (see `sentinelmesh.supervised_record`).  The removal is by
+    identity: a file another process put at one of the two paths while the hook
+    ran is left exactly as it was found, and a file this call created that was
+    renamed away stays where it was moved to.
 
     On return, ``streams`` holds what each pinned stream held once the group was
-    reaped; `streams_match` answers later whether the files still are exactly
+    reaped, bounded by ``MAX_STREAM_DIGEST_BYTES`` and digested one block at a
+    time; `streams_match` answers later whether the files still are exactly
     that.
     """
     started_at = time.monotonic()
@@ -636,6 +722,10 @@ def supervise(
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_start must be callable")
 
     stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin = _open_evidence_files(evidence)
+    # What each write descriptor was, taken once, so a cleanup below can tell the
+    # file this call created from whatever has taken its place at the path.
+    stdout_identity = _identity_of(stdout_fd)
+    stderr_identity = _identity_of(stderr_fd)
     # The two pins outlive the start: they are what the stream facts are read
     # through once the group is reaped, so every way out of this call closes
     # them -- a failed hook, a failed exec, a normal return, and an exception
@@ -648,13 +738,15 @@ def supervise(
                 # Whatever the hook raised (including ``KeyboardInterrupt``), the
                 # start did not happen, so the two evidence files this call
                 # created exclusively for it must go with it: leaving them would
-                # record an attempt that never reached ``Popen``.  The exception
-                # is re-raised unchanged so the caller still sees its own
-                # failure.
+                # record an attempt that never reached ``Popen``.  Only the ones
+                # the path still holds as this call created them are removed; a
+                # file another process put there in the meantime is left alone.
+                # The exception is re-raised unchanged so the caller still sees
+                # its own failure.
                 _close_fd(stdout_fd)
                 _close_fd(stderr_fd)
-                _remove_evidence(stdout_path)
-                _remove_evidence(stderr_path)
+                _remove_own_evidence(stdout_path, stdout_identity)
+                _remove_own_evidence(stderr_path, stderr_identity)
                 raise
         environment_names = tuple(sorted(snapshot))
         lifecycle = Lifecycle().transition("STARTING")
