@@ -37,6 +37,17 @@ Two rules hold everywhere here:
   operation is moved to ``START_UNKNOWN`` and the original exception is re-raised
   unchanged.
 
+A third rule decides what may be reviewed: the streams the supervisor digested
+in memory are the run, so on the live path the two evidence files must still be
+exactly that before anything is reviewed from them (a stream that moved after
+the reap is ``CLEANUP_UNCONFIRMED`` when the file is still the pinned one, and
+``START_UNKNOWN`` when it is gone, replaced or was never digestible), and after a
+rollover the recorded streams have to match the files instead.  On that path the
+in-memory ``SupervisedRun`` is handed to an optional ``before_finish`` hook,
+while the operation is still RUNNING, so a caller can settle usage against the
+supervisor's own digest -- the only moment before ``finish`` enforces the
+budget.
+
 Importing this module has no side effect: no ``ctypes`` import, no file read, no
 environment read and no process start.
 """
@@ -48,11 +59,13 @@ import os
 import stat
 from typing import Any, Mapping, Optional
 
+from .posix_supervisor import streams_match
 from .runtime import InvocationSpec, RuntimeErrorCode
 from .supervised_record import (
     HANDOFF_NAME,
     OBSERVATION_NAME,
     record_supervised_run,
+    recorded_streams,
     replay_decision,
 )
 
@@ -67,6 +80,9 @@ _MAX_RECORD_BYTES = 65536
 # whose process demonstrably existed; ``replay_allowed`` is what keeps an
 # unconfirmed cleanup from being read as one of them.
 _STOPPED_OR_FAILED = frozenset({"STOPPED", "FAILED"})
+
+# The two evidence streams the supervisor pins, in the order it digsests them.
+_STREAM_NAMES = ("stdout", "stderr")
 
 # The three scheduler states this module can leave an operation in.
 _NOT_STARTED = "NOT_STARTED"
@@ -176,6 +192,80 @@ def _checked_evidence_dir(evidence_dir: Any) -> None:
         raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "evidence_dir must be a string")
 
 
+def _checked_hook(before_finish: Any) -> None:
+    """Refuse a review hook that cannot be called, before anything happens.
+
+    The check runs before the handoff, so a call carrying a broken hook starts
+    nothing and writes no evidence: the failure would otherwise surface only on
+    the review path, after the run, and leave an operation behind that was
+    started for nothing.
+    """
+    if before_finish is not None and not callable(before_finish):
+        raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_finish must be callable")
+
+
+def _checked_operation(scheduler: Any, spec: InvocationSpec, operation_id: str) -> None:
+    """Refuse a specification that belongs to another operation's request.
+
+    The scheduler's read-only view is asked before the handoff and before any
+    record is read, so nothing is started and no evidence is written for an
+    invocation that describes a different run.  Its own ``ContractError`` is the
+    scheduler's to raise: an operation the ledger does not know is not an
+    invocation problem.
+    """
+    view = scheduler.operation(operation_id)
+    if spec.request_id != view["request_id"]:
+        raise RuntimeErrorCode("E_RUNTIME_INVOCATION",
+                               "spec.request_id must equal the request the operation belongs to")
+
+
+def _stream_reason(evidence_dir: str, streams: Any) -> Optional[str]:
+    """Return why the two files no longer are ``streams``, or ``None`` when they are.
+
+    The supervisor digested the two pinned descriptors when it reaped the group,
+    so the facts in memory describe that moment; this asks whether the files on
+    disk still are exactly that.  A fact that is missing altogether -- a stream
+    that could not be read then, or that was beyond the digest ceiling -- is
+    evidence that cannot be used and is ``START_UNKNOWN``, never a review.
+
+    A ``False`` answer is split in two (E6): the files are *still* the ones the
+    supervisor pinned, so what moved is only their content, which means a writer
+    outlived the cleanup -- ``CLEANUP_UNCONFIRMED``, holds kept; anything else --
+    a file that is missing, that is no longer a regular file, that is now a
+    different file, or an ``lstat`` that failed -- is ``START_UNKNOWN``, because
+    there is no evidence left to review.  Nothing here raises: the question is
+    about the run, and every answer is a decision.
+    """
+    if type(streams) is not dict or any(streams.get(name) is None for name in _STREAM_NAMES):
+        return "START_UNKNOWN"
+    if streams_match(evidence_dir, streams):
+        return None
+    for name in _STREAM_NAMES:
+        fact = streams[name]
+        try:
+            info = os.lstat(os.path.join(evidence_dir, name + ".log"))
+        except (OSError, ValueError):
+            return "START_UNKNOWN"
+        if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != (fact.get("device"), fact.get("inode")):
+            return "START_UNKNOWN"
+    return "CLEANUP_UNCONFIRMED"
+
+
+def _recorded_streams_match(spec: InvocationSpec, evidence_dir: str) -> bool:
+    """Return whether the recorded streams still describe the files on disk.
+
+    Recovery has nothing but the records, so the recorded facts are correlated
+    with the files and not authenticated: a same-account writer can change both
+    together.  A record that cannot be read is as inconsistent as one that does
+    not match -- damaged evidence never reviews a run.
+    """
+    try:
+        recorded = recorded_streams(spec, evidence_dir)
+    except RuntimeErrorCode:
+        return False
+    return streams_match(evidence_dir, recorded)
+
+
 def _decision_of(spec: InvocationSpec, evidence_dir: str) -> Optional[dict[str, Any]]:
     """Return the replay record, or ``None`` when the records cannot be read.
 
@@ -211,6 +301,7 @@ def _settle(
     decision: Optional[Mapping[str, Any]],
     evidence_dir: str,
     candidate_hash: Any,
+    before_finish: Any = None,
 ) -> str:
     """Move the operation to the state its evidence proves, and return that state.
 
@@ -229,8 +320,18 @@ def _settle(
     * A process existed: ``mark_running`` registers the start retroactively.  The
       candidate goes to review only when this call's own records were written
       and the replay decision agrees with the supervisor's observation on the
-      outcome and on a confirmed cleanup; agreement with an unconfirmed cleanup
-      is ``CLEANUP_UNCONFIRMED``, anything else is ``START_UNKNOWN``.
+      outcome and on a confirmed cleanup *and* the two evidence files are still
+      exactly what the supervisor digested in memory; agreement with an
+      unconfirmed cleanup is ``CLEANUP_UNCONFIRMED``, a stream that moved is
+      ``CLEANUP_UNCONFIRMED`` or ``START_UNKNOWN`` (see ``_stream_reason``),
+      anything else is ``START_UNKNOWN``.
+
+    ``before_finish`` is called on that last path only, after the streams were
+    checked and before ``candidate_hash``: it receives the in-memory
+    ``SupervisedRun``, which is the only place the supervisor's own stream
+    digest is still available.  It is not called on any other path, and at most
+    once -- there is one review, so one hook, and a recovery after a rollover
+    never calls it.
     """
     status = None if decision is None else decision.get("status")
     if refused or (run is not None and run.identity is None):
@@ -243,7 +344,16 @@ def _settle(
     scheduler.mark_running(operation_id, owner, generation, process_identity=run.identity.to_dict())
     agreed = error is None and status in _STOPPED_OR_FAILED and run.observation.get("state") == status
     if agreed and decision.get("replay_allowed") is True and run.observation.get("cleanup_confirmed") is True:
+        # The child could still hold a descriptor after the reap: what the
+        # supervisor digested in memory is the run, and the two files on disk
+        # have to be it before anything is reviewed from them.
+        stream_reason = _stream_reason(evidence_dir, getattr(run, "streams", None))
+        if stream_reason is not None:
+            scheduler.unknown(operation_id, owner, generation, reason=stream_reason)
+            return _START_UNKNOWN
         try:
+            if before_finish is not None:
+                before_finish(run)
             candidate = candidate_hash(evidence_dir)
             scheduler.finish(operation_id, owner, generation, candidate, True)
         except BaseException:
@@ -273,19 +383,27 @@ def run_supervised_operation(
     candidate_hash: Any,
     allowed_secret_names: frozenset[str] = frozenset(),
     now: int = 0,
+    before_finish: Any = None,
 ) -> dict[str, Any]:
     """Run one supervised invocation and settle the operation from its records.
 
-    The order is fixed: the invocation is checked against the operation, the
-    handoff is accepted, the run happens, and only then is the operation's state
-    decided -- from what the supervisor returned, checked against
-    ``replay_decision``, so a run whose observation was never written is
-    reported as unknown rather than finished.
+    The order is fixed: the invocation is checked against the operation and the
+    request it belongs to, the handoff is accepted, the run happens, and only
+    then is the operation's state decided -- from what the supervisor returned,
+    checked against ``replay_decision``, so a run whose observation was never
+    written is reported as unknown rather than finished.
 
     ``candidate_hash`` is called with ``evidence_dir`` and must return the
     candidate's hash; it is the caller that knows what the candidate is, not this
     module.  ``record_supervised_run`` is called through this module's own name so
     a caller (or a test) can see the whole call sequence.
+
+    ``before_finish``, when given, is called on the review path only: with the
+    in-memory ``SupervisedRun``, after the two evidence files were checked
+    against the streams the supervisor digested and before ``candidate_hash``.
+    A caller that needs to record something while the operation is still RUNNING
+    -- usage settled against the supervisor's own digest -- does it there.  It is
+    called at most once.
 
     Returns the operation id, the state it ended in, the replay record it was
     decided from, the runtime code ``record_supervised_run`` refused with (if any)
@@ -295,6 +413,8 @@ def run_supervised_operation(
     """
     _checked_spec(spec, operation_id)
     _checked_evidence_dir(evidence_dir)
+    _checked_hook(before_finish)
+    _checked_operation(scheduler, spec, operation_id)
     # The handoff's guards (owner, generation, stopped request, budget) are
     # re-checked here and their errors are the scheduler's to raise: a refused
     # handoff starts nothing and leaves no record.
@@ -326,7 +446,8 @@ def run_supervised_operation(
     decision = _decision_of(spec, evidence_dir)
     state = _settle(scheduler, operation_id=operation_id, owner=owner, generation=generation, run=run,
                     error=error, refused=error is not None and run is None, decision=decision,
-                    evidence_dir=evidence_dir, candidate_hash=candidate_hash)
+                    evidence_dir=evidence_dir, candidate_hash=candidate_hash,
+                    before_finish=before_finish)
     return {
         "operation_id": operation_id,
         "state": state,
@@ -355,10 +476,11 @@ def recover_supervised_operation(
     replay record onto ``Scheduler.recover``:
 
     * ``NOT_STARTED`` releases the operation (the run provably never happened);
-    * a run that ended with cleanup confirmed goes to ``REVIEW_PENDING`` with the
-      candidate hash of the *new* generation's caller;
-    * everything else -- an unconfirmed cleanup, damaged records, no records at
-      all -- stays ``START_UNKNOWN``.
+    * a run that ended with cleanup confirmed *and whose recorded streams still
+      describe the files on disk* goes to ``REVIEW_PENDING`` with the candidate
+      hash of the *new* generation's caller;
+    * everything else -- an unconfirmed cleanup, streams that moved, damaged
+      records, no records at all -- stays ``START_UNKNOWN``.
 
     The callback is evaluated before ``recover`` is called, so a candidate hash
     that cannot be produced leaves the ledger untouched and the exception reaches
@@ -368,6 +490,7 @@ def recover_supervised_operation(
     """
     _checked_spec(spec, operation_id)
     _checked_evidence_dir(evidence_dir)
+    _checked_operation(scheduler, spec, operation_id)
     decision = _decision_of(spec, evidence_dir)
     digest = evidence_digest(evidence_dir)
     status = None if decision is None else decision.get("status")
@@ -375,10 +498,16 @@ def recover_supervised_operation(
     if status == "NOT_STARTED":
         outcome = "NOT_STARTED"
     elif status in _STOPPED_OR_FAILED and decision.get("replay_allowed") is True:
-        outcome = "FINISHED"
-        # Only a finished run carries a candidate, and ``recover`` refuses one
-        # for any other outcome, so the hash is computed only on this branch.
-        candidate = candidate_hash(evidence_dir)
+        if _recorded_streams_match(spec, evidence_dir):
+            outcome = "FINISHED"
+            # Only a finished run carries a candidate, and ``recover`` refuses
+            # one for any other outcome, so the hash is computed only on this
+            # branch -- and only while the streams still are the recorded ones.
+            candidate = candidate_hash(evidence_dir)
+        else:
+            # The files are no longer the ones the run ended with, so there is
+            # nothing here to review: no hash is even computed.
+            outcome = "START_UNKNOWN"
     else:
         outcome = "START_UNKNOWN"
     scheduler.recover(operation_id, owner, generation, outcome=outcome, evidence_hash=digest,

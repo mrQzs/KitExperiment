@@ -10,7 +10,9 @@ adapter-generated invocation reaches the ``Scheduler``:
   two records on disk; this module adds no scheduler transition of its own;
 * the vendor's stdout -- ``stdout.log`` in the evidence directory, written by
   the supervisor -- is read back the way ``supervised_record`` reads a record:
-  ``O_RDONLY | O_NOFOLLOW | O_NONBLOCK``, a regular file, within a byte ceiling;
+  ``O_RDONLY | O_NOFOLLOW | O_NONBLOCK``, a regular file, within a byte ceiling,
+  and, on the review path, against the stream fact the supervisor digested in
+  memory, so the bytes that were reduced are provably the bytes the run wrote;
 * each line is one normalized event object, reduced by the adapter into an
   ``AdapterResult``;
 * the usage of that result is recorded in the Scheduler **while the operation is
@@ -22,11 +24,12 @@ adapter-generated invocation reaches the ``Scheduler``:
 The recording rule is fail-closed: only a result that is both ``settled`` and
 ``raw_complete`` is observed, one all-or-nothing ``settle`` call per dimension
 reserved by the caller whose payload value is an exact non-negative integer, with
-the SHA-256 of the whole stdout stream as the evidence.  Anything else -- an
-unreadable, oversized or invalid stream, a stream the adapter rejects, a run that
-never reached the review path -- records nothing and leaves the usage unknown,
-which is what keeps the request from claiming again.  Getting it wrong in the
-other direction (recording a number nobody can prove) is not available here.
+the supervisor's own digest of the stream as the evidence.  Anything else -- an
+unreadable, oversized or invalid stream, a stream that is no longer the run's
+(``changed``), a stream the adapter rejects, a run that never reached the review
+path -- records nothing and leaves the usage unknown, which is what keeps the
+request from claiming again.  Getting it wrong in the other direction (recording
+a number nobody can prove) is not available here.
 
 ``dispatches`` is a local, non-model metric recorded by the handoff itself, so it
 is refused as a usage dimension rather than recorded twice.
@@ -67,6 +70,13 @@ _CHUNK_BYTES = 1 << 16
 # one local dispatch.
 _RESERVED_DIMENSION = "dispatches"
 
+# The exact keys of a stream fact as the supervisor records it (``device``,
+# ``inode``, ``bytes``, ``sha256``), and the alphabet of its digest.
+_FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
+_INTEGER_KEYS = ("device", "inode", "bytes")
+_NON_NEGATIVE_KEYS = ("inode", "bytes")
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
 
 def _check_max_bytes(max_bytes: Any) -> int:
     """Require an exact ``int`` ceiling inside ``1..MAX_STREAM_BYTES``."""
@@ -74,6 +84,49 @@ def _check_max_bytes(max_bytes: Any) -> int:
         raise AdapterError("E_ADAPTER_SCHEMA",
                            "max_stream_bytes must be an integer in 1..%d" % MAX_STREAM_BYTES)
     return max_bytes
+
+
+def _checked_expected(expected: Any) -> dict[str, Any]:
+    """Require the exact shape of a supervisor stream fact, and return it.
+
+    A fact is what makes a read provable: the device, the inode, the byte count
+    and the digest of the stream the supervisor read from its pinned descriptor
+    when it reaped the group.  Anything else handed to :func:`read_stream` as
+    ``expected`` would be a comparison against something this process never
+    saw, so it is a schema error and not a stream answer.  The type checks are
+    exact, so a bool, a float or a ``str`` subclass cannot pass for one of the
+    four values.
+    """
+    if type(expected) is not dict or frozenset(expected) != _FACT_KEYS:
+        raise AdapterError("E_ADAPTER_SCHEMA", "expected must be a mapping with exactly %s"
+                           % ", ".join(sorted(_FACT_KEYS)))
+    for key in _INTEGER_KEYS:
+        if type(expected[key]) is not int:
+            raise AdapterError("E_ADAPTER_SCHEMA", "expected[%r] must be an integer" % key)
+    for key in _NON_NEGATIVE_KEYS:
+        if expected[key] < 0:
+            raise AdapterError("E_ADAPTER_SCHEMA", "expected[%r] must not be negative" % key)
+    digest = expected["sha256"]
+    if (type(digest) is not str or len(digest) != 64
+            or any(character not in _HEX_DIGITS for character in digest)):
+        raise AdapterError("E_ADAPTER_SCHEMA", "expected['sha256'] must be 64 lower-case hexadecimal digits")
+    return expected
+
+
+def _check_reserved_dimensions(scheduler: Any, operation_id: str, dimensions: tuple[str, ...]) -> None:
+    """Require every usage dimension to be reserved by the operation.
+
+    The operation's own reservation decides, and it is read before the handoff:
+    a dimension nobody reserved can only be refused later, in ``settle``, after
+    the run -- which stops a request for a mistake the caller made and leaves an
+    operation that ran for nothing.  The scheduler's own ``ContractError`` for an
+    operation it does not know rises unchanged.
+    """
+    reserved = scheduler.operation(operation_id)["reservation"]
+    for dimension in dimensions:
+        if dimension not in reserved:
+            raise AdapterError("E_ADAPTER_SCHEMA",
+                               "usage dimension %r is not reserved by the operation" % dimension)
 
 
 def supervised_spec(invocation: Any, *, cwd: Any, timeout_seconds: Any) -> InvocationSpec:
@@ -109,13 +162,21 @@ def _empty(status: str) -> dict[str, Any]:
     return {"status": status, "sha256": None, "bytes": None, "events": None}
 
 
-def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES) -> dict[str, Any]:
+def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
+                  expected: Any = None) -> dict[str, Any]:
     """Read the supervised run's stdout stream and parse its normalized events.
 
     The stream is the vendor's own output, so it is evidence and not input: a
     file state this process cannot account for is reported, never raised, and
     never read from a link (a symlinked stream is a forged one -- the child can
     swap it between the check and the read -- so ``O_NOFOLLOW`` refuses it).
+
+    ``expected`` is the supervisor's own fact for this stream, when the caller has
+    one: the device, the inode, the byte count and the digest of the stream the
+    supervisor read from its pinned descriptor when it reaped the group.  A file
+    whose identity or size is not that fact, or whose bytes are not exactly the
+    recorded ones, is ``changed`` -- what this call would have reduced is
+    demonstrably not the stream the run wrote, whatever its size.
 
     ``missing`` and ``unreadable`` are answers, not errors: the first is how a
     run that never started looks, the second is a stream that cannot be used as
@@ -124,10 +185,12 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES)
     protocol's own ``code`` (``E_JSON_SYNTAX``, ``E_JSON_LIMIT``, ...) or
     ``E_ADAPTER_STREAM`` when a line parsed to something that is not an event
     object.  In every case nothing is raised except an out-of-range
-    ``max_bytes``: what is on disk is a fact about the run, and the decision
-    (record no usage) belongs to the caller.
+    ``max_bytes`` or a malformed ``expected``: what is on disk is a fact about
+    the run, and the decision (record no usage) belongs to the caller.
     """
     _check_max_bytes(max_bytes)
+    if expected is not None:
+        expected = _checked_expected(expected)
     path = os.path.join(evidence_dir, STREAM_NAME)
     try:
         # ``O_NOFOLLOW``: a stream reached through a link is refused rather than
@@ -145,6 +208,13 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES)
         # path could race with what was really opened.
         if not stat.S_ISREG(info.st_mode):
             return _empty("unreadable")
+        if expected is not None and (info.st_dev, info.st_ino, info.st_size) != (
+                expected["device"], expected["inode"], expected["bytes"]):
+            # Another file is at the path, or the pinned one was written after
+            # the reap.  This comparison comes first, so a stream that grew past
+            # the ceiling is ``changed`` and not ``too_large``: the size is part
+            # of what is being compared.
+            return _empty("changed")
         if info.st_size > max_bytes:
             return _empty("too_large")
         raw = _read_at_most(descriptor, max_bytes + 1)
@@ -152,6 +222,11 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES)
             # The size above is only an early refusal: a file that grew after
             # the ``fstat`` is read no further than one byte past the ceiling.
             return _empty("too_large")
+        if expected is not None and (len(raw) != expected["bytes"]
+                                     or hashlib.sha256(raw).hexdigest() != expected["sha256"]):
+            # The identity and the size are the recorded ones, so this is the
+            # pinned file with different bytes in it: the digest settles it.
+            return _empty("changed")
     except OSError:
         return _empty("unreadable")
     finally:
@@ -201,16 +276,22 @@ def _check_dimensions(usage_dimensions: Any) -> tuple[str, ...]:
 
 
 def _reduce(adapter: OfflineAdapter, invocation: Invocation, evidence_dir: str,
-            max_bytes: int) -> tuple[dict[str, Any], Optional[Any], Optional[str]]:
+            max_bytes: int, expected: Any = None) -> tuple[dict[str, Any], Optional[Any], Optional[str]]:
     """Read the stream and reduce it; return ``(stream, result, result_error)``.
 
+    ``expected`` is the supervisor's own fact for this stream, when the caller has
+    one: with it, the bytes that were reduced are shown to be the bytes the
+    supervisor digested, so the digest that accompanies the usage is one this
+    process can account for.
+
     A stream that is not ``ok`` never reaches the adapter: there is no event
-    sequence to reduce, and the reason is already named by ``stream``.  An
+    sequence to reduce, and the reason is already named by ``stream`` -- which
+    includes ``changed``, a stream that is no longer the run's.  An
     ``AdapterError`` from the adapter is a report about the stream, not a
     failure of this call, so its code is carried back and the result stays
     ``None`` -- nothing is recorded from a stream the adapter rejected.
     """
-    stream = read_stream(evidence_dir, max_bytes=max_bytes)
+    stream = read_stream(evidence_dir, max_bytes=max_bytes, expected=expected)
     if stream["status"] != "ok":
         return stream, None, None
     try:
@@ -241,22 +322,27 @@ def run_adapter_operation(
 
     Every check on the caller's arguments -- the invocation, the adapter, the
     adapter id bound into the invocation, the usage dimensions, the stream
-    ceiling and the runtime specification -- runs *before* the handoff, so a
-    refused call starts nothing, leaves the operation in ``RESERVED`` and writes
-    no evidence.  Their errors are raised unchanged: ``AdapterError`` for this
-    module's own contract, ``RuntimeErrorCode`` for the runtime's.
+    ceiling, the runtime specification and the reservation the operation holds --
+    runs *before* the handoff, so a refused call starts nothing, leaves the
+    operation in ``RESERVED`` and writes no evidence.  Their errors are raised
+    unchanged: ``AdapterError`` for this module's own contract,
+    ``ContractError`` for the scheduler's, ``RuntimeErrorCode`` for the runtime's.
 
-    ``candidate_hash`` is wrapped.  The bridge calls the wrapper on the one path
-    that reaches the end review -- after ``mark_running``, while the operation is
-    still RUNNING -- which is the only point where ``Scheduler.finish`` has not
-    yet enforced the budget.  There the stream is read and reduced, and the usage
-    of a result that is both settled and complete is settled against the stream's
-    digest; the caller's own ``candidate_hash(evidence_dir)`` is then evaluated,
-    and its exception rises through the bridge, which moves the operation to
+    The stream is reduced once, on the one path that reaches the end review,
+    from the bridge's ``before_finish`` hook: after ``mark_running`` and after
+    the bridge checked both evidence files against the streams the supervisor
+    digested, while the operation is still RUNNING -- the only point where
+    ``Scheduler.finish`` has not yet enforced the budget.  There the stream is
+    read against the supervisor's own fact for it, reduced, and the usage of a
+    result that is both settled and complete is settled against the supervisor's
+    digest, which is the only hash this process can account for; the caller's own
+    ``candidate_hash(evidence_dir)`` is then evaluated by the bridge, and its
+    exception rises through the bridge, which moves the operation to
     ``START_UNKNOWN``.  On every other path (a handoff proven not to have
-    started, an unconfirmed cleanup, a run that never came back) the wrapper is
-    never called, no usage is recorded, and the stream is reduced once more,
-    afterwards, only so the outcome can report what the run wrote.
+    started, an unconfirmed cleanup, a stream that moved, a run that never came
+    back) the hook is never called, no usage is recorded, and the stream is
+    reduced once, afterwards, without the fact, only so the outcome can report
+    what the run wrote.
 
     Returns the bridge's own outcome extended with ``stream``, ``result``,
     ``result_error``, ``usage_recorded`` and ``usage_skipped``.
@@ -270,13 +356,21 @@ def run_adapter_operation(
     dimensions = _check_dimensions(usage_dimensions)
     _check_max_bytes(max_stream_bytes)
     spec = supervised_spec(invocation, cwd=cwd, timeout_seconds=timeout_seconds)
+    _check_reserved_dimensions(scheduler, invocation.run_id, dimensions)
 
     # The one reduction on the review path and what it recorded are kept here,
     # so the outcome can report them without reading the stream twice.
     report: dict[str, Optional[tuple[dict[str, Any], Optional[Any], Optional[str], Mapping[str, str], list[str]]]] = {"value": None}
 
-    def wrapped_candidate_hash(directory: str) -> Any:
-        stream, result, result_error = _reduce(adapter, invocation, directory, max_stream_bytes)
+    def before_finish(run: Any) -> None:
+        """Settle the usage against the supervisor's digest, while still RUNNING.
+
+        The fact for the stream is the one the supervisor digested, so the bytes
+        that were reduced are shown to be the bytes the run wrote: the digest
+        recorded with the usage is one this process can account for.
+        """
+        fact = run.streams["stdout"]
+        stream, result, result_error = _reduce(adapter, invocation, evidence_dir, max_stream_bytes, expected=fact)
         if result is not None and result.settled is True and result.raw_complete is True:
             usage = result.usage
             mapping = {dimension: usage[dimension] for dimension in dimensions
@@ -285,12 +379,11 @@ def run_adapter_operation(
             recorded = ({}
                         if not mapping
                         else dict(scheduler.settle(invocation.run_id, mapping,
-                                                   evidence_hash=stream["sha256"])))
+                                                   evidence_hash=fact["sha256"])))
         else:
             skipped = list(dimensions)
             recorded = {}
         report["value"] = (stream, result, result_error, recorded, skipped)
-        return candidate_hash(directory)
 
     outcome = run_supervised_operation(
         scheduler,
@@ -301,7 +394,8 @@ def run_adapter_operation(
         environment=environment,
         evidence_dir=evidence_dir,
         worktree_id=worktree_id,
-        candidate_hash=wrapped_candidate_hash,
+        candidate_hash=candidate_hash,
+        before_finish=before_finish,
         allowed_secret_names=allowed_secret_names,
         now=now,
     )
