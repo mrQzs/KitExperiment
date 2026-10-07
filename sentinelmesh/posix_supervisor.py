@@ -19,11 +19,15 @@ What one run guarantees:
   owns a whole process group and can stop descendants as well as the leader;
 * stdout/stderr go to files created ``O_EXCL`` in the caller's evidence
   directory, never to pipes, so a descendant holding the output open cannot make
-  the supervisor hang;
-* a caller may pass a ``before_start`` hook that runs once after those two files
-  exist and before ``Popen``; if it raises, the two files are removed and the
-  exception is re-raised unchanged, so nothing starts and no evidence of an
-  attempt that never happened survives;
+  the supervisor hang.  Both files are created, then each is *pinned* with a
+  second, read-only descriptor opened by path and proved by ``fstat`` to be the
+  very file the write descriptor created, so the facts about the two streams are
+  read from the file the child actually wrote to, never from whatever the path
+  happens to name later;
+* a caller may pass a ``before_start`` hook that runs once after those two
+  files exist and have been pinned, and before ``Popen``; if it raises, the two
+  files are removed and the exception is re-raised unchanged, so nothing starts
+  and no evidence of an attempt that never happened survives;
 * on timeout or cancellation the group is SIGTERMed, then SIGKILLed as a group
   inside bounded windows, and the leftovers are reaped until the group is
   confirmed empty.  ``cleanup_confirmed=False`` (no false "clean" report) is
@@ -33,7 +37,16 @@ What one run guarantees:
   group still has to be killed and reaped before the run can report anything.
   Pure Python cannot make this airtight: an interrupt that lands in the few
   bytecodes outside the guarded waits (between two attempts, or around the
-  reap's first probe and kill) still escapes.
+  reap's first probe and kill) still escapes.  An interrupt that arrives while
+  the stream facts are being digested is *not* absorbed: the group is reaped by
+  then, so the run cannot report and the exception reaches the caller;
+* once the group is reaped, every run that started a process carries
+  ``streams``: for each stream the device, inode, byte count and SHA-256 of what
+  the pinned descriptor can read, bounded by the size ``fstat`` reports at that
+  moment.  A stream that cannot be read at all is recorded as ``None`` rather
+  than failing the run, and `streams_match` later answers whether the two files
+  still are exactly those facts, so a write that arrives after the reap - by a
+  descendant that escaped the group, or by a path substitution - is detectable.
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code and starts no process,
@@ -44,8 +57,10 @@ start.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 import signal
+import stat
 import subprocess
 import time
 from typing import Any, Callable, Mapping, Optional
@@ -80,6 +95,18 @@ _STDOUT_NAME = "stdout.log"
 _STDERR_NAME = "stderr.log"
 _EVIDENCE_MODE = 0o600
 
+# Stream names, as keys of ``SupervisedRun.streams`` and of the ``streams``
+# record read back by `sentinelmesh.supervised_record.recorded_streams`.
+_STREAM_NAMES = ("stdout", "stderr")
+# One stream fact is closed: these four keys and nothing else, because a fact
+# that carried anything else could not be compared against a file later.
+_FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
+_SHA256_ALPHABET = frozenset("0123456789abcdef")
+# Read granularity for a stream fact and for the `streams_match` check.  The
+# bound is never the block size: a fact reads up to the size ``fstat`` reported,
+# and the check reads at most one byte more than the recorded byte count.
+_BLOCK_BYTES = 1 << 16
+
 
 @dataclass(frozen=True)
 class SupervisedRun:
@@ -89,6 +116,11 @@ class SupervisedRun:
     the process never started) and ``lifecycle`` the canonical transition
     record.  No field carries an environment value: only names are recorded, in
     ``environment_names``.
+
+    ``streams`` is ``None`` when no process ever started, and otherwise the
+    ``{"stdout": fact-or-None, "stderr": fact-or-None}`` mapping computed from
+    the pinned descriptors once the group was reaped: what the two evidence
+    files held at that moment, not what the paths hold later.
     """
 
     stop_reason: str
@@ -101,6 +133,7 @@ class SupervisedRun:
     stragglers_killed: bool
     environment_names: tuple[str, ...]
     duration_seconds: float
+    streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]] = None
 
 
 def _validated_allowlist(allowed_secret_names: Any) -> frozenset[str]:
@@ -162,25 +195,87 @@ def _open_evidence(evidence_dir: str, name: str) -> int:
         raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be created exclusively: {exc}") from exc
 
 
-def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int]:
-    """Create both evidence files, rolling the first one back if the second fails."""
+def _open_pinned(evidence_dir: str, name: str, write_fd: int) -> int:
+    """Pin one just-created evidence file with a read-only descriptor.
+
+    The pin is opened by path, so ``O_NOFOLLOW`` refuses a link planted at that
+    name and ``O_NONBLOCK`` keeps a special file from blocking the open, and it
+    is then proved to be the file the write descriptor created: same
+    ``st_dev``/``st_ino``.  Without that proof the facts could describe a file
+    this call never created, which is what a substitution at the path would be.
+
+    A pin that cannot be opened or does not match raises
+    ``E_RUNTIME_EVIDENCE``: nothing has started, so the caller must learn that
+    the run cannot be evidenced rather than receive facts about another file.
+    The descriptor is closed before raising in every failing case, so a refused
+    pin leaks nothing.
+    """
+    path = os.path.join(evidence_dir, name)
+    try:
+        pinned = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be pinned: {exc}") from exc
+    try:
+        pinned_info = os.fstat(pinned)
+        created_info = os.fstat(write_fd)
+    except OSError as exc:
+        _close_fd(pinned)
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be pinned: {exc}") from exc
+    if not stat.S_ISREG(pinned_info.st_mode) or (
+        pinned_info.st_dev,
+        pinned_info.st_ino,
+    ) != (created_info.st_dev, created_info.st_ino):
+        _close_fd(pinned)
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not the created evidence file")
+    return pinned
+
+
+def _open_evidence_files(evidence_dir: str) -> tuple[str, str, int, int, int, int]:
+    """Create and pin both evidence files, rolling everything back on failure.
+
+    Returns ``(stdout_path, stderr_path, stdout_write_fd, stderr_write_fd,
+    stdout_pin_fd, stderr_pin_fd)``.  Both files are created and pinned here,
+    before the ``before_start`` hook, so a run whose evidence cannot be pinned
+    never reaches a hook or a ``Popen``.
+
+    Nothing may have started and no evidence of an attempt that did not happen
+    may survive, so every descriptor opened by this call is closed and every
+    file this call created is removed.  A file this call did *not* create (the
+    second ``O_EXCL`` open fails exactly when the name is taken) is left as it
+    was found.
+    """
     stdout_path = os.path.join(evidence_dir, _STDOUT_NAME)
     stderr_path = os.path.join(evidence_dir, _STDERR_NAME)
-    stdout_fd = _open_evidence(evidence_dir, _STDOUT_NAME)
+    created: list[str] = []
+    stdout_fd: Optional[int] = None
+    stdout_pin: Optional[int] = None
+    stderr_fd: Optional[int] = None
+    stderr_pin: Optional[int] = None
     try:
+        stdout_fd = _open_evidence(evidence_dir, _STDOUT_NAME)
+        created.append(stdout_path)
+        stdout_pin = _open_pinned(evidence_dir, _STDOUT_NAME, stdout_fd)
         stderr_fd = _open_evidence(evidence_dir, _STDERR_NAME)
+        created.append(stderr_path)
+        stderr_pin = _open_pinned(evidence_dir, _STDERR_NAME, stderr_fd)
     except BaseException:
-        # Nothing was started and no evidence must be left behind: the partial
-        # file belongs to this call only, so removing it restores the directory
-        # to its previous state without touching any pre-existing file.
+        # Whatever failed (an OSError, an identity mismatch, an interrupt), the
+        # start did not happen: close everything this call opened and remove
+        # only the files this call created.
+        _close_fd(stderr_pin)
+        _close_fd(stderr_fd)
+        _close_fd(stdout_pin)
         _close_fd(stdout_fd)
-        _remove_evidence(stdout_path)
+        for path in created:
+            _remove_evidence(path)
         raise
-    return stdout_path, stderr_path, stdout_fd, stderr_fd
+    return stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin
 
 
-def _close_fd(descriptor: int) -> None:
-    """Close one descriptor, ignoring an already-closed handle."""
+def _close_fd(descriptor: Optional[int]) -> None:
+    """Close one descriptor, ignoring an already-closed or absent handle."""
+    if descriptor is None:
+        return
     try:
         os.close(descriptor)
     except OSError:
@@ -324,6 +419,159 @@ def _observation_of(
     }
 
 
+def _read_at_most(descriptor: int, limit: int) -> bytes:
+    """Read until EOF or until ``limit`` bytes are in hand, whichever comes first."""
+    chunks = []
+    total = 0
+    while total < limit:
+        try:
+            chunk = os.read(descriptor, min(_BLOCK_BYTES, limit - total))
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _fact_of(descriptor: int) -> Optional[dict[str, Any]]:
+    """Return what one pinned stream holds, or ``None`` if it cannot be read.
+
+    The identity comes from the pinned descriptor itself, and the bytes are read
+    with ``os.pread`` from offset 0 up to the size that same ``fstat`` reported:
+    a growing file can never turn the digest into a read that never ends, and a
+    shrinking one simply stops early.  ``pread`` is used rather than a positional
+    read so the digest could not be disturbed by another read of the file.
+
+    An ``OSError`` makes this stream's fact ``None`` instead of failing the run:
+    a process has already run, and an error raised there would tell the caller
+    the start was refused (see `sentinelmesh.supervised_record`).  Any other
+    exception, an interrupt above all, is not absorbed: the group is reaped, so
+    there is nothing left that must finish before the run can report, and the
+    caller has to learn that no facts were produced.
+    """
+    try:
+        info = os.fstat(descriptor)
+        chunks = []
+        total = 0
+        while total < info.st_size:
+            chunk = os.pread(descriptor, min(_BLOCK_BYTES, info.st_size - total), total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    except OSError:
+        return None
+    return {
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "bytes": total,
+        "sha256": hashlib.sha256(b"".join(chunks)).hexdigest(),
+    }
+
+
+def _streams_of(stdout_pin: int, stderr_pin: int) -> dict[str, Optional[dict[str, Any]]]:
+    """Return the facts of both pinned streams, once the group is reaped."""
+    return {
+        _STREAM_NAMES[0]: _fact_of(stdout_pin),
+        _STREAM_NAMES[1]: _fact_of(stderr_pin),
+    }
+
+
+def _is_sha256_text(value: Any) -> bool:
+    """Return whether ``value`` is exactly 64 lowercase hexadecimal characters."""
+    if type(value) is not str or len(value) != 64:
+        return False
+    return all(character in _SHA256_ALPHABET for character in value)
+
+
+def _valid_facts(value: Any) -> bool:
+    """Return whether ``value`` is a closed stream fact of the right types.
+
+    The types are exact: ``bool`` is a subclass of ``int`` and ``True == 1``, so a
+    byte count of ``True`` would stand for one byte, and a digest in upper case
+    would never compare equal to the one computed here.  A device number may be
+    negative, an inode or a byte count may not.
+    """
+    if type(value) is not dict or frozenset(value) != _FACT_KEYS:
+        return False
+    for key in ("device", "inode", "bytes"):
+        if type(value[key]) is not int:
+            return False
+    if value["inode"] < 0 or value["bytes"] < 0:
+        return False
+    return _is_sha256_text(value["sha256"])
+
+
+def _stream_matches(path: str, fact: Mapping[str, Any]) -> bool:
+    """Return whether the file at ``path`` still is exactly ``fact``.
+
+    The file is opened the way a pin is (``O_NOFOLLOW``, ``O_NONBLOCK``), so a
+    symlink or a fifo cannot stand in for it, and ``fstat`` is then compared
+    against the recorded device, inode and size: a file that took the original's
+    place, a renamed-away original and a truncated one all differ there.  Only
+    then are bytes compared, at most ``fact["bytes"] + 1`` of them, so a file
+    that grew after the fact was taken is refused without reading it whole.
+
+    Nothing here raises: an ``OSError`` (a missing file, a permission refusal, a
+    read failure) is a mismatch, never an exception, because the question is
+    asked about evidence a caller may no longer be able to inspect.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                return False
+            if (info.st_dev, info.st_ino, info.st_size) != (
+                fact["device"],
+                fact["inode"],
+                fact["bytes"],
+            ):
+                return False
+            raw = _read_at_most(descriptor, fact["bytes"] + 1)
+        except OSError:
+            return False
+        if len(raw) != fact["bytes"]:
+            return False
+        return hashlib.sha256(raw).hexdigest() == fact["sha256"]
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def streams_match(evidence_dir: Any, streams: Any) -> bool:
+    """Return whether both evidence files still are exactly ``streams``.
+
+    ``streams`` must be the mapping a `SupervisedRun` carried: exactly the two
+    stream names, each holding a closed fact.  A stream whose fact is ``None``
+    could not be read when the run ended, and no file can be shown to be what
+    nobody could read, so such a mapping is refused.  Anything malformed, and any
+    argument of the wrong type, is a ``False`` rather than an exception: the
+    caller is asking a question about evidence it does not own, and a wrong
+    answer must never look like a refusal to answer.
+    """
+    if type(evidence_dir) is not str:
+        return False
+    if type(streams) is not dict or frozenset(streams) != set(_STREAM_NAMES):
+        return False
+    facts: dict[str, Any] = {}
+    for name in _STREAM_NAMES:
+        fact = streams[name]
+        if not _valid_facts(fact):
+            return False
+        facts[name] = fact
+    return all(
+        _stream_matches(os.path.join(evidence_dir, name + ".log"), facts[name]) for name in _STREAM_NAMES
+    )
+
+
 def supervise(
     spec: InvocationSpec,
     *,
@@ -347,11 +595,15 @@ def supervise(
     re-raised, so the caller still receives the evidence and the observation.
 
     ``before_start`` is an optional caller hook invoked exactly once, with no
-    arguments, after both evidence files exist and immediately before
-    ``Popen``.  It is where a caller records its own handoff evidence; if it
-    raises, this call removes the two evidence files it created and re-raises
+    arguments, after both evidence files exist *and are pinned* and immediately
+    before ``Popen``.  It is where a caller records its own handoff evidence; if
+    it raises, this call removes the two evidence files it created and re-raises
     the same exception, so no process is started and no half-written evidence
     is left behind (see `sentinelmesh.supervised_record`).
+
+    On return, ``streams`` holds what each pinned stream held once the group was
+    reaped; `streams_match` answers later whether the files still are exactly
+    that.
     """
     started_at = time.monotonic()
     if os.name != "posix":
@@ -383,94 +635,109 @@ def supervise(
     if before_start is not None and not callable(before_start):
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_start must be callable")
 
-    stdout_path, stderr_path, stdout_fd, stderr_fd = _open_evidence_files(evidence)
-    if before_start is not None:
+    stdout_path, stderr_path, stdout_fd, stderr_fd, stdout_pin, stderr_pin = _open_evidence_files(evidence)
+    # The two pins outlive the start: they are what the stream facts are read
+    # through once the group is reaped, so every way out of this call closes
+    # them -- a failed hook, a failed exec, a normal return, and an exception
+    # the caller will see (an interrupt while the facts are digested above all).
+    try:
+        if before_start is not None:
+            try:
+                before_start()
+            except BaseException:
+                # Whatever the hook raised (including ``KeyboardInterrupt``), the
+                # start did not happen, so the two evidence files this call
+                # created exclusively for it must go with it: leaving them would
+                # record an attempt that never reached ``Popen``.  The exception
+                # is re-raised unchanged so the caller still sees its own
+                # failure.
+                _close_fd(stdout_fd)
+                _close_fd(stderr_fd)
+                _remove_evidence(stdout_path)
+                _remove_evidence(stderr_path)
+                raise
+        environment_names = tuple(sorted(snapshot))
+        lifecycle = Lifecycle().transition("STARTING")
         try:
-            before_start()
-        except BaseException:
-            # Whatever the hook raised (including ``KeyboardInterrupt``), the
-            # start did not happen, so the two evidence files this call created
-            # exclusively for it must go with it: leaving them would record an
-            # attempt that never reached ``Popen``.  The exception is re-raised
-            # unchanged so the caller still sees its own failure.
+            proc = subprocess.Popen(
+                list(spec.command),
+                executable=executable,
+                cwd=spec.cwd,
+                env=snapshot,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_fd,
+                stderr=stderr_fd,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError:
+            # The exec never happened: the evidence files record an attempt, no
+            # process identity exists, no stream was ever written, and
+            # ``NOT_STARTED`` is the only observation ``reconcile`` may act on.
+            lifecycle = lifecycle.transition("FAILED")
+            return SupervisedRun(
+                "start_failed",
+                None,
+                lifecycle,
+                _observation_of(spec, "NOT_STARTED", None, False),
+                None,
+                stdout_path,
+                stderr_path,
+                False,
+                environment_names,
+                max(0.0, time.monotonic() - started_at),
+            )
+        finally:
+            # The child holds its own copies after a successful ``Popen``; these
+            # two descriptors belong to the supervisor and must not outlive the
+            # start.
             _close_fd(stdout_fd)
             _close_fd(stderr_fd)
-            _remove_evidence(stdout_path)
-            _remove_evidence(stderr_path)
-            raise
-    environment_names = tuple(sorted(snapshot))
-    lifecycle = Lifecycle().transition("STARTING")
-    try:
-        proc = subprocess.Popen(
-            list(spec.command),
-            executable=executable,
-            cwd=spec.cwd,
-            env=snapshot,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_fd,
-            stderr=stderr_fd,
-            start_new_session=True,
-            close_fds=True,
-        )
-    except OSError:
-        # The exec never happened: the evidence files record an attempt, no
-        # process identity exists, and ``NOT_STARTED`` is the only observation
-        # ``reconcile`` may act on.
-        lifecycle = lifecycle.transition("FAILED")
+
+        identity = ProcessIdentity(proc.pid, boot, executable_sha256, worktree_id)
+        lifecycle = lifecycle.transition("STARTED", identity=identity)
+
+        try:
+            proc.wait(timeout=spec.timeout_seconds)
+            stop_reason = "completed"
+        except subprocess.TimeoutExpired:
+            stop_reason = "timeout"
+        except KeyboardInterrupt:
+            # Cancellation is a reportable outcome, not an exception to propagate:
+            # the caller still gets the evidence files and the observation.
+            stop_reason = "cancelled"
+        lifecycle = lifecycle.transition("STOPPING")
+        if stop_reason != "completed":
+            stop_reason = _stop_group(proc, stop_reason)
+        stragglers_killed, cleanup_confirmed = _reap_group(proc.pid)
+
+        # Only now, with the group reaped, are the two streams digested --
+        # through the pins, so the facts describe what the child actually wrote
+        # even if it renamed or removed the file the path still names.
+        streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]] = _streams_of(stdout_pin, stderr_pin)
+        exit_code = proc.returncode
+        state = "STOPPED" if stop_reason == "completed" and exit_code == 0 else "FAILED"
+        if cleanup_confirmed:
+            lifecycle = lifecycle.transition(state)
+        else:
+            # An unconfirmed group may still hold a live descendant, so only the
+            # lifecycle records that this run's start state is unknown: the
+            # observation keeps the leader's outcome next to the cleanup fact, and
+            # ``reconcile`` refuses a replay on that fact.
+            lifecycle = lifecycle.transition("START_UNKNOWN")
         return SupervisedRun(
-            "start_failed",
-            None,
+            stop_reason,
+            exit_code,
             lifecycle,
-            _observation_of(spec, "NOT_STARTED", None, False),
-            None,
+            _observation_of(spec, state, identity, cleanup_confirmed),
+            identity,
             stdout_path,
             stderr_path,
-            False,
+            stragglers_killed,
             environment_names,
             max(0.0, time.monotonic() - started_at),
+            streams,
         )
     finally:
-        # The child holds its own copies after a successful ``Popen``; these two
-        # descriptors belong to the supervisor and must not outlive the start.
-        _close_fd(stdout_fd)
-        _close_fd(stderr_fd)
-
-    identity = ProcessIdentity(proc.pid, boot, executable_sha256, worktree_id)
-    lifecycle = lifecycle.transition("STARTED", identity=identity)
-
-    try:
-        proc.wait(timeout=spec.timeout_seconds)
-        stop_reason = "completed"
-    except subprocess.TimeoutExpired:
-        stop_reason = "timeout"
-    except KeyboardInterrupt:
-        # Cancellation is a reportable outcome, not an exception to propagate:
-        # the caller still gets the evidence files and the observation.
-        stop_reason = "cancelled"
-    lifecycle = lifecycle.transition("STOPPING")
-    if stop_reason != "completed":
-        stop_reason = _stop_group(proc, stop_reason)
-    stragglers_killed, cleanup_confirmed = _reap_group(proc.pid)
-
-    exit_code = proc.returncode
-    state = "STOPPED" if stop_reason == "completed" and exit_code == 0 else "FAILED"
-    if cleanup_confirmed:
-        lifecycle = lifecycle.transition(state)
-    else:
-        # An unconfirmed group may still hold a live descendant, so only the
-        # lifecycle records that this run's start state is unknown: the
-        # observation keeps the leader's outcome next to the cleanup fact, and
-        # ``reconcile`` refuses a replay on that fact.
-        lifecycle = lifecycle.transition("START_UNKNOWN")
-    return SupervisedRun(
-        stop_reason,
-        exit_code,
-        lifecycle,
-        _observation_of(spec, state, identity, cleanup_confirmed),
-        identity,
-        stdout_path,
-        stderr_path,
-        stragglers_killed,
-        environment_names,
-        max(0.0, time.monotonic() - started_at),
-    )
+        _close_fd(stdout_pin)
+        _close_fd(stderr_pin)

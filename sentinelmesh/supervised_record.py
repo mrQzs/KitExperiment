@@ -12,7 +12,11 @@ What a record is:
   start and the end still proves that a handoff was accepted;
 * ``observation.json`` is written once the supervisor returns, and carries the
   closed five-key (started) or three-key (not started) observation record
-  `sentinelmesh.runtime.reconcile` consumes;
+  `sentinelmesh.runtime.reconcile` consumes, plus the stream facts the
+  supervisor read from the descriptors it pinned: schema
+  ``sentinelmesh-observation-v2`` puts the outer ``streams`` key next to the
+  unchanged ``observation``, so a v1 record is refused as damaged evidence
+  rather than read as if it carried no facts at all;
 * both are canonical JSON (`canonical_json`: sorted keys, compact, UTF-8, trailing
   newline), mode ``0600``, written to a ``.<name>.partial`` file created
   ``O_EXCL`` and fsynced, then published with ``os.link``.  The link is atomic,
@@ -22,11 +26,13 @@ What a record is:
   regular file only, at most `_MAX_RECORD_BYTES`, canonical bytes only, and the
   exact key set.  Anything else fails closed with ``E_RUNTIME_EVIDENCE``.
 
-`replay_decision` never re-derives a status from anything but the two records and
-the expected `InvocationSpec`, and it is read-only: it creates, modifies and
-deletes nothing.  Persistence across a power loss is *not* verified here (no
-directory fsync, no ``F_FULLFSYNC``); Linux and Windows Job Object supervision
-stay ``NOT_RUN``.
+`replay_decision` never re-derives a status from anything but the two records
+and the expected `InvocationSpec`, and it is read-only: it creates, modifies and
+deletes nothing.  ``streams`` takes no part in that decision; it is there so
+that `recorded_streams` can hand the facts of a recorded run to a caller that
+needs to check the files on disk against them.  Persistence across a power loss
+is *not* verified here (no directory fsync, no ``F_FULLFSYNC``); Linux and
+Windows Job Object supervision stay ``NOT_RUN``.
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code.  Importing this
@@ -50,7 +56,7 @@ OBSERVATION_NAME = "observation.json"
 # Schema tags.  Bumping one changes the bytes every record is compared against,
 # so an old record can never satisfy a new reader.
 _HANDOFF_SCHEMA = "sentinelmesh-handoff-v1"
-_OBSERVATION_SCHEMA = "sentinelmesh-observation-v1"
+_OBSERVATION_SCHEMA = "sentinelmesh-observation-v2"
 
 # Record byte ceiling: 64 KiB, the same bound the design states.  It holds on
 # both sides: a record that would not fit is refused before it is written (a
@@ -63,9 +69,13 @@ _RECORD_MODE = 0o600
 # this module, and `reconcile` would happily ignore the extras, so it is refused
 # instead of being read.
 _HANDOFF_KEYS = frozenset({"schema", "request_id", "run_id", "environment_sha256", "spec_sha256"})
-_OBSERVATION_KEYS = frozenset({"schema", "spec_sha256", "observation"})
+_OBSERVATION_KEYS = frozenset({"schema", "spec_sha256", "observation", "streams"})
 _OBSERVATION_INNER_KEYS = frozenset({"run_id", "environment_sha256", "state"})
+_OBSERVATION_STARTED_KEYS = _OBSERVATION_INNER_KEYS | {"process_identity", "cleanup_confirmed"}
 _IDENTITY_INNER_KEYS = frozenset({"pid", "boot_id", "executable_sha256", "worktree_id"})
+_STREAM_NAMES = frozenset({"stdout", "stderr"})
+_FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
+_SHA256_ALPHABET = frozenset("0123456789abcdef")
 
 
 def _handoff_content(spec: InvocationSpec) -> dict[str, Any]:
@@ -79,13 +89,80 @@ def _handoff_content(spec: InvocationSpec) -> dict[str, Any]:
     }
 
 
-def _observation_content(spec: InvocationSpec, observation: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the observation record for a finished run."""
+def _observation_content(
+    spec: InvocationSpec,
+    observation: Mapping[str, Any],
+    streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]],
+) -> dict[str, Any]:
+    """Return the observation record for a finished run.
+
+    ``streams`` is the supervisor's own mapping, or ``None`` when no process ever
+    started; it is copied into plain values so a record can only ever hold what
+    canonical JSON can express.
+    """
     return {
         "schema": _OBSERVATION_SCHEMA,
         "spec_sha256": spec.digest(),
         "observation": dict(observation),
+        "streams": _copy_streams(streams),
     }
+
+
+def _copy_streams(streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]]) -> Optional[dict[str, Any]]:
+    """Return a fresh copy of a stream mapping, so no caller can share one.
+
+    Both callers hand it a mapping that has already been validated (the
+    supervisor's own, or one `_validated_streams` just accepted), so the shape is
+    not re-checked here; what matters is that the value written or handed back is
+    a new container every time.
+    """
+    if streams is None:
+        return None
+    return {name: (None if streams[name] is None else dict(streams[name])) for name in ("stdout", "stderr")}
+
+
+def _is_sha256_text(value: Any) -> bool:
+    """Return whether ``value`` is 64 lowercase hexadecimal characters."""
+    if type(value) is not str or len(value) != 64:
+        return False
+    return all(character in _SHA256_ALPHABET for character in value)
+
+
+def _validated_streams(value: Any, observation: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """Return the recorded stream facts once they match the observation's shape.
+
+    A run that never started has nothing to say about the streams, so only
+    ``null`` is accepted for it: a fact about a process that never ran would make
+    a cancelled start look like an evidenced one.  A run that did start may
+    carry ``null`` for a stream that could not be read, because a stream the
+    supervisor could not digest must not fail a run that already happened.
+
+    JSON has one number type, so ``true`` is not an integer here even though
+    ``True == 1`` in Python: a byte count of ``true`` would be one byte.
+    """
+    started = frozenset(observation) == _OBSERVATION_STARTED_KEYS
+    if not started:
+        if value is not None:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream facts require a started observation")
+        return None
+    if type(value) is not dict or frozenset(value) != _STREAM_NAMES:
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream facts must cover both streams")
+    for name in ("stdout", "stderr"):
+        fact = value[name]
+        if fact is None:
+            continue
+        if type(fact) is not dict or frozenset(fact) != _FACT_KEYS:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream facts have an unexpected shape")
+        # A device number may be negative (it is whatever the filesystem says);
+        # an inode or a byte count may not.
+        if type(fact["device"]) is not int:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream device must be a number")
+        for key in ("inode", "bytes"):
+            if type(fact[key]) is not int or fact[key] < 0:
+                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"stream {key} must be a number that is not negative")
+        if not _is_sha256_text(fact["sha256"]):
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream sha256 must be a lowercase hexadecimal digest")
+    return value
 
 
 def _write_all(descriptor: int, raw: bytes) -> None:
@@ -245,7 +322,12 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "observation record has an unexpected shape")
         if type(parsed["spec_sha256"]) is not str:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "observation spec_sha256 must be text")
-        _validated_observation(parsed["observation"])
+        observation = _validated_observation(parsed["observation"])
+        # The facts are read with the same strictness as the observation itself:
+        # a record whose ``streams`` does not match its ``observation`` was not
+        # written by this module, and the facts are the only thing a recovery
+        # path would trust.
+        _validated_streams(parsed["streams"], observation)
     return parsed
 
 
@@ -305,6 +387,9 @@ def record_supervised_run(
     ``run`` attribute: the supervised process can write into the evidence
     directory, so a caller must not have to learn from the disk alone whether
     a process started.
+
+    The observation record is schema v2: it carries ``run.streams`` - the facts
+    of the two pinned streams - next to the unchanged observation.
     """
     def write_handoff() -> None:
         # ``supervise`` only calls this once its own input checks have passed, so
@@ -327,11 +412,27 @@ def record_supervised_run(
         before_start=write_handoff,
     )
     try:
-        _write_record(evidence_dir, OBSERVATION_NAME, _observation_content(spec, run.observation))
+        _write_record(evidence_dir, OBSERVATION_NAME, _observation_content(spec, run.observation, run.streams))
     except RuntimeErrorCode as exc:
         exc.run = run
         raise
     return run
+
+
+def _records_for(spec: InvocationSpec, evidence_dir: str) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """Return ``(handoff, observation)`` after the caller and the files are checked.
+
+    Both questions a caller can ask about a finished run - may it be replayed,
+    what did the streams look like - are answered from these two records alone, so
+    they share the same input checks and the same reads: a directory one function
+    accepts and the other refuses would answer two different questions about the
+    same evidence.
+    """
+    if type(spec) is not InvocationSpec:
+        raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "spec must be an InvocationSpec")
+    if type(evidence_dir) is not str or not os.path.isabs(evidence_dir) or not os.path.isdir(evidence_dir):
+        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "evidence_dir must be an absolute existing directory")
+    return _read_record(evidence_dir, HANDOFF_NAME), _read_record(evidence_dir, OBSERVATION_NAME)
 
 
 def replay_decision(spec: InvocationSpec, evidence_dir: str) -> dict[str, Any]:
@@ -344,13 +445,12 @@ def replay_decision(spec: InvocationSpec, evidence_dir: str) -> dict[str, Any]:
     fails closed with ``E_RUNTIME_EVIDENCE``, as does an observation whose handoff
     is missing: a run that reports an outcome nobody ever handed off cannot be
     replayed on that evidence.
+
+    The stream facts are validated with the record and then ignored here: whether
+    the evidence files still hold what they held is a question for
+    `sentinelmesh.posix_supervisor.streams_match`, not for this decision.
     """
-    if type(spec) is not InvocationSpec:
-        raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "spec must be an InvocationSpec")
-    if type(evidence_dir) is not str or not os.path.isabs(evidence_dir) or not os.path.isdir(evidence_dir):
-        raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "evidence_dir must be an absolute existing directory")
-    handoff = _read_record(evidence_dir, HANDOFF_NAME)
-    observation = _read_record(evidence_dir, OBSERVATION_NAME)
+    handoff, observation = _records_for(spec, evidence_dir)
     if handoff is None:
         if observation is not None:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "an observation record exists without its handoff")
@@ -369,3 +469,37 @@ def replay_decision(spec: InvocationSpec, evidence_dir: str) -> dict[str, Any]:
     if observation["spec_sha256"] != spec.digest():
         return _decision("IDENTITY_MISMATCH", spec, observation["observation"]["environment_sha256"])
     return dict(reconcile(spec, observation["observation"]))
+
+
+def recorded_streams(spec: InvocationSpec, evidence_dir: str) -> Optional[dict[str, Any]]:
+    """Return the stream facts the recorded run carried, or ``None``.
+
+    This is the counterpart of `replay_decision` for the recovery path: it reads
+    the same two records with the same strictness, but it answers what the two
+    evidence files held when the run ended, so that
+    `sentinelmesh.posix_supervisor.streams_match` can be asked whether they still
+    do.  The facts are a recovery hint, not a decision: ``None`` means there is
+    no recorded fact for this specification (no records at all, an interrupted
+    run, or records belonging to another invocation) and is never an error.
+
+    Read-only, like every other question this module answers: nothing is created,
+    modified or removed.  A record that cannot be read or does not have the exact
+    shape this module writes fails closed with ``E_RUNTIME_EVIDENCE``, and an
+    observation without its handoff is exactly as much of a refusal here as it is
+    for `replay_decision`.
+    """
+    handoff, observation = _records_for(spec, evidence_dir)
+    if handoff is None:
+        if observation is not None:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "an observation record exists without its handoff")
+        return None
+    if handoff != _handoff_content(spec):
+        # Another invocation's handoff: its acceptance is real, but it says
+        # nothing about *this* specification's streams.
+        return None
+    if observation is None:
+        # The handoff was accepted and nothing says what became of the start.
+        return None
+    if observation["spec_sha256"] != spec.digest():
+        return None
+    return _copy_streams(observation["streams"])
