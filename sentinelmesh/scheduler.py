@@ -508,6 +508,15 @@ class Scheduler:
             raise ContractError("E_FENCED")
         return op
 
+    def _new_operation_id(self) -> str:
+        """The single source of operation ids.
+
+        Extracted so a durable ledger can replay a recorded claim with exactly
+        the id the original call produced; everything else about the id is
+        decided here.
+        """
+        return "op-" + uuid.uuid4().hex
+
     def claim(self, request: str, task: str, plan: int, key: str, owner: str,
               generation: int, guard_version: int, reservation: Mapping[str, int],
               resource_keys: list[str], now: int = 0, lease: int = 30,
@@ -557,7 +566,7 @@ class Scheduler:
                     raise ContractError("E_BUDGET_INSUFFICIENT")
             for resource in resource_keys:
                 if (root.repo_id, resource) in self._resource_holds: raise ContractError("E_RESOURCE_BUSY")
-            operation_id = "op-" + uuid.uuid4().hex
+            operation_id = self._new_operation_id()
             op = _Operation(operation_id, request, task, plan, guard_version, key, fingerprint, owner,
                             generation, now + lease, "RESERVED", reservation2, tuple(sorted(resource_keys)))
             # Everything below is under the same lock.  Failpoints leave no partial mutation.
