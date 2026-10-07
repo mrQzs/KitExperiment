@@ -343,6 +343,10 @@ class Scheduler:
 
     def __init__(self, *, generation: int = 1):
         exact_int(generation, positive=True)
+        # A generation that cannot be encoded would make *every* later event
+        # unencodable, so it is refused before anything exists.
+        if generation > _MAX_SAFE_INTEGER:
+            raise ContractError("E_JSON_INTEGER")
         self._generation = generation
         self._requests: dict[str, _Request] = {}
         self._tasks: dict[tuple[str, str], _Task] = {}
@@ -456,6 +460,30 @@ class Scheduler:
     def snapshot(self, request: str, task: str | None = None) -> dict[str, dict[str, int]]:
         with self._lock:
             return json.loads(json.dumps(self._snapshot(request, task)))
+
+    def operation(self, operation: str) -> dict[str, Any]:
+        """Read-only view of a single operation.
+
+        The view answers "which operation is this invocation talking about, and
+        what did it reserve" without exposing the budget summary of the request
+        or the task: it is the operation's own reservation, copied out of the
+        ledger.  Reading is never fenced -- a caller of a newer generation still
+        sees the owner and the generation recorded on the operation -- and it
+        records no event and mutates nothing.
+        """
+        with self._lock:
+            # The type check comes before the dict lookup: an unhashable id must
+            # report ``E_OPERATION_UNKNOWN`` instead of a lookup ``TypeError``,
+            # and a ``str`` subclass (or enum member) that merely compares equal
+            # to a stored id is not that id.
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            op = self._operations.get(operation)
+            if op is None:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            return {"operation_id": op.operation_id, "request_id": op.request_id,
+                    "task_id": op.task_id, "state": op.state, "owner": op.owner,
+                    "generation": op.generation, "reservation": dict(op.reservation)}
 
     def _epoch(self, generation: int) -> None:
         # ``1.0`` equals ``1``, ``True`` equals ``1`` and an ``int`` subclass is
@@ -873,9 +901,13 @@ class Scheduler:
 
     def rollover(self) -> int:
         with self._lock:
+            # The fenced payload is encoded *before* the generation, the requests
+            # and the events are touched, so a generation that cannot be encoded
+            # (2**53-1 reached) leaves the ledger exactly as it was.
+            payload = self._encode_payload({"generation": self._generation + 1})
             self._generation += 1
             for root in self._requests.values(): root.stopped = root.stopped or "RECOVERY_REQUIRED"
-            self._emit(None, "controller.fenced", {"generation": self._generation})
+            self._emit(None, "controller.fenced", payload, encoded=True)
             return self._generation
 
 
