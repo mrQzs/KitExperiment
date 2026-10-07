@@ -86,9 +86,14 @@
   - 提交：oracle `b0f46b4`、a001 `bba63ec`（PASS）、规划端补全 `9726844`；
   - 用量必须在 `finish` 之前记入：`finish` 检查预算时，用量不是最终值的操作会把 request 永久停止。所以包装桥接的 `candidate_hash`，它只在结束复审的路径上、操作还是 RUNNING 时被调用；
   - 规划端补全：桥接在交接之前拒绝非 str 的 `evidence_dir`（原来会让操作停在 HANDOFF_ACCEPTED），并补了交接前检查顺序与两处测试稳健性。
+- 第 3 节的信任边界（F1）与维度对账（F3）由 `.agent/design/stream-trust-boundary.md` 的三份合同处理（2026-10-07）：
+  - 监督器记下两个流的事实；
+  - 桥接只在流仍是监督器记下的样子时进入复审；
+  - adapter 在桥接的 `before_finish` 钩子里结算用量，证据哈希取监督器的摘要；
+  - 交接之前核对用量维度都在操作的预约里。
+
+  逃逸的后代在事实取定之前写入的内容，仍与运行本身的输出无法区分。
 - 已知残留：
-  - 第 3 节的信任边界（F1）；
-  - `usage_dimensions` 没有与预约维度对账：列入未预约的维度时，要等运行结束才在 `settle` 里报错，操作随之置为 START_UNKNOWN；
   - `settle` 对异步中断不是全有或全无，但操作与 request 都会停在 START_UNKNOWN；
   - 子类 adapter 抛出非 `AdapterError` 时，异常在落定之后冒出，调用方拿不到结果；
   - Pi 原生事件的翻译仍是 NOT_RUN。

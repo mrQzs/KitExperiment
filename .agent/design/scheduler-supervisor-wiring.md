@@ -108,4 +108,5 @@ SentinelMesh 的设计已经规定了接法：
   - 恢复路径只有落盘记录。同账户的被监督进程能写证据目录，所以记录只是关联证据，不是认证（05 文档 4.3.9）；强对抗环境需要 OS 隔离或受信的记录方。
   - 停在 RUNNING 的窄窗口：`mark_running` 之后落入异步中断，或换代后 `unknown()` 被拒。换代后 `recover()` 能接管。
   - `rollover()` 在代际为 2^53−1 时先改后报错：代际加一、所有 request 设为 `RECOVERY_REQUIRED`，然后才在事件编码时报 `E_JSON_INTEGER`。`Scheduler(generation=2**53)` 也会被接受。实际几乎遇不到，另立合同处理。
+    - 已由 `scheduler-operation-view`（2026-10-07，`88dff4b`）修正：`rollover()` 先编码事件再改账本，构造函数拒绝超过 2^53−1 的代际。
   - 账本是内存原型，不做持久化；`resume` 不实现。
