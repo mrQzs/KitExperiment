@@ -107,3 +107,8 @@ request-resume 复审的 M1、L1 交回用户，用户的决定（均选推荐�
 - P12：日志格式名仍是 v1。在 request-resume v1 下记过 `resume` 的账本，参数名已经变了，重放时会以 `E_LEDGER_REPLAY` 失败关闭；这样的账本只存在于测试里。
 
 合同：`resume-holds`，在 request-resume 之后。规划端同时更新 request-resume 的 oracle（`resume` 的参数改名）。
+
+- 已集成：oracle `9d2220e`、a001 `2eb579a`、规划端补全 `84c9a57`；全量 762 passed。
+- 遗留（resume-holds 复审，待用户决定）：
+  - M：桥接要等运行结束、记录写完才调用 `mark_running`，`started` 因此登记得太晚。控制器在运行中途死掉时，账本只见过 `HANDOFF_ACCEPTED`，重启恢复判为 `START_UNKNOWN` 之后，运维仍能判 `NOT_STARTED`，`recover(NOT_STARTED)` 也一样，tokens 归零。
+  - L1：同一个原因文字只记一次（P8），两次 `stop("req-1", "OPERATOR_STOP")` 合并成一项，一次恢复就把两次暂停一起清掉；`stop()` 的默认原因就是 `OPERATOR_STOP`。
