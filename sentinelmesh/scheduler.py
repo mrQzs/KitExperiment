@@ -552,7 +552,14 @@ class Scheduler:
         spec = dict(copy["spec"])
         if set(spec) != _SPEC_FIELDS or any(type(key) is not str for key in spec):
             raise ContractError("E_RUN_DESCRIPTOR")
-        if type(spec["command"]) is not list or any(type(part) is not str for part in spec["command"]):
+        if type(spec["command"]) is not list:
+            raise ContractError("E_RUN_DESCRIPTOR")
+        # The command list is a layer of its own: it is copied before its parts
+        # are checked, and only this copy is validated, rebuilt and stored, so a
+        # caller changing its list meanwhile cannot slip a part past the check
+        # (review of attempt-001, L1).
+        spec["command"] = list(spec["command"])
+        if any(type(part) is not str for part in spec["command"]):
             raise ContractError("E_RUN_DESCRIPTOR")
         for name in ("request_id", "run_id", "cwd", "environment_sha256"):
             if type(spec[name]) is not str:

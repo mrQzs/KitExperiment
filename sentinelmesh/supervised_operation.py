@@ -186,7 +186,10 @@ def _checked_evidence_dir(evidence_dir: Any) -> None:
     would otherwise fail only after the handoff, on the release path, and leave
     the operation HANDOFF_ACCEPTED with its holds.  A string the supervisor
     rejects (relative, missing, not a directory) still reaches the supervisor
-    and is settled as a handoff proven not to have started.
+    and is settled as a handoff proven not to have started.  An empty string, or
+    one holding a control character or a lone surrogate, never gets that far:
+    the handoff's run descriptor refuses it (``E_RUN_DESCRIPTOR``) and the
+    operation stays RESERVED.
     """
     if type(evidence_dir) is not str:
         raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "evidence_dir must be a string")
@@ -419,6 +422,14 @@ def run_supervised_operation(
     candidate's hash; it is the caller that knows what the candidate is, not this
     module.  ``record_supervised_run`` is called through this module's own name so
     a caller (or a test) can see the whole call sequence.
+
+    The handoff records the run descriptor a restart recovers from (``run=``).
+    An ``evidence_dir`` or a ``worktree_id`` that is empty or holds a control
+    character or a lone surrogate is refused there with
+    ``ContractError("E_RUN_DESCRIPTOR")``, before anything is recorded or started:
+    like every other refused handoff, the operation stays RESERVED with its
+    reservation and holds until it is cancelled.  A relative or missing evidence
+    directory still reaches the supervisor and is settled NOT_STARTED.
 
     ``before_finish``, when given, is called on the review path only: with the
     in-memory ``SupervisedRun``, after the two evidence files were checked

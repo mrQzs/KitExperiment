@@ -292,6 +292,30 @@ class RunDescriptorLedger(RecoveryCase):
         self.assertEqual(scheduler.operation(first)["state"], "RESERVED")
         self.assertIsNone(scheduler.run_descriptor(first))
 
+    def test_the_guard_and_the_budget_are_checked_before_the_descriptor(self):
+        # Neither check can fail through the public API once the claim
+        # succeeded -- the claim checks the same guard and budget, and usage that
+        # breaks the budget stops the request first -- so each case sets the
+        # internal state the check reads (review of attempt-001, L3).
+        cases = (("a stale guard", "E_GUARD_STALE",
+                  lambda s: setattr(s._tasks[("req-1", "task-1")], "fixture_eligible", False)),
+                 ("a budget beyond its limit", "E_BUDGET_GUARD",
+                  lambda s: s._requests["req-1"].caps.__setitem__("tokens", 1)))
+        for index, (label, code, spoil) in enumerate(cases):
+            with self.subTest(case=label):
+                scheduler = self.scheduler()
+                op = self.claim(scheduler, "task-1")
+                good = self.descriptor(op, self.evidence("checked-before-%d" % index))
+                spoil(scheduler)
+                before = scheduler.events
+                for descriptor in (good, dict(good, note="an extra key")):
+                    with self.assertRaises(ContractError) as ctx:
+                        scheduler.handoff(op, "owner-1", 1, run=descriptor)
+                    self.assertEqual(ctx.exception.code, code)
+                self.assertEqual(scheduler.events, before)
+                self.assertEqual(scheduler.operation(op)["state"], "RESERVED")
+                self.assertIsNone(scheduler.run_descriptor(op))
+
     def test_the_durable_ledger_records_the_descriptor_with_the_handoff(self):
         path = str(self.work / "ledger.db")
         ledger = self.scheduler(create_ledger(path))
@@ -463,10 +487,14 @@ class RecoverAfterRestartLedger(RecoveryCase):
         scheduler = self.scheduler()
         first = self.claim(scheduler, "task-1")
         second = self.claim(scheduler, "task-2")
+        real = Scheduler.cancel_unstarted
 
         def cancel(self, operation, generation):
             if operation == first:
                 raise KeyboardInterrupt
+            # Every other operation is really cancelled, so a driver that went on
+            # past the interrupt would show it (review of attempt-001, L2).
+            return real(self, operation, generation)
 
         with mock.patch.object(Scheduler, "cancel_unstarted", cancel):
             with self.assertRaises(KeyboardInterrupt):

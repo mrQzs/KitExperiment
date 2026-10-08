@@ -397,14 +397,21 @@ class RecoverAfterRestartOracle(RecoveryCase):
             reopened.close()
         with self.subTest(case="an interrupt"):
             scheduler = self.scheduler()
-            first, _ = self.finished_run(scheduler, "task-3")
+            first, first_evidence = self.finished_run(scheduler, "task-3")
             second, _ = self.finished_run(scheduler, "task-4")
+            calls = []
 
-            def interrupt(evidence_dir):
-                raise KeyboardInterrupt
+            def interrupt_on_the_first(evidence_dir):
+                # Only the first operation is interrupted, so a driver that went
+                # on past it would recover the second (review of attempt-001, L2).
+                calls.append(evidence_dir)
+                if evidence_dir == first_evidence:
+                    raise KeyboardInterrupt
+                return NEW
 
             with self.assertRaises(KeyboardInterrupt):
-                recover_after_restart(scheduler, owner="owner-2", candidate_hash=interrupt)
+                recover_after_restart(scheduler, owner="owner-2", candidate_hash=interrupt_on_the_first)
+            self.assertEqual(calls, [first_evidence], "the recovery went on after the interrupt")
             self.assertEqual([scheduler.operation(op)["state"] for op in (first, second)],
                              ["HANDOFF_ACCEPTED", "HANDOFF_ACCEPTED"])
 
