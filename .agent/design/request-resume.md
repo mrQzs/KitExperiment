@@ -86,3 +86,24 @@
 - 不自动恢复请求，不自动裁定 `START_UNKNOWN`。
 - 不从输出流反推用量（崩溃运行的用量由运维补记）。
 - 不做多宿主或分布式恢复；Linux 与 Windows 仍是 NOT_RUN。
+
+## 9. 后续：叠加的停止与已运行过的操作（2026-10-08）
+
+request-resume 复审的 M1、L1 交回用户，用户的决定（均选推荐项）：
+1. **逐个点名全部原因**：记下自上次恢复以来的全部停止原因；恢复时点名的原因列表必须与它完全一致；另加只读接口查看当前原因。任何叠加的暂停都不会被悄悄清掉。
+2. **账本见过运行的操作不能判为未启动**：只能放弃或确认完成，与 `recover` 不许 `RUNNING → NOT_STARTED` 的规则一致。
+
+规划端的决定：
+- P8：`_Request` 另记 `stop_reasons`，即自上次恢复以来出现过的停止原因：按第一次出现的顺序排列，同一个原因只记一次。`stop`、`rollover`、`unknown` 与 `_enforce` 停止请求时都追加原因，请求已经停止时也追加；`stopped` 仍是第一个原因，保持现有检查不变。恢复时两者一起清空。
+- P9：新增只读方法 `stop_reasons(request) -> tuple[str, ...]`，请求在运行时返回空元组，未知或不是精确 `str` 的请求报 `E_REQUEST_UNKNOWN`。持久账本照 `operation()` 的样子提供同名读访问器。
+- P10：`resume` 的 `expected_reason` 改为 `expected_reasons`：
+  - 形状：精确 `list`，不空，元素是互不重复的非空精确 `str`，否则报 `E_STOP_REASON`；
+  - 比对：按顺序与 `stop_reasons` 完全相等，否则报 `E_STOP_REASON_CHANGED`；
+  - 事件 `request.resumed` 的载荷改为 `{"request_id", "previous_reasons", "operator", "note"}`。
+  - 其余检查与顺序照旧。
+- P11：`_Operation` 记下 `started`，`mark_running` 把它置为真（它发出的正是 `run.started`）。
+  - 对 `started` 的操作，`resolve_unknown` 的 `NOT_STARTED` 报 `E_RESOLVE_CONFLICT`；
+  - `recover` 的 `NOT_STARTED` 也一并拒绝，报 `E_RECOVERY_CONFLICT`。原来只看当前状态是不是 `RUNNING`，现在 `START_UNKNOWN` 但运行过的操作也算。
+- P12：日志格式名仍是 v1。在 request-resume v1 下记过 `resume` 的账本，参数名已经变了，重放时会以 `E_LEDGER_REPLAY` 失败关闭；这样的账本只存在于测试里。
+
+合同：`resume-holds`，在 request-resume 之后。规划端同时更新 request-resume 的 oracle（`resume` 的参数改名）。
