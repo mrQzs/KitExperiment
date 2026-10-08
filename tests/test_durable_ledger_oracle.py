@@ -169,7 +169,7 @@ class DurableLedgerOracle(LedgerCase):
         self.assertEqual(MUTATING_METHODS, ("seed_request", "seed_task", "claim", "handoff", "mark_running", "renew",
                                             "observe", "settle", "finish", "fixture_verdict", "unknown",
                                             "release_proven_unstarted", "recover", "cancel_unstarted", "stop",
-                                            "rollover"))
+                                            "rollover", "resolve_unknown", "resume"))
         for name in MUTATING_METHODS + ("snapshot", "operation"):
             with self.subTest(method=name):
                 self.assertEqual(bare(inspect.signature(getattr(DurableScheduler, name))),
