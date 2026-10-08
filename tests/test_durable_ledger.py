@@ -448,7 +448,8 @@ class OpenPragmaFailure(DurableLedgerCase):
                 self.assertEqual(self.code_of(LedgerError, open_ledger, self.path), "E_LEDGER_OPEN")
         self.assertEqual(fd_count(), before, "a refused open left its connection open")
         # The legal baseline: the very same ledger opens through a real connection.
-        self.assertEqual(open_ledger(self.path).seq, 3)
+        with open_ledger(self.path) as reopened:
+            self.assertEqual(reopened.seq, 3)
 
 
 class CreateRefusals(DurableLedgerCase):
@@ -458,7 +459,8 @@ class CreateRefusals(DurableLedgerCase):
         ledger = create_ledger(good)
         ledger.seed_request("req-1", "repo-1", CAPS)
         ledger.close()
-        self.assertEqual(open_ledger(good).seq, 1)
+        with open_ledger(good) as reopened:
+            self.assertEqual(reopened.seq, 1)
         # One thing changes: the directory refuses to give out a new file.
         locked = self.work / "locked"
         locked.mkdir()

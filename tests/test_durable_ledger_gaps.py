@@ -28,9 +28,26 @@ Version 2 of the contract adds what the independent review found:
   longer replays;
 * a forged log cannot give two claims the same operation id, nor record an id
   that is not one the Scheduler would generate.
+
+Added with the planner completion of attempt-002, for two rules the mutation
+check found unguarded and for what the independent review found:
+
+* an exception of any kind from a replayed call is a damaged ledger
+  (``E_LEDGER_REPLAY``) and closes the connection -- not only the Scheduler's
+  ``ContractError`` and a ``TypeError`` from the arguments;
+* a create that fails after it made its file removes that file, whichever step
+  failed -- closing the creation descriptor included -- so the path can be
+  created again;
+* the ledger SQLite opens is the file the kernel resolves: a path whose ``..``
+  follows a symbolic link names another file when it is collapsed as text, and
+  that file is never written;
+* an interrupt during the pragmas still closes the connection, a path the file
+  system cannot encode is ``E_LEDGER_PATH``, and any failure while parsing a
+  command (``MemoryError`` too) is ``E_LEDGER_REPLAY``.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -293,6 +310,165 @@ class DurableLedgerGaps(unittest.TestCase):
         self.assertEqual(reopened.operation("op-" + "e" * 32)["task_id"], "task-2")
         self.assertEqual(reopened.operation(op)["task_id"], "task-1")
         reopened.close()
+
+
+    def test_any_exception_from_a_replayed_call_is_a_damaged_ledger(self):
+        # The Scheduler refuses everything a log could carry with its own
+        # ``ContractError`` today; any other exception a replayed call raises is
+        # still a damaged ledger, and the open still closes its connection.
+        open_ledger(self.path).close()
+        before = fd_count()
+        for failure in (KeyError("caps"), RuntimeError("replay"), AttributeError("items")):
+            with self.subTest(failure=type(failure).__name__):
+                with mock.patch.object(Scheduler, "seed_task", side_effect=failure):
+                    for _ in range(3):
+                        self.assertEqual(self.code_of(open_ledger, self.path), "E_LEDGER_REPLAY")
+                self.assertEqual(fd_count(), before, "a refused open left its connection open")
+        open_ledger(self.path).close()
+
+    def test_a_create_that_fails_after_making_its_file_leaves_nothing_behind(self):
+        real_connect = sqlite3.connect
+
+        class FailingAt:
+            """A real connection whose first statement starting with ``prefix`` fails."""
+
+            def __init__(self, real, prefix):
+                self.real, self.prefix = real, prefix
+
+            def execute(self, sql, *args):
+                if sql.lstrip().upper().startswith(self.prefix):
+                    raise sqlite3.OperationalError("disk I/O error")
+                return self.real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+        before = fd_count()
+        for prefix in ("PRAGMA SYNCHRONOUS", "BEGIN", "CREATE TABLE", "INSERT", "COMMIT"):
+            with self.subTest(failing=prefix):
+                target = self.work / ("failed-%s.db" % prefix.split()[0].lower())
+
+                def connect(path, *args, **kwargs):
+                    return FailingAt(real_connect(path, *args, **kwargs), prefix)
+
+                with mock.patch.object(durable_ledger.sqlite3, "connect", connect):
+                    self.assertEqual(self.code_of(create_ledger, str(target)), "E_LEDGER_OPEN")
+                self.assertFalse(os.path.lexists(target), "a failed create left its file behind")
+                self.assertEqual(fd_count(), before, "a failed create left its connection open")
+                create_ledger(str(target)).close()
+
+
+    def test_the_ledger_is_the_file_the_kernel_resolves(self):
+        # ``a/link/..`` is ``b`` for the kernel but ``a`` for a path collapsed
+        # as text: what is checked, created and removed must be what is opened.
+        root = self.work / "resolve"
+        (root / "a").mkdir(parents=True)
+        (root / "b" / "sub").mkdir(parents=True)
+        os.symlink(root / "b" / "sub", root / "a" / "link")
+        path = str(root / "a" / "link" / ".." / "ledger.db")
+        kernel, textual = root / "b" / "ledger.db", root / "a" / "ledger.db"
+        self.assertEqual(os.path.realpath(path), str(kernel))
+        for label in ("an empty file", "another program's database"):
+            with self.subTest(case=label):
+                if label == "an empty file":
+                    textual.write_bytes(b"")
+                else:
+                    self.execute(str(textual), ("CREATE TABLE notes(x)", ()))
+                foreign = textual.read_bytes()
+                ledger = create_ledger(path)
+                ledger.seed_request("req-9", "repo-9", CAPS, concurrency=1)
+                ledger.close()
+                self.assertEqual(textual.read_bytes(), foreign, "create wrote into a file it did not create")
+                with open_ledger(str(kernel)) as reopened:
+                    self.assertEqual(reopened.seq, 1)
+                kernel.unlink()
+                textual.unlink()
+        # A ledger at each place: the one the kernel resolves is opened and written.
+        with create_ledger(str(kernel)) as near:
+            near.seed_request("req-9", "repo-9", CAPS, concurrency=1)
+        with create_ledger(str(textual)) as far:
+            far.seed_request("req-8", "repo-8", CAPS, concurrency=1)
+            far.seed_task("req-8", "task-8", CAPS)
+            far.seed_task("req-8", "task-7", CAPS)
+        with open_ledger(path) as reopened:
+            self.assertEqual(reopened.seq, 1)
+            reopened.seed_task("req-9", "task-9", CAPS)
+        with open_ledger(str(kernel)) as near, open_ledger(str(textual)) as far:
+            self.assertEqual((near.seq, far.seq), (2, 3))
+            self.assertEqual(near.snapshot("req-9", "task-9")["dispatches"]["limit"], CAPS["dispatches"])
+
+    def test_an_interrupt_during_the_pragmas_closes_the_connection(self):
+        real_connect = sqlite3.connect
+        made = []
+
+        class InterruptedAtSynchronous:
+            def __init__(self, real):
+                self.real = real
+
+            def execute(self, sql, *args):
+                if sql.lstrip().upper().startswith("PRAGMA SYNCHRONOUS"):
+                    raise KeyboardInterrupt
+                return self.real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+        def connect(path, *args, **kwargs):
+            # The real connections are kept here, so the garbage collector cannot
+            # close one that the ledger left open.
+            made.append(InterruptedAtSynchronous(real_connect(path, *args, **kwargs)))
+            return made[-1]
+
+        target = self.work / "interrupted.db"
+        with mock.patch.object(durable_ledger.sqlite3, "connect", connect):
+            with self.assertRaises(KeyboardInterrupt):
+                open_ledger(self.path)
+            with self.assertRaises(KeyboardInterrupt):
+                create_ledger(str(target))
+        self.assertEqual(len(made), 2)
+        for connection in made:
+            with self.assertRaises(sqlite3.ProgrammingError, msg="the interrupted connection is still open"):
+                connection.real.execute("SELECT 1")
+        self.assertFalse(os.path.lexists(target), "an interrupted create left its file behind")
+        with open_ledger(self.path) as ledger:
+            self.assertEqual(ledger.seq, 2)
+
+    def test_a_path_the_file_system_cannot_encode_is_refused(self):
+        before = sorted(os.listdir(self.work))
+        for name in ("\ud800.db", "ledger-\udfff.db"):
+            with self.subTest(name=ascii(name)):
+                path = str(self.work / name)
+                self.assertEqual(self.code_of(open_ledger, path), "E_LEDGER_PATH")
+                self.assertEqual(self.code_of(create_ledger, path), "E_LEDGER_PATH")
+        self.assertEqual(sorted(os.listdir(self.work)), before)
+
+    def test_any_failure_while_parsing_a_command_is_a_damaged_ledger(self):
+        open_ledger(self.path).close()
+        before = fd_count()
+        for failure in (MemoryError(), RuntimeError("parser")):
+            with self.subTest(failure=type(failure).__name__):
+                with mock.patch.object(durable_ledger.json, "loads", side_effect=failure):
+                    self.assertEqual(self.code_of(open_ledger, self.path), "E_LEDGER_REPLAY")
+                self.assertEqual(fd_count(), before, "a refused open left its connection open")
+
+    def test_a_failure_to_close_the_creation_descriptor_removes_the_file(self):
+        real_close = os.close
+        closed = []
+
+        def failing_close(fd):
+            # The descriptor is really closed; only the report of it fails.
+            closed.append(fd)
+            real_close(fd)
+            raise OSError(errno.EIO, "I/O error")
+
+        target = self.work / "close-failed.db"
+        before = fd_count()
+        with mock.patch.object(durable_ledger.os, "close", failing_close):
+            self.assertEqual(self.code_of(create_ledger, str(target)), "E_LEDGER_OPEN")
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(fd_count(), before)
+        self.assertFalse(os.path.lexists(target), "the created file was left behind")
+        create_ledger(str(target)).close()
 
 
 if __name__ == "__main__":

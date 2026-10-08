@@ -42,6 +42,16 @@ it:
 * creating makes its file atomically with ``O_CREAT | O_EXCL`` and, on any later
   failure, removes the path only while it still is the file this call created
   (same device and inode) -- never a file somebody else put there.
+
+The planner completed the module after the review of attempt-002: the
+connection path keeps every ``..`` so SQLite opens the file the kernel resolves
+(a path collapsed as text could name another one), the connection is closed on
+every way out of the pragmas, a path the file system cannot encode is
+``E_LEDGER_PATH``, any failure while parsing a command is ``E_LEDGER_REPLAY``,
+and a failure to close the creation descriptor removes the created file.  A
+process killed between creating the file and the first commit still leaves an
+empty file behind: ``create_ledger`` then reports ``E_LEDGER_EXISTS`` and
+``open_ledger`` ``E_LEDGER_FORMAT`` until an operator removes it.
 """
 from __future__ import annotations
 
@@ -92,9 +102,15 @@ class LedgerError(Exception):
 # helpers
 # --------------------------------------------------------------------------- #
 def _check_path(path: Any) -> str:
-    """``path`` must be an exact, non-empty ``str`` without NUL."""
+    """``path`` must be an exact, non-empty ``str`` without NUL that the file system can encode."""
     if type(path) is not str or not path or "\0" in path:
         raise LedgerError("E_LEDGER_PATH", "the ledger path must be a non-empty str without NUL")
+    try:
+        os.fsencode(path)
+    except UnicodeError as exc:
+        # A lone surrogate outside the escape range would otherwise surface as
+        # ``UnicodeEncodeError`` from ``os.lstat`` (review of attempt-002, F3).
+        raise LedgerError("E_LEDGER_PATH", "the ledger path cannot be encoded for the file system") from exc
     return path
 
 
@@ -114,11 +130,18 @@ def _connect(path: str) -> sqlite3.Connection:
     """Connect to the database at ``path``, read-write, never creating it.
 
     ``mode=rw`` makes SQLite refuse a path that is not there, so neither opening
-    nor creating can leave a new file behind.  The path is absolutised first and
+    nor creating can leave a new file behind.  The path is made absolute and
     then percent-encoded by ``Path.as_uri`` -- it may contain spaces.
+
+    ``Path.absolute`` only puts the working directory in front: unlike
+    ``os.path.abspath`` it keeps every ``..``, so SQLite resolves the path one
+    component at a time and follows a symbolic link before the ``..`` after it,
+    as the kernel does for ``os.lstat``, ``os.open`` and ``os.unlink``.  A path
+    collapsed as text could name another file than the one this module checked,
+    created or removes (review of attempt-002, F1).
     """
     try:
-        uri = Path(os.path.abspath(path)).as_uri() + "?mode=rw"
+        uri = Path(path).absolute().as_uri() + "?mode=rw"
         # ``check_same_thread=False``: one instance is written from several
         # threads, and every access to the connection happens under the
         # instance's own lock, which serializes them.
@@ -131,12 +154,16 @@ def _connect(path: str) -> sqlite3.Connection:
             raise LedgerError("E_LEDGER_OPEN", f"journal_mode={mode!r}")
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA fullfsync=ON")
-    except LedgerError:
-        db.close()
+    except BaseException as exc:
+        # Every way out closes the connection first, an interrupt included
+        # (review of attempt-002, F2).
+        try:
+            db.close()
+        except Exception:  # the failure at hand is the one to report
+            pass
+        if isinstance(exc, sqlite3.Error):
+            raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
         raise
-    except sqlite3.Error as exc:
-        db.close()
-        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
     return db
 
 
@@ -213,6 +240,10 @@ def _strict_loads(text: str) -> Any:
         raise LedgerError("E_LEDGER_REPLAY", "a command nested too deeply to parse") from exc
     except ValueError as exc:
         raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
+    except Exception as exc:
+        # ``MemoryError`` above all: the same failure in the replayed call is
+        # already ``E_LEDGER_REPLAY`` (review of attempt-002, F4).
+        raise LedgerError("E_LEDGER_REPLAY", f"the command could not be parsed: {type(exc).__name__}") from exc
 
 
 def _verify_chain(rows: list[tuple[Any, ...]]) -> tuple[list[str], str]:
@@ -538,14 +569,22 @@ def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
         raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
     try:
         status = os.fstat(handle)
-    except OSError as exc:
+    except BaseException as exc:
         # No identity to prove the file is ours, so it is left where it is.
-        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
-    finally:
-        os.close(handle)
+        try:
+            os.close(handle)
+        except OSError:
+            pass
+        if isinstance(exc, Exception):
+            raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
+        raise
     identity = (status.st_dev, status.st_ino)
     db: sqlite3.Connection | None = None
     try:
+        # From here on the identity is known, so every failure -- closing the
+        # creation descriptor included -- removes the file this call made
+        # (review of attempt-002, F5).
+        os.close(handle)
         db = _connect(location)
         db.execute("BEGIN IMMEDIATE")
         try:
@@ -559,8 +598,13 @@ def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
             raise
     except BaseException as exc:
         if db is not None:
-            db.close()
+            try:
+                db.close()
+            except Exception:  # the failure at hand is the one to report
+                pass
         _remove_created(location, identity)
+        if isinstance(exc, LedgerError):
+            raise
         if isinstance(exc, Exception):
             raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
         raise
