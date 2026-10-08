@@ -38,6 +38,8 @@ EVIDENCE, CANDIDATE = "e" * 64, "d" * 64
 OPERATOR, NOTE = "ops-1", "checked the process table and the worktree"
 #: The states that keep an operation of an older generation undecided.
 UNDECIDED = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING"}
+#: The stop reasons a request stopped by an unknown start alone carries.
+DEFAULT_REASONS = ["START_UNKNOWN"]
 
 
 class Key(str):
@@ -108,8 +110,8 @@ class ResumeCase(unittest.TestCase):
         arguments.update(changes)
         return scheduler.resolve_unknown(op, generation, **arguments)
 
-    def resume(self, scheduler, request="req-1", *, generation=1, expected_reason="START_UNKNOWN", **changes):
-        arguments = dict(expected_reason=expected_reason, operator=OPERATOR, note=NOTE)
+    def resume(self, scheduler, request="req-1", *, generation=1, expected_reasons=DEFAULT_REASONS, **changes):
+        arguments = dict(expected_reasons=expected_reasons, operator=OPERATOR, note=NOTE)
         arguments.update(changes)
         return scheduler.resume(request, generation, **arguments)
 
@@ -174,12 +176,13 @@ class AbandonedAccountingCase(ResumeCase):
         tokens = scheduler.snapshot("req-1")["tokens"]
         self.assertEqual((tokens["known"], tokens["held"], tokens["unknown_operations"]), (5, 35, 1))
         # An unknown usage keeps the request stopped, whatever the state.
-        self.code(scheduler, "E_RESUME_USAGE_UNKNOWN", lambda: self.resume(scheduler))
+        self.code(scheduler, "E_RESUME_USAGE_UNKNOWN",
+                  lambda: self.resume(scheduler, expected_reasons=["START_UNKNOWN", "USAGE_UNKNOWN"]))
         # The final amount releases the reservation, and only then may it resume.
         self.assertEqual(scheduler.observe(op, "tokens", "call-1", 2, 7, True, EVIDENCE), "APPLIED")
         tokens = scheduler.snapshot("req-1")["tokens"]
         self.assertEqual((tokens["known"], tokens["held"], tokens["unknown_operations"]), (7, 0, 0))
-        self.resume(scheduler)
+        self.resume(scheduler, expected_reasons=["START_UNKNOWN", "USAGE_UNKNOWN"])
         self.assertIsNone(scheduler._requests["req-1"].stopped)
 
     def test_an_abandoned_run_no_longer_holds_a_concurrency_slot(self):
@@ -328,10 +331,13 @@ class TwoRequestsCase(ResumeCase):
         again = self.claim(scheduler, "task-1", request="req-1", key="idem-req-1-again")
         self.assertEqual(scheduler.operation(again)["state"], "RESERVED")
         # Resuming it too is a separate decision, and its compare-and-swap names
-        # the reason the ledger recorded, not the one ``stop`` was called with.
+        # every reason the ledger recorded for it -- the unknown start *and* the
+        # operator stop that was stacked on it -- not just one of them.
         self.code(scheduler, "E_STOP_REASON_CHANGED",
-                  lambda: self.resume(scheduler, "req-2", expected_reason="OPERATOR_STOP"), request="req-2")
-        self.resume(scheduler, "req-2", expected_reason="START_UNKNOWN")
+                  lambda: self.resume(scheduler, "req-2", expected_reasons=["OPERATOR_STOP"]), request="req-2")
+        self.code(scheduler, "E_STOP_REASON_CHANGED",
+                  lambda: self.resume(scheduler, "req-2", expected_reasons=["START_UNKNOWN"]), request="req-2")
+        self.resume(scheduler, "req-2", expected_reasons=["START_UNKNOWN", "OPERATOR_STOP"])
         self.assertIsNone(scheduler._requests["req-2"].stopped)
 
 
@@ -342,7 +348,7 @@ class StopAgainCase(ResumeCase):
         scheduler = self.scheduler()
         op = self.reviewed(scheduler, "task-1")
         scheduler.stop("req-1")
-        self.resume(scheduler, expected_reason="OPERATOR_STOP")
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"])
         self.assertIsNone(scheduler._requests["req-1"].stopped)
         # A usage over the request cap stops it again, exactly as before.
         scheduler.settle(op, {"tokens": 600}, revision=2, correction=True)
@@ -350,12 +356,16 @@ class StopAgainCase(ResumeCase):
         event = scheduler.events[-1]
         self.assertEqual((event["type"], event["payload"]),
                          ("request.stop_observed", {"request_id": "req-1", "reason": "BUDGET_EXCEEDED"}))
+        # The operator stop the resume already cleared is gone from the list: a
+        # new list starts at the resume, and only the budget guard is in it.
+        self.assertEqual(scheduler.stop_reasons("req-1"), ("BUDGET_EXCEEDED",))
         self.code(scheduler, "E_STOP_REASON_CHANGED",
-                  lambda: self.resume(scheduler, expected_reason="OPERATOR_STOP"))
+                  lambda: self.resume(scheduler, expected_reasons=["OPERATOR_STOP"]))
         # No cap is raised: the recorded usage has to come back under it.
-        self.code(scheduler, "E_RESUME_BUDGET", lambda: self.resume(scheduler, expected_reason="BUDGET_EXCEEDED"))
+        self.code(scheduler, "E_RESUME_BUDGET",
+                  lambda: self.resume(scheduler, expected_reasons=["BUDGET_EXCEEDED"]))
         scheduler.settle(op, {"tokens": 5}, revision=3, correction=True)
-        self.resume(scheduler, expected_reason="BUDGET_EXCEEDED")
+        self.resume(scheduler, expected_reasons=["BUDGET_EXCEEDED"])
         self.assertIsNone(scheduler._requests["req-1"].stopped)
         again = self.claim(scheduler, "task-2", key="idem-task-2")
         self.assertEqual(scheduler.operation(again)["state"], "RESERVED")
@@ -365,32 +375,43 @@ class StopAgainCase(ResumeCase):
         self.reviewed(scheduler, "task-1")
         before = self.state_of(scheduler)
         self.refused(scheduler, "E_NOT_STOPPED",
-                     lambda: self.resume(scheduler, expected_reason="OPERATOR_STOP"))
+                     lambda: self.resume(scheduler, expected_reasons=["OPERATOR_STOP"]))
         self.assertEqual(self.state_of(scheduler), before)
 
     def test_resuming_an_already_resumed_request_changes_nothing(self):
         scheduler = self.scheduler()
         self.reviewed(scheduler, "task-1")
         scheduler.stop("req-1")
-        self.resume(scheduler, expected_reason="OPERATOR_STOP")
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"])
         before = self.state_of(scheduler)
         self.refused(scheduler, "E_NOT_STOPPED",
-                     lambda: self.resume(scheduler, expected_reason="OPERATOR_STOP"))
+                     lambda: self.resume(scheduler, expected_reasons=["OPERATOR_STOP"]))
         self.assertEqual(self.state_of(scheduler), before)
 
-    def test_the_stop_reason_is_compared_against_the_first_one_recorded(self):
+    def test_the_resume_names_every_stop_reason_recorded(self):
         scheduler = self.scheduler()
         op = self.start_unknown(scheduler)
         scheduler.settle(op, {"tokens": 7})
         scheduler.stop("req-1", "OPERATOR_STOP")
+        self.assertEqual(scheduler.stop_reasons("req-1"), ("START_UNKNOWN", "OPERATOR_STOP"))
         self.assertEqual(scheduler._requests["req-1"].stopped, "START_UNKNOWN",
                          "a later stop replaced the first reason")
-        self.code(scheduler, "E_STOP_REASON_CHANGED",
-                  lambda: self.resume(scheduler, expected_reason="OPERATOR_STOP"))
-        self.code(scheduler, "E_RESUME_UNKNOWN", lambda: self.resume(scheduler))
+        # Naming one of the two reasons is not enough, whichever one it is, and
+        # neither is naming them in another order: only the whole list, in the
+        # order the ledger recorded it, gets past the comparison.
+        for label, reasons in (("only the first reason", ["START_UNKNOWN"]),
+                               ("only the later reason", ["OPERATOR_STOP"]),
+                               ("the reasons in another order", ["OPERATOR_STOP", "START_UNKNOWN"])):
+            with self.subTest(case=label):
+                self.code(scheduler, "E_STOP_REASON_CHANGED",
+                          lambda: self.resume(scheduler, expected_reasons=reasons))
+        # Naming all of them moves the check on to the next precondition.
+        self.code(scheduler, "E_RESUME_UNKNOWN",
+                  lambda: self.resume(scheduler, expected_reasons=["START_UNKNOWN", "OPERATOR_STOP"]))
         self.resolve(scheduler, op, "ABANDONED")
-        self.resume(scheduler)
+        self.resume(scheduler, expected_reasons=["START_UNKNOWN", "OPERATOR_STOP"])
         self.assertIsNone(scheduler._requests["req-1"].stopped)
+        self.assertEqual(scheduler.stop_reasons("req-1"), ())
 
 
 class RefusedResolutionCase(ResumeCase):
@@ -509,12 +530,12 @@ class RefusedResumeCase(ResumeCase):
     """
 
     #: A legal resume of a request an operator stopped, and nothing else.
-    LEGAL = dict(request="req-1", generation=1, expected_reason="OPERATOR_STOP", operator=OPERATOR, note=NOTE)
+    LEGAL = dict(request="req-1", generation=1, expected_reasons=["OPERATOR_STOP"], operator=OPERATOR, note=NOTE)
 
     CASES = [
-        ("an expected reason that is not text", "E_STOP_REASON", dict(expected_reason=12)),
-        ("an expected reason that is not exact text", "E_STOP_REASON",
-         dict(expected_reason=Key("OPERATOR_STOP"))),
+        ("expected reasons that are not a list", "E_STOP_REASON", dict(expected_reasons=12)),
+        ("a reason that is not exact text", "E_STOP_REASON",
+         dict(expected_reasons=[Key("OPERATOR_STOP")])),
         ("an operator with a line break", "E_OPERATOR", dict(operator="ops\n1")),
         ("an operator that is not exact text", "E_OPERATOR", dict(operator=Key("ops-1"))),
         ("an operator that is too long", "E_OPERATOR", dict(operator="o" * 201)),
@@ -549,13 +570,13 @@ class RefusedResumeCase(ResumeCase):
             with self.subTest(shape=shape):
                 scheduler, reason = self.stopped(shape=shape)
                 self.assertEqual(scheduler._requests["req-1"].stopped, reason)
-                self.resume(scheduler, expected_reason=reason)
+                self.resume(scheduler, expected_reasons=[reason])
                 self.assertIsNone(scheduler._requests["req-1"].stopped)
                 event = scheduler.events[-1]
                 self.assertEqual((event["type"], event["operation_id"]),
                                  ("request.resumed", None))
-                self.assertEqual(set(event["payload"]), {"request_id", "previous_reason", "operator", "note"})
-                self.assertEqual(event["payload"]["previous_reason"], reason)
+                self.assertEqual(set(event["payload"]), {"request_id", "previous_reasons", "operator", "note"})
+                self.assertEqual(event["payload"]["previous_reasons"], [reason])
 
     def test_every_refused_resume_changes_nothing(self):
         for label, code, changes in self.CASES:
@@ -563,7 +584,7 @@ class RefusedResumeCase(ResumeCase):
                 # The legal baseline: the same request, the same call, nothing but
                 # the one value under test changed.
                 baseline, _ = self.stopped()
-                self.resume(baseline, expected_reason="OPERATOR_STOP")
+                self.resume(baseline, expected_reasons=["OPERATOR_STOP"])
                 self.assertIsNone(baseline._requests["req-1"].stopped)
                 scheduler = self.stopped()[0]
                 self.refused(scheduler, code,
@@ -574,7 +595,7 @@ class RefusedResumeCase(ResumeCase):
         for value in ("req-9", None, 42, ["req-1"], Key("req-1")):
             with self.subTest(request=repr(value)):
                 self.refused(scheduler, "E_REQUEST_UNKNOWN",
-                             lambda: scheduler.resume(value, 1, expected_reason=reason,
+                             lambda: scheduler.resume(value, 1, expected_reasons=[reason],
                                                       operator=OPERATOR, note=NOTE))
 
     def test_an_older_generation_undecided_operation_blocks_the_resume(self):
@@ -590,7 +611,7 @@ class RefusedResumeCase(ResumeCase):
                 self.assertEqual(scheduler.generation, 2)
                 self.code(scheduler, "E_RESUME_UNDECIDED",
                           lambda: self.resume(scheduler, generation=2,
-                                              expected_reason="RECOVERY_REQUIRED"))
+                                              expected_reasons=["RECOVERY_REQUIRED"]))
 
     def test_an_older_generation_that_was_decided_does_not_block_the_resume(self):
         for outcome, settle in (("NOT_STARTED", False), ("FINISHED", True), ("START_UNKNOWN", True)):
@@ -606,16 +627,16 @@ class RefusedResumeCase(ResumeCase):
                 if outcome == "START_UNKNOWN":
                     self.code(scheduler, "E_RESUME_UNKNOWN",
                               lambda: self.resume(scheduler, generation=2,
-                                                  expected_reason="RECOVERY_REQUIRED"))
+                                                  expected_reasons=["RECOVERY_REQUIRED"]))
                     self.resolve(scheduler, op, "ABANDONED", generation=2)
-                self.resume(scheduler, generation=2, expected_reason="RECOVERY_REQUIRED")
+                self.resume(scheduler, generation=2, expected_reasons=["RECOVERY_REQUIRED"])
                 self.assertIsNone(scheduler._requests["req-1"].stopped)
 
     def test_a_run_of_the_current_generation_does_not_block_the_resume(self):
         scheduler = self.scheduler()
         op = self.running(scheduler, "task-1")
         scheduler.stop("req-1")
-        self.resume(scheduler, expected_reason="OPERATOR_STOP")
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"])
         self.assertEqual(scheduler.operation(op)["state"], "RUNNING")
         scheduler.settle(op, {"tokens": 5})
         scheduler.finish(op, "owner-1", 1, CANDIDATE, True)
@@ -626,7 +647,7 @@ class RefusedResumeCase(ResumeCase):
         scheduler = self.scheduler()
         self.reviewed(scheduler, "task-1")
         scheduler.stop("req-1")
-        self.resume(scheduler, expected_reason="OPERATOR_STOP", operator="o" * 200, note="n" * 500)
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"], operator="o" * 200, note="n" * 500)
         payload = scheduler.events[-1]["payload"]
         self.assertEqual((payload["operator"], payload["note"]), ("o" * 200, "n" * 500))
 

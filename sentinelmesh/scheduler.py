@@ -304,6 +304,10 @@ class _Operation:
     usage: dict[str, _Usage] = field(default_factory=dict)
     #: The run descriptor recorded at handoff (``None`` when there is none).
     run: dict[str, Any] | None = None
+    #: Whether the ledger saw this run start -- ``mark_running``, the call that
+    #: emits ``run.started``.  A run that started cannot be decided as one that
+    #: never did, whatever state it is in now.
+    started: bool = False
 
 
 @dataclass
@@ -312,6 +316,9 @@ class _Request:
     caps: dict[str, int]
     max_concurrency: int
     stopped: str | None = None
+    #: Every stop reason since the last resume, in first-seen order, each once.
+    #: ``stopped`` stays the first of them; a resume clears both together.
+    stop_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -320,6 +327,19 @@ class _Task:
     max_attempts: int
     guard_version: int = 1
     fixture_eligible: bool = True
+
+
+def _record_stop_reason(root: _Request, reason: str) -> None:
+    """Remember one more reason this request is stopped, each reason once.
+
+    The list keeps the order the reasons first appeared in, so a resume can name
+    exactly what the ledger saw -- including the holds stacked on a request that
+    was already stopped, which is the point: a single resume must not clear a
+    later hold silently.  ``stopped`` is decided separately and stays the first
+    reason.
+    """
+    if reason not in root.stop_reasons:
+        root.stop_reasons.append(reason)
 
 
 LIVE = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN"}
@@ -783,6 +803,7 @@ class Scheduler:
             if op.state != "HANDOFF_ACCEPTED": raise ContractError("E_START_STATE")
             payload = self._encode_payload({} if identity is None else {"process_identity": identity})
             op.state = "RUNNING"
+            op.started = True
             self._emit(operation, "run.started", payload, encoded=True)
 
     def renew(self, operation: str, owner: str, generation: int, now: int, extension: int) -> None:
@@ -910,6 +931,9 @@ class Scheduler:
         if reason:
             root = self._requests[request]
             if root.stopped is None: root.stopped = reason
+            # The guard may fire on a request that is already stopped: the reason
+            # is still recorded, so a later resume has to name it too.
+            _record_stop_reason(root, reason)
             self._emit(None, "request.stop_observed", {"request_id": request, "reason": reason})
 
     def finish(self, operation: str, owner: str, generation: int, candidate_hash: str, cleanup_verified: bool) -> None:
@@ -946,7 +970,10 @@ class Scheduler:
             op = self._owned(operation, owner, generation)
             if op.state not in {"HANDOFF_ACCEPTED", "RUNNING"}: raise ContractError("E_UNKNOWN_STATE")
             payload = self._encode_payload({"reason": reason})
-            op.state = "START_UNKNOWN"; self._requests[op.request_id].stopped = self._requests[op.request_id].stopped or "START_UNKNOWN"
+            op.state = "START_UNKNOWN"
+            root = self._requests[op.request_id]
+            root.stopped = root.stopped or "START_UNKNOWN"
+            _record_stop_reason(root, "START_UNKNOWN")
             self._emit(operation, "scheduler.start_unknown", payload, encoded=True)
 
     def release_proven_unstarted(self, operation: str, owner: str, generation: int, *,
@@ -1005,7 +1032,10 @@ class Scheduler:
                 raise ContractError("E_RECOVERY_STATE")
             if self._requests[op.request_id].stopped is None:
                 raise ContractError("E_RECOVERY_NOT_STOPPED")
-            if outcome == "NOT_STARTED" and op.state == "RUNNING":
+            if outcome == "NOT_STARTED" and (op.state == "RUNNING" or op.started):
+                # A run the ledger saw start -- ``run.started`` -- is not one
+                # that can be decided as never having started, whatever state it
+                # reached afterwards.
                 raise ContractError("E_RECOVERY_CONFLICT")
             from_generation = op.generation
             if outcome == "NOT_STARTED":
@@ -1041,6 +1071,10 @@ class Scheduler:
         finished and its candidate goes to review (``FINISHED``, which requires a
         candidate and behaves like ``recover``'s outcome).  The scheduler records
         the operator, the evidence digest and the note; it does not verify them.
+        A run the ledger saw start (``run.started``) may not be decided as one
+        that never did, exactly as ``recover`` refuses it: ``NOT_STARTED`` on such
+        an operation is ``E_RESOLVE_CONFLICT``, because its unrecorded usage would
+        be taken as zero.
 
         Every input is validated -- in the order the contract fixes -- before
         anything is mutated, so a refused call leaves the ledger exactly as it
@@ -1073,6 +1107,10 @@ class Scheduler:
                 raise ContractError("E_OPERATION_UNKNOWN")
             if op.state != "START_UNKNOWN":
                 raise ContractError("E_RESOLVE_STATE")
+            # A run the ledger saw start cannot be decided as one that never
+            # did: its unrecorded usage would be taken as zero.
+            if resolution == "NOT_STARTED" and op.started:
+                raise ContractError("E_RESOLVE_CONFLICT")
             state = _RESOLVED_STATES[resolution]
             payload: dict[str, Any] = {"resolution": resolution, "state": state, "operator": operator,
                                        "evidence": evidence_hash, "note": note}
@@ -1102,6 +1140,29 @@ class Scheduler:
             op.state = "CANCELLED_NOT_STARTED"; self._release_resources(op)
             self._emit(operation, "scheduler.cancelled_before_handoff", {})
 
+    def stop_reasons(self, request: str) -> tuple[str, ...]:
+        """Every stop reason recorded since the last resume, in first-seen order.
+
+        A request can be stopped more than once without a resume in between -- an
+        operator's safety hold on a request the budget guard already stopped, a
+        rollover, an unknown start -- and ``stopped`` only ever names the first
+        of them.  This read gives the whole list, so an operator can see every
+        hold before naming it back in :meth:`resume`.  It is empty while the
+        request runs, records no event, touches no log and mutates nothing.
+        """
+        with self._lock:
+            # The type check comes before the dict lookup, exactly as in
+            # ``operation``: an unhashable request reports
+            # ``E_REQUEST_UNKNOWN`` instead of a lookup ``TypeError``, and a
+            # ``str`` subclass that merely compares equal to a stored id is not
+            # that id.
+            if type(request) is not str:
+                raise ContractError("E_REQUEST_UNKNOWN")
+            root = self._requests.get(request)
+            if root is None:
+                raise ContractError("E_REQUEST_UNKNOWN")
+            return tuple(root.stop_reasons)
+
     def stop(self, request: str, reason: str = "OPERATOR_STOP") -> None:
         if type(request) is not str:
             raise ContractError("E_REQUEST_UNKNOWN")
@@ -1111,20 +1172,27 @@ class Scheduler:
             if request not in self._requests: raise ContractError("E_REQUEST_UNKNOWN")
             payload = self._encode_payload({"request_id": request, "reason": reason})
             root = self._requests[request]; root.stopped = root.stopped or reason
+            _record_stop_reason(root, reason)
             self._emit(None, "request.stopped", payload, encoded=True)
 
-    def resume(self, request: str, generation: int, *, expected_reason: str, operator: str, note: str) -> None:
+    def resume(self, request: str, generation: int, *, expected_reasons: list[str], operator: str, note: str) -> None:
         """Re-open a stopped request once everything in it is decided.
 
-        A crash, an operator stop or the budget guard leaves the request stopped;
-        this is the only way back, and it is deliberately narrow.  The caller
-        names the generation and the stop reason it saw (a compare-and-swap on
-        the ledger's own state), and the request must hold no ``START_UNKNOWN``
-        operation, no operation an older generation left undecided in
-        ``RESERVED``, ``HANDOFF_ACCEPTED`` or ``RUNNING``, no unknown usage and no
-        exposure past its own cap or any of its tasks' caps.  A run of the
-        *current* generation is not an obstacle: what the operator stopped while
-        it was in flight may finish as usual.
+        A crash, an operator stop, the budget guard or an unknown start leaves
+        the request stopped; this is the only way back, and it is deliberately
+        narrow.  The caller names the generation and *every* stop reason the
+        ledger recorded since the last resume (a compare-and-swap on the ledger's
+        own state), and the request must hold no ``START_UNKNOWN`` operation, no
+        operation an older generation left undecided in ``RESERVED``,
+        ``HANDOFF_ACCEPTED`` or ``RUNNING``, no unknown usage and no exposure
+        past its own cap or any of its tasks' caps.  A run of the *current*
+        generation is not an obstacle: what the operator stopped while it was in
+        flight may finish as usual.
+
+        Naming every reason is what keeps a hold that was stacked on an already
+        stopped request -- an operator's safety pause above all -- from being
+        cleared by this one call: the list must equal
+        :meth:`stop_reasons` exactly, in the same order.
 
         All of that is checked -- in the order the contract fixes, the unknown
         usage of the request and of every task before the budget of both --
@@ -1136,8 +1204,17 @@ class Scheduler:
         """
         self._decision_text(operator, "E_OPERATOR", _MAX_OPERATOR)
         self._decision_text(note, "E_NOTE", _MAX_NOTE)
-        if type(expected_reason) is not str or not expected_reason:
+        # The list is copied before it is inspected: only the copy is checked and
+        # compared, so a caller mutating what it passed -- or a caller holding on
+        # to it while the call runs -- cannot change the comparison afterwards.
+        if type(expected_reasons) is not list or not expected_reasons:
             raise ContractError("E_STOP_REASON")
+        expected = list(expected_reasons)
+        named: set[str] = set()
+        for reason in expected:
+            if type(reason) is not str or not reason or reason in named:
+                raise ContractError("E_STOP_REASON")
+            named.add(reason)
         with self._lock:
             self._epoch(generation)
             if type(request) is not str:
@@ -1147,7 +1224,7 @@ class Scheduler:
                 raise ContractError("E_REQUEST_UNKNOWN")
             if root.stopped is None:
                 raise ContractError("E_NOT_STOPPED")
-            if root.stopped != expected_reason:
+            if expected != list(root.stop_reasons):
                 raise ContractError("E_STOP_REASON_CHANGED")
             if any(op.request_id == request and op.state == "START_UNKNOWN"
                    for op in self._operations.values()):
@@ -1167,9 +1244,10 @@ class Scheduler:
             for scope in scopes:
                 if any(row["exposure"] > row["limit"] for row in self._snapshot(request, scope).values()):
                     raise ContractError("E_RESUME_BUDGET")
-            payload = self._encode_payload({"request_id": request, "previous_reason": root.stopped,
+            payload = self._encode_payload({"request_id": request, "previous_reasons": list(root.stop_reasons),
                                             "operator": operator, "note": note})
             root.stopped = None
+            root.stop_reasons = []
             self._emit(None, "request.resumed", payload, encoded=True)
 
     def rollover(self) -> int:
@@ -1179,7 +1257,9 @@ class Scheduler:
             # (2**53-1 reached) leaves the ledger exactly as it was.
             payload = self._encode_payload({"generation": self._generation + 1})
             self._generation += 1
-            for root in self._requests.values(): root.stopped = root.stopped or "RECOVERY_REQUIRED"
+            for root in self._requests.values():
+                root.stopped = root.stopped or "RECOVERY_REQUIRED"
+                _record_stop_reason(root, "RECOVERY_REQUIRED")
             self._emit(None, "controller.fenced", payload, encoded=True)
             return self._generation
 

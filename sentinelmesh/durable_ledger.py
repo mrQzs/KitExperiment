@@ -451,6 +451,21 @@ class DurableScheduler:
             self._require_available()
             return self._scheduler.run_descriptor(operation)
 
+    def stop_reasons(self, request: str) -> tuple[str, ...]:
+        """Every stop reason recorded for a request since its last resume.
+
+        The reasons travel with the commands that recorded them (``stop``,
+        ``rollover``, ``unknown``, the usage observations that trip the budget
+        guard) and are replayed with them, so a reopened ledger reads back
+        exactly what the writer saw.  It is the list an operator has to name back
+        in ``resume``, and it is read from memory exactly as :meth:`operation`
+        is: an unavailable instance refuses it with ``E_LEDGER_UNAVAILABLE`` and
+        the log is never touched.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.stop_reasons(request)
+
     # -- lifecycle ---------------------------------------------------------- #
     def close(self) -> None:
         """Close the log; the instance refuses every call from here on."""
