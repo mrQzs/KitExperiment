@@ -67,12 +67,18 @@
 - P6：恢复只清空 `stopped`，发出 `request.resumed`（请求、先前的原因、运维名、说明）；尝试次数、用量、预留与历史事件都不动。之后的领取照常检查全部守卫。
 - P7：持久账本把 `resolve_unknown` 与 `resume` 追加在 `MUTATING_METHODS` 末尾。日志格式名仍是 v1：旧代码读到这两种命令会以 `E_LEDGER_REPLAY` 失败关闭，新代码照常读旧日志。durable-ledger 的 oracle 钉住了方法列表，由规划端在新合同的基线里一并更新。
 
+- 遗留（request-resume 复审，待后续合同）：
+  - M1：`stopped` 只记第一个原因。请求已经停止之后再 `stop()`（例如安全暂停），恢复时比对第一个原因照样成功，后来的暂停被一并清掉；预算、未知用量、`START_UNKNOWN` 与旧代际未定案由恢复自己的检查复核，只有运维显式的停止没有任何复核。
+  - L1：账本记得已经运行过（`run.started`）的操作，仍可判为 `NOT_STARTED`，未补记的用量按 0 计；`recover` 拒绝同样的转换（`E_RECOVERY_CONFLICT`）。
+  - I1：格式名仍是 v1，旧代码读到新命令报 `E_LEDGER_REPLAY: unknown method`，看起来像账本损坏；以后再加方法时考虑升格式名或单独的错误码。
+
 ## 7. 合同拆分
 
 一份合同 `request-resume`：
 - 调度器的两个方法与 `ABANDONED` 状态；
 - 持久账本的两个变更方法；
 - oracle 用真实进程演示完整流程：控制器崩溃、重启恢复、运维补记用量并裁定、复审、恢复请求、重新领取并运行到复审，中间重开一次账本。
+- 已集成：oracle `6d4bb29`、a001 `74b9e47`、规划端补全 `0419531`；全量 739 passed。
 
 ## 8. 不做
 
