@@ -265,6 +265,11 @@ class ResolveUnknownOracle(ResumeCase):
         self.refused(scheduler, "E_RESOLUTION",
                      lambda: self.resolve(scheduler, op, resolution="X", operator="", generation=0), op=op)
         self.refused(scheduler, "E_OPERATOR", lambda: self.resolve(scheduler, op, operator="", generation=0), op=op)
+        # Each adjacent pair at once (review of attempt-001, L2).
+        self.refused(scheduler, "E_OPERATOR", lambda: self.resolve(scheduler, op, operator="", note=""), op=op)
+        self.refused(scheduler, "E_EVIDENCE_HASH",
+                     lambda: self.resolve(scheduler, op, evidence_hash="E" * 64, candidate_hash=CANDIDATE), op=op)
+        self.refused(scheduler, "E_FENCED", lambda: self.resolve(scheduler, "op-" + "0" * 32, generation=0))
         self.refused(scheduler, "E_FENCED", lambda: self.resolve(scheduler, reserved, generation=0), op=reserved)
         self.refused(scheduler, "E_RESOLVE_STATE", lambda: self.resolve(scheduler, reserved), op=reserved)
 
@@ -380,6 +385,10 @@ class ResumeOracle(ResumeCase):
         self.refused(scheduler, "E_OPERATOR",
                      lambda: self.resume(scheduler, operator="", expected_reason="", generation=1))
         self.refused(scheduler, "E_STOP_REASON", lambda: self.resume(scheduler, expected_reason="", generation=1))
+        # Each adjacent pair at once (review of attempt-001, L2).
+        self.refused(scheduler, "E_OPERATOR", lambda: self.resume(scheduler, operator="", note="", generation=2))
+        self.refused(scheduler, "E_FENCED",
+                     lambda: scheduler.resume("req-9", 1, expected_reason="X", operator=OPERATOR, note=NOTE))
         self.refused(scheduler, "E_FENCED", lambda: self.resume(scheduler, expected_reason="X", generation=1))
         self.refused(scheduler, "E_STOP_REASON_CHANGED",
                      lambda: self.resume(scheduler, expected_reason="RECOVERY_REQUIRED", generation=2))
