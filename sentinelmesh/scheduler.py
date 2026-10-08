@@ -1207,9 +1207,13 @@ class Scheduler:
         # The list is copied before it is inspected: only the copy is checked and
         # compared, so a caller mutating what it passed -- or a caller holding on
         # to it while the call runs -- cannot change the comparison afterwards.
-        if type(expected_reasons) is not list or not expected_reasons:
+        if type(expected_reasons) is not list:
             raise ContractError("E_STOP_REASON")
         expected = list(expected_reasons)
+        # Emptiness is judged on the copy too, like everything else (review of
+        # attempt-001, L2).
+        if not expected:
+            raise ContractError("E_STOP_REASON")
         named: set[str] = set()
         for reason in expected:
             if type(reason) is not str or not reason or reason in named:

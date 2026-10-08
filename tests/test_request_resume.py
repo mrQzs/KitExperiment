@@ -39,7 +39,7 @@ OPERATOR, NOTE = "ops-1", "checked the process table and the worktree"
 #: The states that keep an operation of an older generation undecided.
 UNDECIDED = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING"}
 #: The stop reasons a request stopped by an unknown start alone carries.
-DEFAULT_REASONS = ["START_UNKNOWN"]
+DEFAULT_REASONS = ("START_UNKNOWN",)
 
 
 class Key(str):
@@ -110,7 +110,11 @@ class ResumeCase(unittest.TestCase):
         arguments.update(changes)
         return scheduler.resolve_unknown(op, generation, **arguments)
 
-    def resume(self, scheduler, request="req-1", *, generation=1, expected_reasons=DEFAULT_REASONS, **changes):
+    def resume(self, scheduler, request="req-1", *, generation=1, expected_reasons=None, **changes):
+        # A fresh list on every call: a shared default could carry one case's
+        # list into the next (review of attempt-001, L3).
+        if expected_reasons is None:
+            expected_reasons = list(DEFAULT_REASONS)
         arguments = dict(expected_reasons=expected_reasons, operator=OPERATOR, note=NOTE)
         arguments.update(changes)
         return scheduler.resume(request, generation, **arguments)
