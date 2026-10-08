@@ -24,6 +24,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Durable scheduling ledger (macOS) | `durable_ledger.py` | the in-memory Scheduler behind a SQLite command log (DELETE journal, `synchronous=FULL`, `fullfsync=ON`) linked by a SHA-256 chain: every successful mutating call, idempotent replays included, is appended before it returns, and opening replays the log to the same state, operation ids and events included. Real-process tests on macOS 15.7.9: every call that returned survives a SIGKILL of the writer; another process's rollover makes an older instance stale; damaged, re-chained, forged or foreign-format logs are refused with a ledger error and no leaked descriptor. An exception from the in-memory call other than a Scheduler refusal, a failed append and a stale head all invalidate the instance (fail closed); create is atomic (`O_EXCL`) and removes only the file it created; SQLite opens the file the kernel resolves. Power-loss durability not verified |
 | Restart recovery (macOS) | `restart_recovery.py`, `scheduler.py` (run descriptors), `durable_ledger.py` | every supervised handoff records its run descriptor (the invocation's fields, the evidence directory and the worktree), checked before anything changes and kept as a private copy that the durable ledger replays; `recover_after_restart` rolls the ledger over once, cancels claims that never reached a handoff and settles the handoffs the old controller never decided (HANDOFF_ACCEPTED, RUNNING) from their records with `recover_supervised_operation`; operations already decided, START_UNKNOWN above all, are left alone; a failure is reported per operation, while a ledger error or an interrupt stops the recovery; requests stay stopped for an operator. Real-process tests on macOS 15.7.9 SIGKILL a controller after the records, before the review and mid-run, and recover from the ledger it left (REVIEW_PENDING, REVIEW_PENDING, START_UNKNOWN), the result surviving a reopen. Recovery from records alone keeps the trust limits of `recover_supervised_operation` |
 | Operator resolution and request resume | `scheduler.py` (`resolve_unknown`, `resume`), `durable_ledger.py` | an operator resolves a START_UNKNOWN operation as NOT_STARTED, ABANDONED (process confirmed gone, result void, the task may be claimed again as a new attempt; its reservation stays held until its usage is complete) or FINISHED (into review with a candidate), and the operator's name, an evidence digest and a note are recorded, never verified; a stopped request resumes only for the current generation and every stop reason since the last resume, named in order (`stop_reasons` reads them, so a hold stacked on a stopped request cannot be cleared unnamed), with nothing START_UNKNOWN, nothing an older generation left undecided, no unknown usage and no exposure over the request's or any task's cap; attempts, usage and history are kept and no cap is raised. Real-process test on macOS 15.7.9: a controller killed mid-run, the restart recovery, the operator's usage, resolution and verdict, the resume, a reopen of the durable ledger, and the abandoned task run again to review. Every explicit `stop()` is a hold of its own (the same reason twice is named twice), while the automatic reasons count once. A run the ledger saw start, and any run handed to the supervisor (a run descriptor), can never be called unstarted by an operator, through `resolve_unknown` or `recover`, so a controller killed mid-run cannot have its run's usage taken as zero; an undecided supervised handoff is still decided from its records |
+| Operator CLI (`smctl ledger`) | `ledger_cli.py`, `cli.py`, `scheduler.py` (`request_ids`, `operation_usage`) | `status`, `stop`, `settle`, `resolve` and `resume` on a durable ledger: each command replays the ledger, makes at most one change at its current generation through the ledger's own methods and closes it; success is one UTF-8 JSON line on stdout, a ledger refusal is exit 3 with the ledger's code on stderr and leaves the file unchanged, an argument error is exit 2. `status` lists the stop reasons and the operations that need an operator (start unknown, undecided, usage unknown) and never writes; `resume` takes every stop reason by hand. Tested in process and through `python -m sentinelmesh.cli`, an ascii terminal included. A write while a controller holds the ledger makes that controller stale (fail closed) |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -34,7 +35,7 @@ The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
 is:
 
 ```text
-python -m pytest -q                 786 passed
+python -m pytest -q                 837 passed
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -212,6 +213,13 @@ The durable scheduling ledger is recorded in `.agent/design/durable-ledger.md`
   planner's own decision P13 ("recover unchanged") left `recover(NOT_STARTED)`
   as a second way to do exactly that on a decided supervised run; the planner
   closed it in `d26c986`.
+- `ledger-cli` passed (`.agent/design/ledger-cli.md`): the user kept Python
+  over TypeScript, chose hand-typed resume reasons, the fail-closed ledger for a
+  concurrent controller and five commands. The review found four low points --
+  `resume` reading the reasons first changed the error order, an empty `settle`
+  evidence was replaced by a derived digest, an output failure after a commit
+  looked like an argument error, and no test could see a missing close -- which
+  the planner completed in `2e303d0`.
 
 ## Explicitly not proven by this repository
 
