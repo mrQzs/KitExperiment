@@ -20,7 +20,9 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from sentinelmesh import durable_ledger
 from sentinelmesh.durable_ledger import (
     LEDGER_FORMAT,
     MUTATING_METHODS,
@@ -38,6 +40,11 @@ H1, H2, H3 = "1" * 64, "2" * 64, "3" * 64
 
 def digest_of(previous: str, command: str) -> str:
     return hashlib.sha256(previous.encode("ascii") + b"\n" + command.encode("utf-8")).hexdigest()
+
+
+def fd_count() -> int:
+    """How many descriptors this process holds (``/dev/fd`` on this platform)."""
+    return len(os.listdir("/dev/fd"))
 
 
 def rows_of(path):
@@ -335,6 +342,154 @@ class Lifecycle(DurableLedgerCase):
         self.assertEqual(reopened.seq, 3)
         self.assertEqual(len(rows_of(self.path)), 3)
         self.assertEqual(self.code_of(ContractError, reopened.snapshot, "req-1", "task-3"), "E_SCOPE_UNKNOWN")
+
+
+class WrongSignature(DurableLedgerCase):
+    def test_a_binding_refusal_leaves_the_instance_usable(self):
+        ledger = self.seeded()
+        op = self.claim(ledger, task="task-2", key="idem-3", resource="src/c.py")
+        self.assertEqual(ledger.seq, 4)
+        # Legal baseline: the ledger as written after one successful call.
+        before = (ledger.seq, ledger.events, rows_of(self.path))
+        refusals = (
+            ("too few arguments", lambda: ledger.finish(op, "owner-1")),
+            ("too many arguments", lambda: ledger.handoff(op, "owner-1", 1, 2, 3, 4)),
+            ("an unexpected keyword", lambda: ledger.settle(op, {}, tokens=1)),
+            ("an argument twice over", lambda: ledger.renew(op, "owner-1", 1, 5, now=9)),
+        )
+        for label, call in refusals:
+            with self.subTest(case=label):
+                with self.assertRaises(TypeError):
+                    call()
+        self.assertEqual((ledger.seq, ledger.events, rows_of(self.path)), before,
+                         "a binding refusal left a trace")
+        # The instance is still usable, and only the legal call was recorded.
+        ledger.seed_task("req-1", "task-4", CAPS)
+        self.assertEqual(ledger.seq, before[0] + 1)
+        self.assertEqual(len(rows_of(self.path)), before[0] + 1)
+        ledger.close()
+        reopened = open_ledger(self.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.seq, before[0] + 1)
+        self.assertEqual(reopened.operation(op)["state"], "RESERVED")
+
+
+class InMemoryFailure(DurableLedgerCase):
+    def test_an_error_inside_the_in_memory_call_invalidates_the_instance(self):
+        real_emit = Scheduler._emit
+        args = ("req-1", "task-1", 1, "idem-9", "owner-1", 1, 1, RESERVATION, ["src/a.py"])
+        for label, failure in (("an interrupt", KeyboardInterrupt), ("a memory error", MemoryError),
+                               ("a type error", TypeError)):
+            with self.subTest(case=label):
+                path = str(self.work / ("in-memory-%s.db" % failure.__name__))
+                ledger = create_ledger(path)
+                self.addCleanup(ledger.close)
+                ledger.seed_request("req-1", "repo-1", CAPS, concurrency=4)
+                for task in ("task-1", "task-2", "task-3"):
+                    ledger.seed_task("req-1", task, CAPS, max_attempts=5)
+                self.claim(ledger, task="task-3", key="idem-3", resource="src/c.py")
+                before = (ledger.seq, ledger.events)
+
+                def failing(scheduler, operation_id, event_type, payload, **kwargs):
+                    if event_type == "scheduler.claimed":
+                        raise failure("inside the claim")
+                    return real_emit(scheduler, operation_id, event_type, payload, **kwargs)
+
+                with mock.patch.object(Scheduler, "_emit", failing):
+                    with self.assertRaises(failure):
+                        ledger.claim(*args)
+                self.assertIs(Scheduler._emit, real_emit)
+                # The instance is gone: it refuses mutations and reads alike.
+                self.assertEqual(self.code_of(LedgerError, ledger.seed_task, "req-1", "task-4", CAPS),
+                                 "E_LEDGER_UNAVAILABLE")
+                self.assertEqual(self.code_of(LedgerError, ledger.snapshot, "req-1"), "E_LEDGER_UNAVAILABLE")
+                self.assertEqual(self.code_of(LedgerError, lambda: ledger.seq), "E_LEDGER_UNAVAILABLE")
+                self.assertEqual(self.code_of(LedgerError, lambda: ledger.events), "E_LEDGER_UNAVAILABLE")
+                ledger.close()
+                # The failed call is nowhere in the log, and the log still opens.
+                self.assertEqual(len(rows_of(path)), before[0])
+                reopened = open_ledger(path)
+                self.addCleanup(reopened.close)
+                self.assertEqual(reopened.seq, before[0])
+                self.assertEqual(reopened.snapshot("req-1")["dispatches"]["held"], 1)
+                # The failed claim is not in the log: the same call is fresh here.
+                fresh = reopened.claim(*args)
+                self.assertEqual(fresh["replayed"], False)
+                recorded = [event["operation_id"] for event in reopened.events[:len(before[1])]]
+                self.assertNotIn(fresh["operation_id"], recorded)
+
+
+class OpenPragmaFailure(DurableLedgerCase):
+    def test_a_failed_pragma_closes_the_connection(self):
+        ledger = self.seeded()
+        ledger.close()
+        before = fd_count()
+        real_connect = sqlite3.connect
+
+        class FailingPragma:
+            """A real connection whose ``synchronous`` pragma fails."""
+
+            def __init__(self, real):
+                self.real = real
+
+            def execute(self, sql, *args):
+                if sql.strip().upper().startswith("PRAGMA SYNCHRONOUS"):
+                    raise sqlite3.OperationalError("no such pragma")
+                return self.real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+        def connect(path, *args, **kwargs):
+            return FailingPragma(real_connect(path, *args, **kwargs))
+
+        with mock.patch.object(durable_ledger.sqlite3, "connect", connect):
+            for _ in range(3):
+                self.assertEqual(self.code_of(LedgerError, open_ledger, self.path), "E_LEDGER_OPEN")
+        self.assertEqual(fd_count(), before, "a refused open left its connection open")
+        # The legal baseline: the very same ledger opens through a real connection.
+        self.assertEqual(open_ledger(self.path).seq, 3)
+
+
+class CreateRefusals(DurableLedgerCase):
+    def test_a_create_that_cannot_make_its_file_leaves_nothing_behind(self):
+        # Legal baseline: the same call in a writable directory creates a ledger.
+        good = str(self.work / "good.db")
+        ledger = create_ledger(good)
+        ledger.seed_request("req-1", "repo-1", CAPS)
+        ledger.close()
+        self.assertEqual(open_ledger(good).seq, 1)
+        # One thing changes: the directory refuses to give out a new file.
+        locked = self.work / "locked"
+        locked.mkdir()
+        os.chmod(locked, stat.S_IRUSR | stat.S_IXUSR)
+        self.addCleanup(os.chmod, locked, 0o700)
+        target = str(locked / "ledger.db")
+        self.assertEqual(self.code_of(LedgerError, create_ledger, target), "E_LEDGER_OPEN")
+        self.assertEqual(os.listdir(locked), [], "a refused create left a file behind")
+        self.assertFalse(Path(target).exists())
+
+
+class SpacesInThePath(DurableLedgerCase):
+    def test_a_ledger_in_a_path_with_spaces(self):
+        directory = self.work / "a directory with spaces"
+        directory.mkdir()
+        target = str(directory / "my ledger.db")
+        with create_ledger(target) as ledger:
+            ledger.seed_request("req-1", "repo-1", CAPS, concurrency=2)
+            ledger.seed_task("req-1", "task-1", CAPS)
+            op = self.claim(ledger)
+            self.assertEqual(ledger.seq, 3)
+            self.assertEqual(meta_of(target), {"format": LEDGER_FORMAT, "generation": "1"})
+        with open_ledger(target) as reopened:
+            self.assertEqual(reopened.seq, 3)
+            self.assertEqual(reopened.operation(op)["state"], "RESERVED")
+            self.assertEqual(reopened.generation, 1)
+            reopened.seed_task("req-1", "task-2", CAPS)
+            self.assertEqual(reopened.seq, 4)
+        with open_ledger(target) as again:
+            self.assertEqual(again.seq, 4)
+            self.assertEqual(len(rows_of(target)), 4)
 
 
 if __name__ == "__main__":

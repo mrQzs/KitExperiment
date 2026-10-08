@@ -20,6 +20,28 @@ for the same job.  Durability across a power loss was not measured and stays
 ``NOT_RUN``; no snapshots, no compaction, no multi-host locking and no ledger on
 a network file system are claimed.  Run descriptors and the recovery driver are
 a separate contract.
+
+Version 2 of the contract tightened three of those rules, and the module follows
+it:
+
+* an exception from the in-memory call other than the Scheduler's own
+  ``ContractError`` -- an interrupt above all -- makes the instance unusable,
+  because the in-memory state may already have changed while the log has
+  nothing: appending later commands on top of it would write a log that no
+  longer replays.  A wrong signature is refused before anything runs and leaves
+  the instance usable;
+* opening never creates a file (the connection is a ``mode=rw`` file URI), and
+  every step after a successful connection -- pragmas, reading, the chain
+  check, the replay Scheduler, the replay itself -- closes that connection
+  before reporting.  Opening reports ledger errors only: a stored generation
+  the Scheduler refuses is a damaged ledger (``E_LEDGER_FORMAT``), and so is a
+  command that breaks the parser or the replay in any way (``E_LEDGER_REPLAY``).
+  A recorded claim must carry an operation id of the shape the Scheduler
+  generates, and no two claims may share one unless the second is the
+  idempotent replay of the first;
+* creating makes its file atomically with ``O_CREAT | O_EXCL`` and, on any later
+  failure, removes the path only while it still is the file this call created
+  (same device and inode) -- never a file somebody else put there.
 """
 from __future__ import annotations
 
@@ -30,6 +52,7 @@ import os
 import re
 import sqlite3
 import threading
+from pathlib import Path
 from typing import Any, Mapping
 
 from .scheduler import ContractError, Scheduler
@@ -43,6 +66,13 @@ MUTATING_METHODS = ("seed_request", "seed_task", "claim", "handoff", "mark_runni
 
 #: A generation written as canonical decimal text: no sign, no leading zeros.
 _CANONICAL_INTEGER = re.compile(r"\A(?:0|[1-9][0-9]*)\Z")
+
+#: The longest canonical generation text there can be: 2^53-1 has sixteen digits.
+_MAX_GENERATION_DIGITS = 16
+
+#: The one shape ``Scheduler._new_operation_id`` produces: a recorded claim with
+#: anything else is a forged log.
+_OPERATION_ID = re.compile(r"\Aop-[0-9a-f]{32}\Z")
 
 _SCHEMA = ("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
            "CREATE TABLE commands(seq INTEGER PRIMARY KEY, command TEXT NOT NULL, "
@@ -81,13 +111,19 @@ def _rollback(db: sqlite3.Connection) -> None:
 
 
 def _connect(path: str) -> sqlite3.Connection:
-    """Open ``path`` and apply the conservative durability pragmas."""
+    """Connect to the database at ``path``, read-write, never creating it.
+
+    ``mode=rw`` makes SQLite refuse a path that is not there, so neither opening
+    nor creating can leave a new file behind.  The path is absolutised first and
+    then percent-encoded by ``Path.as_uri`` -- it may contain spaces.
+    """
     try:
+        uri = Path(os.path.abspath(path)).as_uri() + "?mode=rw"
         # ``check_same_thread=False``: one instance is written from several
         # threads, and every access to the connection happens under the
         # instance's own lock, which serializes them.
-        db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
-    except sqlite3.Error as exc:
+        db = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
+    except (sqlite3.Error, OSError, ValueError) as exc:
         raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
     try:
         mode = db.execute("PRAGMA journal_mode=DELETE").fetchone()
@@ -108,13 +144,22 @@ def _missing_table(exc: sqlite3.Error) -> bool:
     return "no such table" in str(exc)
 
 
-def _discard(path: str) -> None:
-    """Remove a file this call created and never wrote to."""
+def _remove_created(path: str, identity: tuple[int, int]) -> None:
+    """Remove the file this call created -- only while it still is that file.
+
+    The size is not consulted: a file this call created is empty, but so is a
+    file somebody else put on the path in the meantime, and only the device and
+    inode tell the two apart.
+    """
     try:
-        if os.lstat(path).st_size == 0:
-            os.unlink(path)
+        current = os.lstat(path)
     except OSError:
-        pass
+        return
+    if (current.st_dev, current.st_ino) == identity:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def _jsonable(value: Any) -> Any:
@@ -162,6 +207,10 @@ def _strict_loads(text: str) -> Any:
         return json.loads(text, object_pairs_hook=object_hook, parse_constant=constant)
     except LedgerError:
         raise
+    except RecursionError as exc:
+        # A command nested past what the parser can walk is a damaged ledger,
+        # not a crash of the reader.
+        raise LedgerError("E_LEDGER_REPLAY", "a command nested too deeply to parse") from exc
     except ValueError as exc:
         raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
 
@@ -183,6 +232,14 @@ def _verify_chain(rows: list[tuple[Any, ...]]) -> tuple[list[str], str]:
         previous = digest
         commands.append(command)
     return commands, previous
+
+
+def _stored_generation(meta: Mapping[str, str]) -> int:
+    """The stored generation as an ``int``, or a damaged ledger."""
+    text = meta["generation"]
+    if _CANONICAL_INTEGER.fullmatch(text) is None or len(text) > _MAX_GENERATION_DIGITS:
+        raise LedgerError("E_LEDGER_FORMAT", f"generation {text!r} is not a decimal integer")
+    return int(text)
 
 
 def _read_meta(db: sqlite3.Connection) -> dict[str, str]:
@@ -226,7 +283,23 @@ class _ReplayScheduler(Scheduler):
         return recorded
 
 
-def _replay(scheduler: _ReplayScheduler, command_text: str) -> None:
+def _check_claim(result: Any, operation_id: str, arguments: Mapping[str, Any],
+                  used: dict[str, tuple[Any, Any]]) -> None:
+    """A recorded claim must have replayed to exactly that operation."""
+    if type(result) is not dict or result.get("operation_id") != operation_id:
+        raise LedgerError("E_LEDGER_REPLAY", "the claim replayed to another operation")
+    # Two claims may carry the same operation id only when the second one is the
+    # idempotent replay of the first: the same request and the same key.
+    identity = (arguments.get("request"), arguments.get("key"))
+    previous = used.get(operation_id)
+    if previous is None:
+        used[operation_id] = identity
+    elif previous != identity:
+        raise LedgerError("E_LEDGER_REPLAY", f"two claims recorded with the operation id {operation_id}")
+
+
+def _replay(scheduler: _ReplayScheduler, command_text: str,
+            used: dict[str, tuple[Any, Any]]) -> None:
     """Apply one logged command; anything unexpected refuses the whole ledger."""
     command = _strict_loads(command_text)
     if type(command) is not dict:
@@ -244,17 +317,19 @@ def _replay(scheduler: _ReplayScheduler, command_text: str) -> None:
     if type(arguments) is not dict:
         raise LedgerError("E_LEDGER_REPLAY", "arguments that are not an object")
     operation_id = command.get("operation_id")
-    if method == "claim" and type(operation_id) is not str:
-        raise LedgerError("E_LEDGER_REPLAY", "a claim without a text operation_id")
+    if method == "claim" and (type(operation_id) is not str or _OPERATION_ID.fullmatch(operation_id) is None):
+        raise LedgerError("E_LEDGER_REPLAY", "a recorded operation id the Scheduler would not generate")
     scheduler._recorded_operation_id = operation_id
     try:
         result = getattr(scheduler, method)(**arguments)
-    except (ContractError, TypeError) as exc:
+        if method == "claim":
+            _check_claim(result, operation_id, arguments, used)
+    except LedgerError:
+        raise
+    except Exception as exc:  # a refusal, a broken parser, anything else
         raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
     finally:
         scheduler._recorded_operation_id = None
-    if method == "claim" and result["operation_id"] != operation_id:
-        raise LedgerError("E_LEDGER_REPLAY", "the claim replayed to another operation")
 
 
 # --------------------------------------------------------------------------- #
@@ -269,6 +344,13 @@ class DurableScheduler:
     head means another instance moved the log on and this one is stale.  Any
     failure of the append invalidates the instance -- it refuses mutations and
     reads alike -- so the caller has to reopen (replay) the ledger.
+
+    An exception from the in-memory call invalidates the instance the same way,
+    unless it is the Scheduler's own ``ContractError``: a refusal leaves the
+    ledger alone, while anything else (an interrupt above all) may have changed
+    the in-memory state already, and a log that does not know about it would no
+    longer replay.  A wrong signature is refused before the call and leaves the
+    instance usable.
     """
 
     def __init__(self, path: str, scheduler: Scheduler, db: sqlite3.Connection, seq: int, last_sha: str):
@@ -336,7 +418,7 @@ class DurableScheduler:
         if db is not None:
             try:
                 db.close()
-            except sqlite3.Error:
+            except Exception:  # the instance is gone either way
                 pass
 
     def _apply(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -348,9 +430,18 @@ class DurableScheduler:
             # parameter, defaults included, by name.
             bound = inspect.signature(target).bind(*args, **kwargs)
             bound.apply_defaults()
-            # In-memory first: a rejected call raises here, records nothing and
-            # leaves the instance usable.
-            result = target(*args, **kwargs)
+            # In-memory first: a rejection by the Scheduler raises here, records
+            # nothing and leaves the instance usable.  Anything else -- an
+            # interrupt above all -- may already have changed the in-memory state
+            # while the log has nothing, so the instance is invalidated and the
+            # exception is passed on as it is.
+            try:
+                result = target(*args, **kwargs)
+            except ContractError:
+                raise
+            except BaseException:
+                self._invalidate()
+                raise
             try:
                 raw = _encode_command(name, bound.arguments, result)
                 self._append(raw)
@@ -418,7 +509,14 @@ del _name
 # opening and creating
 # --------------------------------------------------------------------------- #
 def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
-    """Create a new ledger at ``path``; refuse a path that already has anything."""
+    """Create a new ledger at ``path``; refuse a path that already has anything.
+
+    The file itself is created atomically with ``O_CREAT | O_EXCL``, so a path
+    another process got to first is refused instead of taken over.  Should
+    anything fail after that, the path is removed only while it still is the file
+    this call created -- same device and inode -- and the error is
+    ``E_LEDGER_OPEN``.
+    """
     location = _check_path(path)
     # The in-memory ledger comes first: a refused generation raises its own
     # ``ContractError`` and leaves no file behind.
@@ -431,8 +529,24 @@ def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
         raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
     else:
         raise LedgerError("E_LEDGER_EXISTS", location)
-    db = _connect(location)
+    # The atomic creation: this call either makes the file itself or refuses.
     try:
+        handle = os.open(location, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise LedgerError("E_LEDGER_EXISTS", location) from exc
+    except OSError as exc:
+        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
+    try:
+        status = os.fstat(handle)
+    except OSError as exc:
+        # No identity to prove the file is ours, so it is left where it is.
+        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
+    finally:
+        os.close(handle)
+    identity = (status.st_dev, status.st_ino)
+    db: sqlite3.Connection | None = None
+    try:
+        db = _connect(location)
         db.execute("BEGIN IMMEDIATE")
         try:
             for statement in _SCHEMA:
@@ -443,21 +557,24 @@ def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
         except BaseException:
             _rollback(db)
             raise
-    except sqlite3.Error as exc:
-        db.close()
-        _discard(location)
-        if "already exists" in str(exc):
-            raise LedgerError("E_LEDGER_EXISTS", location) from exc
-        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
-    except BaseException:
-        db.close()
-        _discard(location)
+    except BaseException as exc:
+        if db is not None:
+            db.close()
+        _remove_created(location, identity)
+        if isinstance(exc, Exception):
+            raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
         raise
     return DurableScheduler(location, scheduler, db, 0, "")
 
 
 def open_ledger(path: str) -> DurableScheduler:
-    """Replay the ledger at ``path``; never create one, never repair one."""
+    """Replay the ledger at ``path``; never create one, never repair one.
+
+    The connection is a read-write file URI, so a path that is not there is
+    refused instead of created.  Every step after it -- the pragmas, the read,
+    the chain check, the replay Scheduler and the replay itself -- closes the
+    connection before reporting, and reports a ledger error only.
+    """
     location = _check_path(path)
     try:
         os.lstat(location)
@@ -467,26 +584,32 @@ def open_ledger(path: str) -> DurableScheduler:
         raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
     db = _connect(location)
     try:
-        db.execute("BEGIN")
         try:
+            db.execute("BEGIN")
             meta = _read_meta(db)
             rows = db.execute("SELECT seq, command, sha256, previous FROM commands ORDER BY seq").fetchall()
         except sqlite3.Error as exc:
-            _rollback(db)
             if _missing_table(exc):
                 raise LedgerError("E_LEDGER_FORMAT", "the commands table is missing") from exc
             raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
-        except BaseException:
+        finally:
             _rollback(db)
-            raise
-        _rollback(db)
+        generation = _stored_generation(meta)
+        try:
+            scheduler = _ReplayScheduler(generation=generation)
+        except ContractError as exc:
+            # A stored generation the Scheduler refuses is a damaged ledger.
+            raise LedgerError("E_LEDGER_FORMAT", str(exc)) from exc
+        commands, last_sha = _verify_chain(rows)
+        used: dict[str, tuple[Any, Any]] = {}
+        for command_text in commands:
+            _replay(scheduler, command_text, used)
     except BaseException:
-        db.close()
+        try:
+            db.close()
+        except Exception:  # the ledger error at hand is the one to report
+            pass
         raise
-    commands, last_sha = _verify_chain(rows)
-    scheduler = _ReplayScheduler(generation=int(meta["generation"]))
-    for command_text in commands:
-        _replay(scheduler, command_text)
     return DurableScheduler(location, scheduler, db, len(commands), last_sha)
 
 
