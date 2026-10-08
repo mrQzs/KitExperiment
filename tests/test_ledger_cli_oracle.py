@@ -25,8 +25,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from sentinelmesh import cli
+from sentinelmesh import cli, ledger_cli
 from sentinelmesh.durable_ledger import LedgerError, create_ledger, open_ledger
 from sentinelmesh.scheduler import ContractError, Scheduler
 
@@ -238,6 +239,31 @@ class RefusalOracle(CliCase):
 
 
 class ClosingOracle(CliCase):
+    def test_every_instance_a_command_opens_is_closed(self):
+        # Planner completion after the review of attempt-001 (L4): CPython frees
+        # an instance nobody holds, so counting descriptors cannot see a missing
+        # close; the opened instances are kept here instead.
+        ops = self.crashed()
+        opened = []
+        real = ledger_cli.open_ledger
+
+        def tracking(path):
+            ledger = real(path)
+            opened.append(ledger)
+            return ledger
+
+        with mock.patch.object(ledger_cli, "open_ledger", tracking):
+            self.ok("ledger", "status", self.path)
+            self.ok("ledger", "stop", self.path, "--request", "req-1", "--reason", "SECURITY_HOLD")
+            self.refused("E_RESOLVE_CONFLICT", "ledger", "resolve", self.path, "--operation", ops["unknown"],
+                         "--resolution", "NOT_STARTED", "--operator", OPERATOR, "--evidence", EVIDENCE,
+                         "--note", NOTE)
+        self.assertEqual(len(opened), 3)
+        for ledger in opened:
+            with self.assertRaises(LedgerError) as ctx:
+                ledger.request_ids()
+            self.assertEqual(ctx.exception.code, "E_LEDGER_UNAVAILABLE", "a command left its ledger open")
+
     def test_every_command_closes_the_ledger(self):
         ops = self.crashed()
         fd_dir = "/dev/fd" if os.path.isdir("/dev/fd") else "/proc/self/fd"
@@ -251,6 +277,52 @@ class ClosingOracle(CliCase):
                          "--note", NOTE)
             self.refused("E_LEDGER_MISSING", "ledger", "status", str(self.work / "missing.db"))
         self.assertEqual(len(os.listdir(fd_dir)), before, "a command left the ledger open")
+
+
+class CompletionOracle(CliCase):
+    """Planner completion after the review of attempt-001 (L1, L2, L3, L4)."""
+
+    def test_a_non_final_amount_is_still_unknown_usage(self):
+        ledger = create_ledger(self.path)
+        ledger.seed_request("req-1", "repo-1", CAPS, concurrency=4)
+        ledger.seed_task("req-1", "task-1", CAPS)
+        op = ledger.claim("req-1", "task-1", 1, "idem-task-1", "owner-1", 1, 1, RESERVATION,
+                          ["src/task-1.py"])["operation_id"]
+        ledger.handoff(op, "owner-1", 1)
+        ledger.mark_running(op, "owner-1", 1)
+        ledger.observe(op, "tokens", "call-1", 1, 5, False, EVIDENCE)
+        ledger.finish(op, "owner-1", 1, CANDIDATE, True)
+        ledger.close()
+        attention = self.ok("ledger", "status", self.path)["requests"][0]["attention"]
+        self.assertEqual([(entry["operation_id"], entry["reasons"]) for entry in attention], [(op, ["usage_unknown"])])
+        self.assertIs(attention[0]["usage"]["tokens"]["final"], False)
+
+    def test_the_resume_reports_what_the_ledger_reports_first(self):
+        self.crashed()
+        self.refused("E_NOTE", "ledger", "resume", self.path, "--request", "req-9", "--reason", "X",
+                     "--operator", OPERATOR, "--note", "a\nb")
+        self.refused("E_OPERATOR", "ledger", "resume", self.path, "--request", "req-9", "--reason", "X",
+                     "--operator", "", "--note", NOTE)
+
+    def test_an_empty_evidence_is_refused_not_derived(self):
+        ops = self.crashed()
+        self.refused("E_OBSERVATION_SHAPE", "ledger", "settle", self.path, "--operation", ops["unknown"],
+                     "--dimension", "tokens", "--amount", 9, "--evidence", "")
+        with open_ledger(self.path) as ledger:
+            self.assertNotIn("tokens", ledger.operation_usage(ops["unknown"]))
+
+    def test_an_ascii_terminal_does_not_fail_a_committed_command(self):
+        ledger = create_ledger(self.path)
+        ledger.seed_request("req-1", "repo-1", CAPS, concurrency=4)
+        ledger.close()
+        env = dict(os.environ, PYTHONIOENCODING="ascii")
+        done = subprocess.run([sys.executable, "-m", "sentinelmesh.cli", "ledger", "stop", self.path,
+                               "--request", "req-1", "--reason", "安全暂停"],
+                              cwd=str(REPO_ROOT), capture_output=True, env=env, timeout=120)
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual(json.loads(done.stdout.decode("utf-8"))["stop_reasons"], ["安全暂停"])
+        with open_ledger(self.path) as reopened:
+            self.assertEqual(reopened.stop_reasons("req-1"), ("安全暂停",))
 
 
 class ReadMethodsOracle(CliCase):

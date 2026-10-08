@@ -40,15 +40,36 @@ _UNDECIDED = frozenset({"RESERVED", "HANDOFF_ACCEPTED", "RUNNING"})
 _RESOLUTIONS = tuple(sorted(RESOLUTIONS))
 
 
+def _write_line(stream: Any, payload: Any) -> None:
+    """One line of canonical JSON, written as UTF-8 whatever the terminal's encoding.
+
+    ``ensure_ascii=False`` keeps non-ASCII text as it was written.  Writing the
+    UTF-8 bytes to the stream's buffer means a terminal that cannot represent
+    them (``PYTHONIOENCODING=ascii``) no longer turns a command that already
+    committed into an ``error:`` exit after the fact -- an operator retrying a
+    "failed" ``stop`` would add a second hold (review of attempt-001, L3).  A lone
+    surrogate (an argument decoded from invalid UTF-8) is written as its JSON
+    escape, so the line still parses.  A stream without a byte buffer (an
+    in-process ``StringIO``) gets the text.
+    """
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+    buffer = getattr(stream, "buffer", None)
+    if buffer is None:
+        stream.write(line)
+        return
+    stream.flush()
+    buffer.write(line.encode("utf-8", "backslashreplace"))
+    buffer.flush()
+
+
 def _emit(payload: Any) -> None:
     """One line of canonical JSON on stdout, non-ASCII left as it was written."""
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    _write_line(sys.stdout, payload)
 
 
 def _refuse(exc: ContractError | LedgerError) -> int:
     """One line of JSON on stderr with the ledger's own code and detail."""
-    print(json.dumps({"error": exc.code, "detail": exc.detail}, ensure_ascii=False, sort_keys=True),
-          file=sys.stderr)
+    _write_line(sys.stderr, {"error": exc.code, "detail": exc.detail})
     return 3
 
 
@@ -172,6 +193,11 @@ def cmd_settle(args: argparse.Namespace) -> int:
     escape hatch for lowering an amount that was already recorded.
     """
     def work(ledger: Any) -> dict[str, Any]:
+        if not args.evidence:
+            # The scheduler takes an empty hash as "not given" and derives one
+            # from the operation, the dimension and the amount; an operator's
+            # entry must carry real evidence (review of attempt-001, L2).
+            raise ContractError("E_OBSERVATION_SHAPE", "the evidence hash is empty")
         result = ledger.settle(args.operation, args.dimension, call_key=None, revision=args.revision,
                                amount=args.amount, final=True, evidence_hash=args.evidence,
                                correction=args.correction)
@@ -202,10 +228,13 @@ def cmd_resume(args: argparse.Namespace) -> int:
     given, one ``--reason`` per hold.
     """
     def work(ledger: Any) -> dict[str, Any]:
-        previous = list(ledger.stop_reasons(args.request))
-        ledger.resume(args.request, ledger.generation, expected_reasons=list(args.reason),
+        reasons = list(args.reason)
+        ledger.resume(args.request, ledger.generation, expected_reasons=reasons,
                       operator=args.operator, note=args.note)
-        return {"command": "resume", "request_id": args.request, "previous_reasons": previous}
+        # A resume succeeds only when the reasons named equal the ledger's list,
+        # so they are the previous reasons; reading the list first would only
+        # change which error a faulty call reports (review of attempt-001, L1).
+        return {"command": "resume", "request_id": args.request, "previous_reasons": reasons}
     return _with_ledger(args, work)
 
 

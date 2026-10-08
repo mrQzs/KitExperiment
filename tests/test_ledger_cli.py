@@ -468,8 +468,9 @@ class CommandGroupCase(LedgerCliCase):
                          "--dimension", "tokens", "--amount", 1, "--evidence", EVIDENCE)
         self.ok("ledger", "resolve", self.path, "--operation", ops["unknown"], "--resolution",
                 "ABANDONED", "--operator", OPERATOR, "--evidence", EVIDENCE, "--note", NOTE)
-        # A command that left the instance open would keep a descriptor on the
-        # log, and the ledger could not be reopened for writing.
+        # The ledger can still be written afterwards.  (An instance left open
+        # would not prevent that in DELETE journal mode; that every command
+        # closes its instance is pinned by the oracle, which keeps each one.)
         with open_ledger(self.path) as ledger:
             ledger.stop("req-1", "OPERATOR_STOP")
 
