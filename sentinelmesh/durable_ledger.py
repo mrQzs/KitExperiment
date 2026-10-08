@@ -426,6 +426,31 @@ class DurableScheduler:
             self._require_available()
             return self._scheduler.operation(operation)
 
+    def operation_ids(self) -> tuple[str, ...]:
+        """Every operation id the replayed ledger knows, in claim order.
+
+        The read is served from the in-memory ``Scheduler`` exactly as
+        :meth:`operation` is: an unavailable instance refuses it with
+        ``E_LEDGER_UNAVAILABLE``, and the log is never touched.  This is the
+        list a restarted controller walks to find the operations it has to
+        decide, and it is the order the log replays in, not a sorted one.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.operation_ids()
+
+    def run_descriptor(self, operation: str) -> dict[str, Any] | None:
+        """The run descriptor the ledger recorded for one operation, or ``None``.
+
+        The descriptor travels with the ``handoff`` command, so it is replayed
+        with everything else and read back unchanged after a reopen.  Like every
+        other read it is served from memory and an unavailable instance refuses
+        it with ``E_LEDGER_UNAVAILABLE``.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.run_descriptor(operation)
+
     # -- lifecycle ---------------------------------------------------------- #
     def close(self) -> None:
         """Close the log; the instance refuses every call from here on."""

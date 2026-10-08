@@ -8,6 +8,7 @@ unknown usage) without pretending to start external processes.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import sha256
 import heapq
@@ -17,7 +18,7 @@ import threading
 import uuid
 from typing import Any, Iterable, Mapping
 
-from .runtime import ProcessIdentity, RuntimeErrorCode
+from .runtime import InvocationSpec, ProcessIdentity, RuntimeErrorCode, _runtime_text
 
 _MAX_SAFE_INTEGER = 2**53 - 1
 _IDENTITY_RE = re.compile(r"[a-z][a-z0-9._:-]{0,127}\Z")
@@ -301,6 +302,8 @@ class _Operation:
     resource_keys: tuple[str, ...]
     candidate_hash: str | None = None
     usage: dict[str, _Usage] = field(default_factory=dict)
+    #: The run descriptor recorded at handoff (``None`` when there is none).
+    run: dict[str, Any] | None = None
 
 
 @dataclass
@@ -331,6 +334,12 @@ UNKNOWN_REASONS = frozenset({"START_UNKNOWN", "CLEANUP_UNCONFIRMED"})
 RECOVERY_OUTCOMES = frozenset({"NOT_STARTED", "START_UNKNOWN", "FINISHED"})
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTITY_FIELDS = frozenset({"pid", "boot_id", "executable_sha256", "worktree_id"})
+# The run descriptor ``Scheduler.handoff`` records for a supervised run: the
+# invocation's own fields, the evidence directory and the worktree, and nothing
+# else.  A restarted controller needs exactly this much to take the operation
+# over from the records on disk.
+_RUN_FIELDS = frozenset({"spec", "evidence_dir", "worktree_id"})
+_SPEC_FIELDS = frozenset({"request_id", "run_id", "command", "cwd", "environment_sha256", "timeout_seconds"})
 
 
 class Scheduler:
@@ -485,6 +494,91 @@ class Scheduler:
                     "task_id": op.task_id, "state": op.state, "owner": op.owner,
                     "generation": op.generation, "reservation": dict(op.reservation)}
 
+    def operation_ids(self) -> tuple[str, ...]:
+        """Every operation id this ledger knows, in the order they were claimed.
+
+        The order is the claim order -- the one the durable command log replays
+        in -- and deliberately not a sorted one: a recovery driver walks the
+        operations in the order the controller that is gone created them, and
+        that is the order the ledger reproduces after a reopen.  Reading is never
+        fenced, records no event and mutates nothing.
+        """
+        with self._lock:
+            return tuple(self._operations)
+
+    def run_descriptor(self, operation: str) -> dict[str, Any] | None:
+        """The run descriptor recorded at this operation's handoff, as a deep copy.
+
+        ``None`` means the operation was handed off without a descriptor (or was
+        never handed off): the ledger knows nothing about that run, and a
+        restart must not guess.  The copy is deep, so a caller mutating what it
+        reads back cannot change what the ledger keeps -- the same rule the write
+        side applies to what it is given.  Reading is never fenced, records no
+        event and mutates nothing.
+        """
+        with self._lock:
+            # The type check comes before the dict lookup, exactly as in
+            # ``operation``: an unhashable id reports ``E_OPERATION_UNKNOWN``
+            # instead of a lookup ``TypeError``, and a ``str`` subclass that
+            # merely compares equal to a stored id is not that id.
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            op = self._operations.get(operation)
+            if op is None:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            return None if op.run is None else deepcopy(op.run)
+
+    @staticmethod
+    def _run_descriptor(run: Any, operation: _Operation) -> dict[str, Any]:
+        """Validate a run descriptor and return the copy the ledger keeps.
+
+        Every layer is copied before it is inspected, so only the copy is checked
+        and only the copy is stored: a caller that keeps a reference to what it
+        passed (or mutates it concurrently) cannot change the descriptor
+        afterwards.  The descriptor must describe *this* operation -- its
+        ``run_id`` is the operation id and its ``request_id`` the request the
+        operation belongs to -- and every text field must survive the runtime's
+        rules, because the descriptor is encoded into the durable log: a value
+        that cannot be encoded (a control character, a lone surrogate) would fail
+        the append after the in-memory ledger had already moved.
+        """
+        if type(run) is not dict:
+            raise ContractError("E_RUN_DESCRIPTOR")
+        copy = dict(run)
+        if set(copy) != _RUN_FIELDS or any(type(key) is not str for key in copy):
+            raise ContractError("E_RUN_DESCRIPTOR")
+        if type(copy["spec"]) is not dict:
+            raise ContractError("E_RUN_DESCRIPTOR")
+        spec = dict(copy["spec"])
+        if set(spec) != _SPEC_FIELDS or any(type(key) is not str for key in spec):
+            raise ContractError("E_RUN_DESCRIPTOR")
+        if type(spec["command"]) is not list or any(type(part) is not str for part in spec["command"]):
+            raise ContractError("E_RUN_DESCRIPTOR")
+        for name in ("request_id", "run_id", "cwd", "environment_sha256"):
+            if type(spec[name]) is not str:
+                raise ContractError("E_RUN_DESCRIPTOR")
+        if type(spec["timeout_seconds"]) is not int:
+            raise ContractError("E_RUN_DESCRIPTOR")
+        if spec["run_id"] != operation.operation_id or spec["request_id"] != operation.request_id:
+            raise ContractError("E_RUN_DESCRIPTOR")
+        for name in ("evidence_dir", "worktree_id"):
+            try:
+                _runtime_text(copy[name], "E_RUNTIME_DESCRIPTOR", name)
+            except RuntimeErrorCode as exc:
+                raise ContractError("E_RUN_DESCRIPTOR", exc.code) from exc
+        try:
+            # The runtime's own validation, on the copy: the specification a
+            # restart rebuilds has to be constructible from what is stored.
+            InvocationSpec(spec["request_id"], spec["run_id"], tuple(spec["command"]), spec["cwd"],
+                           spec["environment_sha256"], spec["timeout_seconds"])
+        except RuntimeErrorCode as exc:
+            raise ContractError("E_RUN_DESCRIPTOR", exc.code) from exc
+        return {"spec": {"request_id": spec["request_id"], "run_id": spec["run_id"],
+                         "command": list(spec["command"]), "cwd": spec["cwd"],
+                         "environment_sha256": spec["environment_sha256"],
+                         "timeout_seconds": spec["timeout_seconds"]},
+                "evidence_dir": copy["evidence_dir"], "worktree_id": copy["worktree_id"]}
+
     def _epoch(self, generation: int) -> None:
         # ``1.0`` equals ``1``, ``True`` equals ``1`` and an ``int`` subclass is
         # equal to its base value, so equality alone would let a foreign
@@ -579,7 +673,18 @@ class Scheduler:
     # Explicit name for callers that model claim as a reservation operation.
     reserve = claim
 
-    def handoff(self, operation: str, owner: str, generation: int, now: int = 0) -> None:
+    def handoff(self, operation: str, owner: str, generation: int, now: int = 0, *, run: Any = None) -> None:
+        """Accept the dispatch of a reserved operation, optionally recording its run.
+
+        ``run`` is the run descriptor of the supervised run this handoff starts:
+        the invocation's fields, the evidence directory and the worktree.  It is
+        checked after every guard the handoff already had -- ownership, state,
+        lease, stopped request, guard and budget -- and before anything is
+        recorded, so a descriptor the runtime refuses leaves the operation
+        RESERVED, emits no event and stores nothing.  ``run=None`` (the default)
+        records no descriptor at all: a handoff nobody described is one a
+        restart cannot recover from evidence.
+        """
         exact_int(now)
         with self._lock:
             op = self._owned(operation, owner, generation)
@@ -591,9 +696,16 @@ class Scheduler:
                 snap = self._snapshot(op.request_id, scope)
                 if any(v["unknown_operations"] or v["exposure"] > v["limit"] for v in snap.values()):
                     raise ContractError("E_BUDGET_GUARD")
+            # The descriptor is text that will be encoded into the durable log
+            # and into every event payload that carries it, so it is checked
+            # here -- after the guards, before the first mutation -- rather than
+            # at append time, where a refusal would already have changed the
+            # in-memory ledger and invalidated the instance.
+            descriptor = None if run is None else self._run_descriptor(run, op)
             payload = self._encode_payload({"generation": generation})
             dispatch_evidence = digest({"fixture": "local-handoff", "operation": operation})
             op.state = "HANDOFF_ACCEPTED"
+            op.run = descriptor
             # Dispatch is a local, non-model metric.  Record it exactly once at
             # handoff so a completed operation does not retain an artificial
             # reservation or become ``usage_unknown`` for the dispatches

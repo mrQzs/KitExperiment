@@ -204,6 +204,21 @@ def _checked_hook(before_finish: Any) -> None:
         raise RuntimeErrorCode("E_RUNTIME_INVOCATION", "before_finish must be callable")
 
 
+def _run_descriptor(spec: InvocationSpec, evidence_dir: str, worktree_id: str) -> dict[str, Any]:
+    """The descriptor the ledger records for the handoff of this run.
+
+    It is exactly what a restarted controller needs to take the operation over
+    from its records: the specification's own fields, the evidence directory and
+    the worktree, and nothing the caller could change afterwards.  ``command``
+    becomes a list because the descriptor crosses a JSON boundary in the durable
+    command log.
+    """
+    return {"spec": {"request_id": spec.request_id, "run_id": spec.run_id, "command": list(spec.command),
+                     "cwd": spec.cwd, "environment_sha256": spec.environment_sha256,
+                     "timeout_seconds": spec.timeout_seconds},
+            "evidence_dir": evidence_dir, "worktree_id": worktree_id}
+
+
 def _checked_operation(scheduler: Any, spec: InvocationSpec, operation_id: str) -> None:
     """Refuse a specification that belongs to another operation's request.
 
@@ -425,7 +440,8 @@ def run_supervised_operation(
     # The handoff's guards (owner, generation, stopped request, budget) are
     # re-checked here and their errors are the scheduler's to raise: a refused
     # handoff starts nothing and leaves no record.
-    scheduler.handoff(operation_id, owner, generation, now)
+    scheduler.handoff(operation_id, owner, generation, now,
+                      run=_run_descriptor(spec, evidence_dir, worktree_id))
     error: Optional[str] = None
     run: Any = None
     try:
