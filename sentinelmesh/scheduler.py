@@ -559,6 +559,52 @@ class Scheduler:
         with self._lock:
             return tuple(self._operations)
 
+    def request_ids(self) -> tuple[str, ...]:
+        """Every request id this ledger knows, in the order they were seeded.
+
+        The order is the seeding order -- the one the durable command log replays
+        in -- and deliberately not a sorted one, so a caller walking the requests
+        sees them the way the controller that is gone created them and the way a
+        reopened ledger reproduces them.  A request id is the only handle the
+        reads need: :meth:`snapshot`, :meth:`stop_reasons`, :meth:`stop` and
+        :meth:`resume` all take one, and without this list a caller had to derive
+        the ids out of the event log.  Reading is never fenced, records no event
+        and mutates nothing.
+        """
+        with self._lock:
+            return tuple(self._requests)
+
+    def operation_usage(self, operation: str) -> dict[str, dict[str, Any]]:
+        """Every usage dimension recorded for one operation, as a fresh copy.
+
+        The mapping is ``{dimension: {"call_key", "revision", "amount",
+        "final", "evidence_hash"}}`` and holds exactly what the observations of
+        that operation recorded -- including the dispatch the handoff recorded on
+        its own -- with an ``amount`` of ``None`` for a dimension whose amount is
+        still unknown.  It is what an operator needs to see *which* dimension of
+        *which* operation is incomplete: :meth:`snapshot` counts the operations
+        with unknown usage but does not name them, and the event log would have to
+        be walked to find out.
+
+        Both levels are copied, so a caller changing what it reads back cannot
+        change what the ledger keeps -- the same rule the write side applies to
+        what it is given.  The type check comes before the dict lookup, exactly as
+        in :meth:`operation`: an unhashable id reports ``E_OPERATION_UNKNOWN``
+        instead of a lookup ``TypeError``, and a ``str`` subclass that merely
+        compares equal to a stored id is not that id.  Reading is never fenced,
+        records no event and mutates nothing.
+        """
+        with self._lock:
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            op = self._operations.get(operation)
+            if op is None:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            return {dimension: {"call_key": usage.call_key, "revision": usage.revision,
+                                "amount": usage.amount, "final": usage.final,
+                                "evidence_hash": usage.evidence_hash}
+                    for dimension, usage in op.usage.items()}
+
     def run_descriptor(self, operation: str) -> dict[str, Any] | None:
         """The run descriptor recorded at this operation's handoff, as a deep copy.
 

@@ -13,6 +13,7 @@ from .plugins import PluginManifest, resolve_plugins
 from .baseline import capture_baseline
 from .planner import ContractIR, render_contract_ir
 from .workflows import builtin_workflow, lock_for_workflow
+from . import ledger_cli
 
 
 def cmd_validate_config(args: argparse.Namespace) -> int:
@@ -101,6 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--markdown", required=True)
     p.add_argument("--json", required=True)
     p.set_defaults(func=cmd_contract_render)
+    # The operator entry point for a durable ledger; it registers its own
+    # command group and its own handlers on the same parser.
+    ledger_cli.register(sub)
     return parser
 
 

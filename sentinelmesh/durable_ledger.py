@@ -439,6 +439,34 @@ class DurableScheduler:
             self._require_available()
             return self._scheduler.operation_ids()
 
+    def request_ids(self) -> tuple[str, ...]:
+        """Every request id the replayed ledger knows, in seeding order.
+
+        Served from the in-memory ``Scheduler`` exactly as :meth:`operation` is:
+        an unavailable instance refuses it with ``E_LEDGER_UNAVAILABLE`` and the
+        log is never touched.  A command that has to name a request -- a stop, a
+        resume, a budget snapshot -- needs the ids, and they were only derivable
+        from the event log before.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.request_ids()
+
+    def operation_usage(self, operation: str) -> dict[str, dict[str, Any]]:
+        """The usage one operation has recorded, dimension by dimension.
+
+        The observations travel with the commands that recorded them (``observe``,
+        ``settle``, the dispatch a ``handoff`` records on its own), so a reopened
+        ledger reads back exactly what the writer saw.  It is what tells an
+        operator which dimension of an operation is still unknown, which
+        :meth:`snapshot` only counts.  Like every other read it is served from
+        memory and an unavailable instance refuses it with
+        ``E_LEDGER_UNAVAILABLE``; the log is never touched.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.operation_usage(operation)
+
     def run_descriptor(self, operation: str) -> dict[str, Any] | None:
         """The run descriptor the ledger recorded for one operation, or ``None``.
 
