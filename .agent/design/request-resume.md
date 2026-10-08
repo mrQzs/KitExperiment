@@ -112,3 +112,16 @@ request-resume 复审的 M1、L1 交回用户，用户的决定（均选推荐�
 - 遗留（resume-holds 复审，待用户决定）：
   - M：桥接要等运行结束、记录写完才调用 `mark_running`，`started` 因此登记得太晚。控制器在运行中途死掉时，账本只见过 `HANDOFF_ACCEPTED`，重启恢复判为 `START_UNKNOWN` 之后，运维仍能判 `NOT_STARTED`，`recover(NOT_STARTED)` 也一样，tokens 归零。
   - L1：同一个原因文字只记一次（P8），两次 `stop("req-1", "OPERATOR_STOP")` 合并成一项，一次恢复就把两次暂停一起清掉；`stop()` 的默认原因就是 `OPERATOR_STOP`。
+
+## 10. 再后续：受监督的运行与每一次暂停（2026-10-09）
+
+resume-holds 复审留下的两处覆盖面缺口交回用户，用户的决定（均选推荐项）：
+1. **受监督的运行一律不许运维判未启动**：交给过受监督运行（交接时记有运行描述）的操作，`resolve_unknown` 只能给 `ABANDONED` 或 `FINISHED`；放弃时用量要显式补记，哪怕是 0。能证明未启动的情况，桥接（`release_proven_unstarted`）与重启恢复（两份记录都为空）已经按记录自动判定了。
+2. **运维的每次暂停单独记**：显式调用 `stop()` 的每一次都单列一项，同名的恢复时就点名两次；预算、换代、未知启动这些自动原因仍只记一次。
+
+规划端的决定：
+- P13：`resolve_unknown` 的冲突条件扩展为“结论是 `NOT_STARTED`，而操作开始过，或者记有运行描述”，仍报 `E_RESOLVE_CONFLICT`，检查位置不变。`recover` 不改：它是按记录接管的路径，重启恢复靠它把两份记录都为空的交接判为未启动。
+- P14：`stop()` 每次都把原因追加进停止原因列表，不去重；`rollover`、`unknown` 与 `_enforce` 只在列表里还没有这个原因时追加。`stopped` 仍是第一个原因。
+- P15：`resume` 的 `expected_reasons` 不再要求互不重复，只要求是不空的精确 `list`、元素是非空精确 `str`；比对仍是按顺序完全相等。resume-holds 的 oracle 里“同一原因只记一次”“列表里有重复报 `E_STOP_REASON`”两处由规划端在新基线里改掉。
+
+合同：`explicit-holds`，在 resume-holds 之后。
