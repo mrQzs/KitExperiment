@@ -323,15 +323,29 @@ class _Task:
 
 
 LIVE = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN"}
-UNRESOLVED = {"START_UNKNOWN", "REVIEW_PENDING", "ACCEPTED", "REJECTED"}
+UNRESOLVED = {"START_UNKNOWN", "REVIEW_PENDING", "ACCEPTED", "REJECTED", "ABANDONED"}
 # Terminal state for a handoff that is *proven* not to have started.  It is
 # neither live nor unresolved: the operation is closed, but its attempt and its
 # already-observed usage still count.
 NOT_STARTED = "NOT_STARTED"
+# Terminal state an operator gives a ``START_UNKNOWN`` operation whose process is
+# confirmed gone: the result is void and the task may be claimed again as a new
+# attempt, but the usage is still accounted for exactly as a rejection is --
+# incomplete usage keeps its reservation and stays unknown, and nothing is
+# taken as zero.
+ABANDONED = "ABANDONED"
+# Resolutions accepted by ``Scheduler.resolve_unknown``; ``FINISHED`` is the one
+# that goes to review, with a candidate, exactly as ``recover``'s outcome.
+RESOLUTIONS = frozenset({"NOT_STARTED", "ABANDONED", "FINISHED"})
+# The state each resolution leaves the operation in.
+_RESOLVED_STATES = {"NOT_STARTED": NOT_STARTED, "ABANDONED": ABANDONED, "FINISHED": "REVIEW_PENDING"}
 # Reasons accepted by ``Scheduler.unknown``; the value is part of the event.
 UNKNOWN_REASONS = frozenset({"START_UNKNOWN", "CLEANUP_UNCONFIRMED"})
 # Outcomes accepted by ``Scheduler.recover`` (evidence of a fenced run).
 RECOVERY_OUTCOMES = frozenset({"NOT_STARTED", "START_UNKNOWN", "FINISHED"})
+# Longest operator name and note an operator decision may carry.
+_MAX_OPERATOR = 200
+_MAX_NOTE = 500
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTITY_FIELDS = frozenset({"pid", "boot_id", "executable_sha256", "worktree_id"})
 # The run descriptor ``Scheduler.handoff`` records for a supervised run: the
@@ -593,6 +607,24 @@ class Scheduler:
         # generation is accepted.
         if type(generation) is not int or generation != self._generation:
             raise ContractError("E_FENCED")
+
+    @staticmethod
+    def _decision_text(value: Any, code: str, limit: int) -> str:
+        """Validate an operator name or a note *before* anything is mutated.
+
+        Both are exact ``str`` within ``limit`` characters and must survive the
+        runtime's text rules, because they travel into the event payload and --
+        through the durable ledger -- into a command that has to be encodable.
+        A lone surrogate is refused here rather than at append time, where the
+        in-memory ledger would already have moved.  The scheduler records what
+        the operator wrote; it does not judge it.
+        """
+        if type(value) is not str or len(value) > limit:
+            raise ContractError(code)
+        try:
+            return _runtime_text(value, code, "operator text")
+        except RuntimeErrorCode as exc:
+            raise ContractError(code, exc.message) from exc
 
     def _owned(self, operation: str, owner: str, generation: int) -> _Operation:
         # Generation, operation, owner: an unhashable operation id must not reach
@@ -999,6 +1031,60 @@ class Scheduler:
                 self._release_resources(op)
             self._emit(operation, "scheduler.recovered", payload, encoded=True)
 
+    def resolve_unknown(self, operation: str, generation: int, *, resolution: str, operator: str,
+                        evidence_hash: str, note: str, candidate_hash: str | None = None) -> None:
+        """Decide an operation the controller could not classify, from evidence.
+
+        An operator looked at a ``START_UNKNOWN`` run and gives one of three
+        verdicts: it never started (``NOT_STARTED``), it is abandoned because the
+        process is confirmed gone and the result is void (``ABANDONED``), or it
+        finished and its candidate goes to review (``FINISHED``, which requires a
+        candidate and behaves like ``recover``'s outcome).  The scheduler records
+        the operator, the evidence digest and the note; it does not verify them.
+
+        Every input is validated -- in the order the contract fixes -- before
+        anything is mutated, so a refused call leaves the ledger exactly as it
+        was.  All three verdicts release the operation's resource holds, because
+        the process is either proven absent or finished; the owner, the
+        generation, the usage and the reservations are untouched, and so is the
+        request's stop: a resolution never resumes a request, it only makes one
+        resumable.  An abandoned operation is a terminal state that still counts
+        its usage, so its reservation is held until that usage is complete.
+        """
+        if type(resolution) is not str or resolution not in RESOLUTIONS:
+            raise ContractError("E_RESOLUTION")
+        if type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
+            raise ContractError("E_EVIDENCE_HASH")
+        if resolution == "FINISHED":
+            if type(candidate_hash) is not str or not _HEX64.fullmatch(candidate_hash):
+                raise ContractError("E_CLEANUP_OR_CANDIDATE")
+        elif candidate_hash is not None:
+            raise ContractError("E_CLEANUP_OR_CANDIDATE")
+        self._decision_text(operator, "E_OPERATOR", _MAX_OPERATOR)
+        self._decision_text(note, "E_NOTE", _MAX_NOTE)
+        with self._lock:
+            # The generation first: an older controller may not decide a run it
+            # no longer owns, whatever the operation is.
+            self._epoch(generation)
+            if type(operation) is not str:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            op = self._operations.get(operation)
+            if op is None:
+                raise ContractError("E_OPERATION_UNKNOWN")
+            if op.state != "START_UNKNOWN":
+                raise ContractError("E_RESOLVE_STATE")
+            state = _RESOLVED_STATES[resolution]
+            payload: dict[str, Any] = {"resolution": resolution, "state": state, "operator": operator,
+                                       "evidence": evidence_hash, "note": note}
+            if resolution == "FINISHED":
+                payload["candidate"] = candidate_hash
+            payload = self._encode_payload(payload)
+            op.state = state
+            if resolution == "FINISHED":
+                op.candidate_hash = candidate_hash
+            self._release_resources(op)
+            self._emit(operation, "scheduler.unknown_resolved", payload, encoded=True)
+
     def _release_resources(self, op: _Operation) -> None:
         root = self._requests[op.request_id]
         for key in op.resource_keys:
@@ -1026,6 +1112,65 @@ class Scheduler:
             payload = self._encode_payload({"request_id": request, "reason": reason})
             root = self._requests[request]; root.stopped = root.stopped or reason
             self._emit(None, "request.stopped", payload, encoded=True)
+
+    def resume(self, request: str, generation: int, *, expected_reason: str, operator: str, note: str) -> None:
+        """Re-open a stopped request once everything in it is decided.
+
+        A crash, an operator stop or the budget guard leaves the request stopped;
+        this is the only way back, and it is deliberately narrow.  The caller
+        names the generation and the stop reason it saw (a compare-and-swap on
+        the ledger's own state), and the request must hold no ``START_UNKNOWN``
+        operation, no operation an older generation left undecided in
+        ``RESERVED``, ``HANDOFF_ACCEPTED`` or ``RUNNING``, no unknown usage and no
+        exposure past its own cap or any of its tasks' caps.  A run of the
+        *current* generation is not an obstacle: what the operator stopped while
+        it was in flight may finish as usual.
+
+        All of that is checked -- in the order the contract fixes, the unknown
+        usage of the request and of every task before the budget of both --
+        before anything is mutated.  The resume itself only clears the stop: the
+        attempts, the usage, the reservations and the recorded history are left
+        exactly as they were, and no cap is raised, so a request that went over
+        budget has to be brought back under it (a corrected or newly recorded
+        usage, a released reservation) before it can resume.
+        """
+        self._decision_text(operator, "E_OPERATOR", _MAX_OPERATOR)
+        self._decision_text(note, "E_NOTE", _MAX_NOTE)
+        if type(expected_reason) is not str or not expected_reason:
+            raise ContractError("E_STOP_REASON")
+        with self._lock:
+            self._epoch(generation)
+            if type(request) is not str:
+                raise ContractError("E_REQUEST_UNKNOWN")
+            root = self._requests.get(request)
+            if root is None:
+                raise ContractError("E_REQUEST_UNKNOWN")
+            if root.stopped is None:
+                raise ContractError("E_NOT_STOPPED")
+            if root.stopped != expected_reason:
+                raise ContractError("E_STOP_REASON_CHANGED")
+            if any(op.request_id == request and op.state == "START_UNKNOWN"
+                   for op in self._operations.values()):
+                raise ContractError("E_RESUME_UNKNOWN")
+            if any(op.request_id == request and op.generation < self._generation
+                   and op.state in {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING"}
+                   for op in self._operations.values()):
+                raise ContractError("E_RESUME_UNDECIDED")
+            scopes: list[str | None] = [None]
+            scopes += [task for name, task in self._tasks if name == request]
+            # The unknown usage of the request and of each of its tasks first:
+            # an unknown amount cannot be judged against a cap, so reporting the
+            # cap first would hide it.
+            for scope in scopes:
+                if any(row["unknown_operations"] for row in self._snapshot(request, scope).values()):
+                    raise ContractError("E_RESUME_USAGE_UNKNOWN")
+            for scope in scopes:
+                if any(row["exposure"] > row["limit"] for row in self._snapshot(request, scope).values()):
+                    raise ContractError("E_RESUME_BUDGET")
+            payload = self._encode_payload({"request_id": request, "previous_reason": root.stopped,
+                                            "operator": operator, "note": note})
+            root.stopped = None
+            self._emit(None, "request.resumed", payload, encoded=True)
 
     def rollover(self) -> int:
         with self._lock:
