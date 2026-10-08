@@ -505,6 +505,11 @@ class CrashToResumeOracle(ResumeCase):
         # The operator looks at the run, enters what it cost and abandons it,
         # and gives the earlier run its verdict.
         ledger.settle(ops["crashed"], {"tokens": 9})
+        # The bridge recorded a run descriptor: an operator may not call the run
+        # unstarted, whatever the records say (section 10, decision 1).
+        with self.assertRaises(ContractError) as ctx:
+            self.resolve(ledger, ops["crashed"], "NOT_STARTED", generation=2)
+        self.assertEqual(ctx.exception.code, "E_RESOLVE_CONFLICT")
         self.resolve(ledger, ops["crashed"], "ABANDONED", generation=2)
         ledger.fixture_verdict(ops["reviewed"], "c" * 64, True, EVIDENCE)
         self.resume(ledger, generation=2, expected_reasons=["RECOVERY_REQUIRED"])

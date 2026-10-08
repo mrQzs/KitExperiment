@@ -13,10 +13,12 @@ its unrecorded usage taken as zero.  The user decided (2026-10-08):
 * an operation the ledger saw running (``run.started``) cannot be resolved
   ``NOT_STARTED`` -- only ``ABANDONED`` or ``FINISHED``.
 
-Planner decisions P8-P12: the reasons are kept in first-seen order, each once,
-by every stop (``stop``, ``rollover``, ``unknown``, the budget guard); the
-first stays in ``stopped``; ``mark_running`` marks the operation started, and
-``recover`` refuses ``NOT_STARTED`` for it as well.
+Planner decisions P8-P12: the reasons are kept in first-seen order by every
+stop (``stop``, ``rollover``, ``unknown``, the budget guard); the first stays
+in ``stopped``; ``mark_running`` marks the operation started, and ``recover``
+refuses ``NOT_STARTED`` for it as well.  Section 10 (2026-10-09) then made
+every explicit ``stop`` its own entry -- the same reason twice is named twice
+-- while the automatic reasons stay once (``tests/test_explicit_holds_oracle.py``).
 """
 from __future__ import annotations
 
@@ -109,11 +111,12 @@ class StackedHoldsOracle(HoldsCase):
         self.assertEqual(scheduler.stop_reasons("req-1"), ("SECURITY_HOLD",))
 
     def test_every_stop_records_its_reason_once(self):
-        with self.subTest(case="the same reason twice"):
+        with self.subTest(case="the same explicit reason twice"):
+            # Section 10, decision 2: every explicit stop is its own hold.
             scheduler = self.scheduler()
             scheduler.stop("req-1", "SECURITY_HOLD")
             scheduler.stop("req-1", "SECURITY_HOLD")
-            self.assertEqual(scheduler.stop_reasons("req-1"), ("SECURITY_HOLD",))
+            self.assertEqual(scheduler.stop_reasons("req-1"), ("SECURITY_HOLD", "SECURITY_HOLD"))
             self.assertEqual(sum(e["type"] == "request.stopped" for e in scheduler.events), 2)
         with self.subTest(case="the budget guard on a stopped request"):
             scheduler = self.scheduler()
@@ -154,7 +157,7 @@ class StackedHoldsOracle(HoldsCase):
                     scheduler.stop_reasons(value)
                 self.assertEqual(ctx.exception.code, "E_REQUEST_UNKNOWN")
 
-    def test_the_expected_reasons_are_a_list_of_distinct_reasons(self):
+    def test_the_expected_reasons_are_a_list_of_reasons(self):
         bad = {
             "a tuple": ("SECURITY_HOLD",),
             "a single text": "SECURITY_HOLD",
@@ -163,7 +166,6 @@ class StackedHoldsOracle(HoldsCase):
             "an empty reason": [""],
             "a reason that is not text": [None],
             "a reason that is not exact text": [Key("SECURITY_HOLD")],
-            "the same reason twice": ["SECURITY_HOLD", "SECURITY_HOLD"],
         }
         for label, reasons in bad.items():
             with self.subTest(case=label):
