@@ -10,8 +10,9 @@ START_UNKNOWN operation had no way out.  The user decided (2026-10-08):
   claimed again as a new attempt) or ``FINISHED`` (into review with a
   candidate) -- ``Scheduler.resolve_unknown``;
 * a request resumes only once everything in it is decided, its usage is known
-  and it is within budget, comparing the generation and the stop reason --
-  ``Scheduler.resume``;
+  and it is within budget, comparing the generation and the stop reasons --
+  ``Scheduler.resume`` (the follow-up decisions of section 9 made the
+  comparison name every reason since the last resume);
 * no cap raise.
 
 Planner decisions P1-P7 fix the names, the ABANDONED accounting (no longer
@@ -153,8 +154,8 @@ class ResumeCase(unittest.TestCase):
         arguments.update(changes)
         return scheduler.resolve_unknown(op, generation, **arguments)
 
-    def resume(self, scheduler, *, generation=1, expected_reason="START_UNKNOWN", **changes):
-        arguments = dict(expected_reason=expected_reason, operator=OPERATOR, note=NOTE)
+    def resume(self, scheduler, *, generation=1, **changes):
+        arguments = dict(expected_reasons=["START_UNKNOWN"], operator=OPERATOR, note=NOTE)
         arguments.update(changes)
         return scheduler.resume("req-1", generation, **arguments)
 
@@ -283,13 +284,13 @@ class ResumeOracle(ResumeCase):
         scheduler.stop("req-1")
         before = scheduler.snapshot("req-1")
         events = scheduler.events
-        self.resume(scheduler, expected_reason="OPERATOR_STOP")
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"])
         self.assertIsNone(scheduler._requests["req-1"].stopped)
         self.assertEqual(scheduler.snapshot("req-1"), before, "the resume changed the usage or the reservations")
         self.assertEqual(scheduler.events[:-1], events, "the resume rewrote the history")
         event = scheduler.events[-1]
         self.assertEqual((event["type"], event["operation_id"], event["payload"]),
-                         ("request.resumed", None, {"request_id": "req-1", "previous_reason": "OPERATOR_STOP",
+                         ("request.resumed", None, {"request_id": "req-1", "previous_reasons": ["OPERATOR_STOP"],
                                                     "operator": OPERATOR, "note": NOTE}))
         self.assertEqual(scheduler.operation(reviewed)["state"], "REVIEW_PENDING")
         # Attempts are not reset: task-2 already used one of its three.
@@ -306,10 +307,10 @@ class ResumeOracle(ResumeCase):
         def stopped_unknown():
             scheduler = self.scheduler()
             self.start_unknown(scheduler)
-            return scheduler, "START_UNKNOWN"
+            return scheduler, ["START_UNKNOWN"]
 
         def not_stopped():
-            return self.scheduler(), "OPERATOR_STOP"
+            return self.scheduler(), ["OPERATOR_STOP"]
 
         def undecided(state):
             def build():
@@ -320,29 +321,29 @@ class ResumeOracle(ResumeCase):
                 if state == "RUNNING":
                     scheduler.mark_running(op, "owner-1", 1)
                 scheduler.rollover()
-                return scheduler, "RECOVERY_REQUIRED"
+                return scheduler, ["RECOVERY_REQUIRED"]
             return build
 
         def usage_unknown():
             scheduler = self.scheduler()
             self.reviewed(scheduler, settled=False)
-            return scheduler, "USAGE_UNKNOWN"
+            return scheduler, ["USAGE_UNKNOWN"]
 
         def over_budget():
             scheduler = self.scheduler()
             op = self.reviewed(scheduler, settled=False)
             scheduler.settle(op, {"tokens": 600})
-            return scheduler, "USAGE_UNKNOWN"
+            return scheduler, ["USAGE_UNKNOWN", "BUDGET_EXCEEDED"]
 
         def over_a_task_budget():
             scheduler = self.scheduler(task_caps={"dispatches": 9, "tokens": 50})
             op = self.reviewed(scheduler, settled=False)
             scheduler.settle(op, {"tokens": 60})
-            return scheduler, "USAGE_UNKNOWN"
+            return scheduler, ["USAGE_UNKNOWN", "BUDGET_EXCEEDED"]
 
         cases = [
             ("a request that is not stopped", not_stopped, "E_NOT_STOPPED", {}),
-            ("another stop reason", stopped_unknown, "E_STOP_REASON_CHANGED", dict(expected_reason="OPERATOR_STOP")),
+            ("another stop reason", stopped_unknown, "E_STOP_REASON_CHANGED", dict(expected_reasons=["OPERATOR_STOP"])),
             ("a START_UNKNOWN operation", stopped_unknown, "E_RESUME_UNKNOWN", {}),
             ("an older generation's claim", undecided("RESERVED"), "E_RESUME_UNDECIDED", dict(generation=2)),
             ("an older generation's handoff", undecided("HANDOFF_ACCEPTED"), "E_RESUME_UNDECIDED", dict(generation=2)),
@@ -351,24 +352,26 @@ class ResumeOracle(ResumeCase):
             ("the request over its budget", over_budget, "E_RESUME_BUDGET", {}),
             ("a task over its budget", over_a_task_budget, "E_RESUME_BUDGET", {}),
             ("an older generation", stopped_unknown, "E_FENCED", dict(generation=0)),
-            ("an empty expected reason", stopped_unknown, "E_STOP_REASON", dict(expected_reason="")),
-            ("an expected reason that is not text", stopped_unknown, "E_STOP_REASON", dict(expected_reason=None)),
+            ("an empty expected reason", stopped_unknown, "E_STOP_REASON", dict(expected_reasons=[""])),
+            ("expected reasons that are not a list", stopped_unknown, "E_STOP_REASON", dict(expected_reasons=None)),
             ("an operator with a line break", stopped_unknown, "E_OPERATOR", dict(operator="ops\n1")),
             ("a note too long", stopped_unknown, "E_NOTE", dict(note="n" * 501)),
         ]
         for label, build, code, changes in cases:
             with self.subTest(case=label):
-                scheduler, reason = build()
-                arguments = dict(expected_reason=reason)
+                scheduler, reasons = build()
+                if build is not not_stopped:
+                    self.assertEqual(scheduler.stop_reasons("req-1"), tuple(reasons))
+                arguments = dict(expected_reasons=reasons)
                 arguments.update(changes)
                 stopped = scheduler._requests["req-1"].stopped
                 self.refused(scheduler, code, lambda: self.resume(scheduler, **arguments))
                 self.assertEqual(scheduler._requests["req-1"].stopped, stopped)
         with self.subTest(case="an unknown request"):
-            scheduler, reason = stopped_unknown()
+            scheduler, reasons = stopped_unknown()
             for value in ("req-9", None, ["req-1"]):
                 self.refused(scheduler, "E_REQUEST_UNKNOWN",
-                             lambda: scheduler.resume(value, 1, expected_reason=reason, operator=OPERATOR, note=NOTE))
+                             lambda: scheduler.resume(value, 1, expected_reasons=reasons, operator=OPERATOR, note=NOTE))
 
     def test_the_resume_checks_come_in_their_order(self):
         scheduler = self.scheduler()
@@ -382,31 +385,39 @@ class ResumeOracle(ResumeCase):
         unknown = self.start_unknown(scheduler, "task-1")
         scheduler.finish(review, "owner-1", 1, CANDIDATE, True)
         scheduler.rollover()
+        reasons = ["START_UNKNOWN", "USAGE_UNKNOWN", "RECOVERY_REQUIRED"]
+        self.assertEqual(scheduler.stop_reasons("req-1"), tuple(reasons))
         self.refused(scheduler, "E_OPERATOR",
-                     lambda: self.resume(scheduler, operator="", expected_reason="", generation=1))
-        self.refused(scheduler, "E_STOP_REASON", lambda: self.resume(scheduler, expected_reason="", generation=1))
+                     lambda: self.resume(scheduler, operator="", expected_reasons=[""], generation=1))
+        self.refused(scheduler, "E_STOP_REASON", lambda: self.resume(scheduler, expected_reasons=[""], generation=1))
         # Each adjacent pair at once (review of attempt-001, L2).
         self.refused(scheduler, "E_OPERATOR", lambda: self.resume(scheduler, operator="", note="", generation=2))
         self.refused(scheduler, "E_FENCED",
-                     lambda: scheduler.resume("req-9", 1, expected_reason="X", operator=OPERATOR, note=NOTE))
-        self.refused(scheduler, "E_FENCED", lambda: self.resume(scheduler, expected_reason="X", generation=1))
+                     lambda: scheduler.resume("req-9", 1, expected_reasons=["X"], operator=OPERATOR, note=NOTE))
+        self.refused(scheduler, "E_FENCED", lambda: self.resume(scheduler, expected_reasons=["X"], generation=1))
         self.refused(scheduler, "E_STOP_REASON_CHANGED",
-                     lambda: self.resume(scheduler, expected_reason="RECOVERY_REQUIRED", generation=2))
-        self.refused(scheduler, "E_RESUME_UNKNOWN", lambda: self.resume(scheduler, generation=2))
+                     lambda: self.resume(scheduler, expected_reasons=["RECOVERY_REQUIRED"], generation=2))
+        self.refused(scheduler, "E_RESUME_UNKNOWN", lambda: self.resume(scheduler, expected_reasons=reasons, generation=2))
         self.resolve(scheduler, unknown, generation=2)
-        self.refused(scheduler, "E_RESUME_UNDECIDED", lambda: self.resume(scheduler, generation=2))
+        self.refused(scheduler, "E_RESUME_UNDECIDED",
+                     lambda: self.resume(scheduler, expected_reasons=reasons, generation=2))
         scheduler.recover(old, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=EVIDENCE)
-        self.refused(scheduler, "E_RESUME_USAGE_UNKNOWN", lambda: self.resume(scheduler, generation=2))
+        self.refused(scheduler, "E_RESUME_USAGE_UNKNOWN",
+                     lambda: self.resume(scheduler, expected_reasons=reasons, generation=2))
         # Over budget while the review's tokens are still unknown: the unknown
-        # usage is reported first.
+        # usage is reported first.  Going over budget adds its own reason.
         scheduler.settle(unknown, {"tokens": 600})
-        self.refused(scheduler, "E_RESUME_USAGE_UNKNOWN", lambda: self.resume(scheduler, generation=2))
+        reasons.append("BUDGET_EXCEEDED")
+        self.assertEqual(scheduler.stop_reasons("req-1"), tuple(reasons))
+        self.refused(scheduler, "E_RESUME_USAGE_UNKNOWN",
+                     lambda: self.resume(scheduler, expected_reasons=reasons, generation=2))
         scheduler.settle(review, {"tokens": 5})
-        self.refused(scheduler, "E_RESUME_BUDGET", lambda: self.resume(scheduler, generation=2))
+        self.refused(scheduler, "E_RESUME_BUDGET", lambda: self.resume(scheduler, expected_reasons=reasons, generation=2))
         # No cap raise: a correction of the recorded usage is what brings it back.
         scheduler.settle(unknown, {"tokens": 7}, revision=2, correction=True)
-        self.resume(scheduler, generation=2)
+        self.resume(scheduler, expected_reasons=reasons, generation=2)
         self.assertIsNone(scheduler._requests["req-1"].stopped)
+        self.assertEqual(scheduler.stop_reasons("req-1"), ())
 
     def test_a_run_of_the_current_generation_does_not_block_the_resume(self):
         scheduler = self.scheduler()
@@ -414,7 +425,7 @@ class ResumeOracle(ResumeCase):
         scheduler.handoff(op, "owner-1", 1)
         scheduler.mark_running(op, "owner-1", 1)
         scheduler.stop("req-1")
-        self.resume(scheduler, expected_reason="OPERATOR_STOP")
+        self.resume(scheduler, expected_reasons=["OPERATOR_STOP"])
         scheduler.settle(op, {"tokens": 5})
         scheduler.finish(op, "owner-1", 1, CANDIDATE, True)
         self.assertEqual(scheduler.operation(op)["state"], "REVIEW_PENDING")
@@ -489,14 +500,14 @@ class CrashToResumeOracle(ResumeCase):
         self.assertEqual(report["operations"], [{"operation_id": ops["crashed"], "action": "recovered",
                                                  "state": "START_UNKNOWN"}])
         with self.assertRaises(ContractError) as ctx:
-            self.resume(ledger, generation=2, expected_reason="RECOVERY_REQUIRED")
+            self.resume(ledger, generation=2, expected_reasons=["RECOVERY_REQUIRED"])
         self.assertEqual(ctx.exception.code, "E_RESUME_UNKNOWN")
         # The operator looks at the run, enters what it cost and abandons it,
         # and gives the earlier run its verdict.
         ledger.settle(ops["crashed"], {"tokens": 9})
         self.resolve(ledger, ops["crashed"], "ABANDONED", generation=2)
         ledger.fixture_verdict(ops["reviewed"], "c" * 64, True, EVIDENCE)
-        self.resume(ledger, generation=2, expected_reason="RECOVERY_REQUIRED")
+        self.resume(ledger, generation=2, expected_reasons=["RECOVERY_REQUIRED"])
         ledger.close()
 
         ledger = open_ledger(ledger_path)
