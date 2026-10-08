@@ -125,3 +125,5 @@ resume-holds 复审留下的两处覆盖面缺口交回用户，用户的决定�
 - P15：`resume` 的 `expected_reasons` 不再要求互不重复，只要求是不空的精确 `list`、元素是非空精确 `str`；比对仍是按顺序完全相等。resume-holds 的 oracle 里“同一原因只记一次”“列表里有重复报 `E_STOP_REASON`”两处由规划端在新基线里改掉。
 
 合同：`explicit-holds`，在 resume-holds 之后。
+- P16（更正 P13，explicit-holds 复审 M）：`recover` 也对“结论是 `NOT_STARTED`、操作处于 `START_UNKNOWN` 且记有运行描述”报 `E_RECOVERY_CONFLICT`。P13 写“`recover` 不改”，结果换一代之后 `recover(NOT_STARTED)` 成了运维把已判定的受监督运行判为未启动的第二条路。重启恢复从不对 `START_UNKNOWN` 调 `recover`，它按记录判定未判定的受监督交接（`HANDOFF_ACCEPTED`，两份记录都为空）的那条路不受影响。
+- 已集成：oracle `dd2d453`、a001 `fe92d11`、规划端补全 `d26c986`；全量 786 passed。
