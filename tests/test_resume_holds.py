@@ -7,10 +7,12 @@ changed -- and then asserts the specific error, so a different rule refusing the
 call first cannot hide a gap.  Every refusal is checked against the state it
 found, events included.
 
-The behaviour under test comes from `.agent/design/request-resume.md` section 9:
-every stop reason since the last resume is kept in first-seen order and ``resume``
-must name exactly that list, ``stop_reasons`` reads it, and an operation the
-ledger saw running may not be decided as one that never started.
+The behaviour under test comes from `.agent/design/request-resume.md` sections
+9 and 10: every stop reason since the last resume is kept and ``resume`` must
+name exactly that list, ``stop_reasons`` reads it, every explicit ``stop`` is an
+entry of its own (the same reason twice is two holds, the automatic reasons stay
+once), and an operation the ledger saw running -- or one a supervised run was
+handed to -- may not be decided as one that never started.
 """
 from __future__ import annotations
 
@@ -101,7 +103,7 @@ class HoldsCase(unittest.TestCase):
 class StopReasonListCase(HoldsCase):
     """What is recorded, in which order, and by which write point."""
 
-    def test_the_reasons_are_kept_in_first_seen_order_when_they_interleave(self):
+    def test_the_reasons_are_kept_in_recorded_order_when_they_interleave(self):
         scheduler = self.scheduler()
         reviewed = self.claim(scheduler, "task-1")
         scheduler.handoff(reviewed, "owner-1", 1)
@@ -111,7 +113,8 @@ class StopReasonListCase(HoldsCase):
         handed_off = self.claim(scheduler, "task-2")
         scheduler.handoff(handed_off, "owner-1", 1)
         scheduler.stop("req-1", "SECURITY_HOLD")
-        # The same hold again: recorded once, and it does not move ``stopped``.
+        # The same hold again: an explicit stop is its own entry, and it does not
+        # move ``stopped``.
         scheduler.stop("req-1", "SECURITY_HOLD")
         # The unknown start does not replace the operator's hold, and neither
         # does the unknown usage or the over-cap amount stacked on top of it.
@@ -121,8 +124,8 @@ class StopReasonListCase(HoldsCase):
         scheduler.rollover()
         scheduler.stop("req-1", "SECURITY_HOLD")
         self.assertEqual(scheduler.stop_reasons("req-1"),
-                         ("SECURITY_HOLD", "START_UNKNOWN", "USAGE_UNKNOWN", "BUDGET_EXCEEDED",
-                          "RECOVERY_REQUIRED"))
+                         ("SECURITY_HOLD", "SECURITY_HOLD", "START_UNKNOWN", "USAGE_UNKNOWN",
+                          "BUDGET_EXCEEDED", "RECOVERY_REQUIRED", "SECURITY_HOLD"))
         self.assertEqual(scheduler._requests["req-1"].stopped, "SECURITY_HOLD",
                          "the first reason moved")
         self.assertEqual([e["type"] for e in scheduler.events].count("request.stopped"), 3,
@@ -132,8 +135,8 @@ class StopReasonListCase(HoldsCase):
         # the run is decided and its usage brought back under the cap first.
         self.resolve(scheduler, handed_off, "NOT_STARTED")
         scheduler.observe(handed_off, "tokens", "call-1", 3, 5, True, EVIDENCE, correction=True)
-        self.resume(scheduler, ["SECURITY_HOLD", "START_UNKNOWN", "USAGE_UNKNOWN", "BUDGET_EXCEEDED",
-                                "RECOVERY_REQUIRED"])
+        self.resume(scheduler, ["SECURITY_HOLD", "SECURITY_HOLD", "START_UNKNOWN", "USAGE_UNKNOWN",
+                                "BUDGET_EXCEEDED", "RECOVERY_REQUIRED", "SECURITY_HOLD"])
         self.assertEqual(scheduler.stop_reasons("req-1"), ())
         self.assertIsNone(scheduler._requests["req-1"].stopped)
 
@@ -222,15 +225,18 @@ class StopReasonListCase(HoldsCase):
         scheduler.stop("req-1", "OPERATOR_STOP")
         scheduler.stop("req-1", "SECURITY_HOLD")
         scheduler.stop("req-1", "OPERATOR_STOP")
-        self.assertEqual(scheduler.stop_reasons("req-1"), ("OPERATOR_STOP", "SECURITY_HOLD"))
+        # Every explicit stop is its own entry: the repeated default reason is
+        # named twice, and it does not move ``stopped``.
+        self.assertEqual(scheduler.stop_reasons("req-1"),
+                         ("OPERATOR_STOP", "SECURITY_HOLD", "OPERATOR_STOP"))
         self.assertEqual(scheduler._requests["req-1"].stopped, "OPERATOR_STOP")
-        self.resume(scheduler, ["OPERATOR_STOP", "SECURITY_HOLD"])
+        self.resume(scheduler, ["OPERATOR_STOP", "SECURITY_HOLD", "OPERATOR_STOP"])
         resumed = [e["payload"] for e in scheduler.events if e["type"] == "request.resumed"]
         self.assertEqual(resumed, [{"request_id": "req-1",
                                     "previous_reasons": ["SECURITY_HOLD", "RECOVERY_REQUIRED"],
                                     "operator": OPERATOR, "note": NOTE},
                                    {"request_id": "req-1",
-                                    "previous_reasons": ["OPERATOR_STOP", "SECURITY_HOLD"],
+                                    "previous_reasons": ["OPERATOR_STOP", "SECURITY_HOLD", "OPERATOR_STOP"],
                                     "operator": OPERATOR, "note": NOTE}])
         self.assertEqual(scheduler.stop_reasons("req-1"), ())
         self.assertIsNone(scheduler._requests["req-1"].stopped)
@@ -267,10 +273,12 @@ class ExpectedReasonsCase(HoldsCase):
         "an empty reason": [""],
         "a reason that is not text": [None],
         "a reason that is not exact text": [Key("SECURITY_HOLD")],
-        "the same reason twice": ["SECURITY_HOLD", "SECURITY_HOLD"],
+        "an empty reason after a repeated one": ["SECURITY_HOLD", "SECURITY_HOLD", ""],
     }
 
-    def test_the_expected_reasons_must_be_a_list_of_distinct_reasons(self):
+    def test_the_expected_reasons_must_be_a_list_of_reasons(self):
+        # A repeated reason is well formed: every explicit stop is its own hold,
+        # so naming the same reason twice is naming two holds.
         for label, reasons in self.BAD.items():
             with self.subTest(case=label):
                 scheduler = self.scheduler()

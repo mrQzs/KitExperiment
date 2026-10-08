@@ -316,8 +316,11 @@ class _Request:
     caps: dict[str, int]
     max_concurrency: int
     stopped: str | None = None
-    #: Every stop reason since the last resume, in first-seen order, each once.
-    #: ``stopped`` stays the first of them; a resume clears both together.
+    #: Every stop reason since the last resume, in the order they were recorded.
+    #: An operator's explicit ``stop`` is one entry per call -- the same reason
+    #: twice is two holds; an automatic reason (the budget guard, a rollover, an
+    #: unknown start) is one entry however often it fires.  ``stopped`` stays the
+    #: first of them; a resume clears both together.
     stop_reasons: list[str] = field(default_factory=list)
 
 
@@ -330,16 +333,32 @@ class _Task:
 
 
 def _record_stop_reason(root: _Request, reason: str) -> None:
-    """Remember one more reason this request is stopped, each reason once.
+    """Remember one more *automatic* reason this request is stopped, once.
 
-    The list keeps the order the reasons first appeared in, so a resume can name
-    exactly what the ledger saw -- including the holds stacked on a request that
-    was already stopped, which is the point: a single resume must not clear a
-    later hold silently.  ``stopped`` is decided separately and stays the first
-    reason.
+    The budget guard, a rollover and an unknown start describe the state the
+    request is in, not a decision somebody took, so one entry is all the ledger
+    needs to see: the reason is appended only while the list does not have it
+    yet.  The list keeps the order the reasons first appeared in, so a resume can
+    name exactly what the ledger saw -- including the reasons stacked on a
+    request that was already stopped, which is the point: a single resume must
+    not clear a later hold silently.  ``stopped`` is decided separately and stays
+    the first reason.  An operator's explicit hold goes through
+    :func:`_record_explicit_stop`, one entry per call.
     """
     if reason not in root.stop_reasons:
         root.stop_reasons.append(reason)
+
+
+def _record_explicit_stop(root: _Request, reason: str) -> None:
+    """Remember one more explicit operator hold: one entry per call.
+
+    A ``stop`` is a decision taken at a point in time, so the same reason twice
+    is two decisions -- two holds -- and a resume has to name both back before
+    it may clear them.  Nothing else about the recording changes: ``stopped`` is
+    still decided separately and stays the first reason, and a request that is
+    already stopped still records the hold (that is the point of the list).
+    """
+    root.stop_reasons.append(reason)
 
 
 LIVE = {"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN"}
@@ -1074,7 +1093,11 @@ class Scheduler:
         A run the ledger saw start (``run.started``) may not be decided as one
         that never did, exactly as ``recover`` refuses it: ``NOT_STARTED`` on such
         an operation is ``E_RESOLVE_CONFLICT``, because its unrecorded usage would
-        be taken as zero.
+        be taken as zero.  Neither may a handoff that recorded a run descriptor:
+        the bridge registers the start only after the run is over, so a
+        controller killed mid-run left a run the ledger never saw start, and
+        what can be proven unstarted is decided from the records by the bridge
+        (``release_proven_unstarted``) and by the restart recovery.
 
         Every input is validated -- in the order the contract fixes -- before
         anything is mutated, so a refused call leaves the ledger exactly as it
@@ -1108,8 +1131,12 @@ class Scheduler:
             if op.state != "START_UNKNOWN":
                 raise ContractError("E_RESOLVE_STATE")
             # A run the ledger saw start cannot be decided as one that never
-            # did: its unrecorded usage would be taken as zero.
-            if resolution == "NOT_STARTED" and op.started:
+            # did: its unrecorded usage would be taken as zero.  The same goes
+            # for a handoff that recorded a run descriptor -- the bridge
+            # registers the start only once the run is over, so a controller
+            # killed mid-run left a run the ledger never saw start
+            # (section 10, decision 1).
+            if resolution == "NOT_STARTED" and (op.started or op.run is not None):
                 raise ContractError("E_RESOLVE_CONFLICT")
             state = _RESOLVED_STATES[resolution]
             payload: dict[str, Any] = {"resolution": resolution, "state": state, "operator": operator,
@@ -1146,7 +1173,9 @@ class Scheduler:
         A request can be stopped more than once without a resume in between -- an
         operator's safety hold on a request the budget guard already stopped, a
         rollover, an unknown start -- and ``stopped`` only ever names the first
-        of them.  This read gives the whole list, so an operator can see every
+        of them.  Every explicit stop is an entry of its own, the same reason
+        twice being two holds; an automatic reason is one entry however often it
+        fires.  This read gives the whole list, so an operator can see every
         hold before naming it back in :meth:`resume`.  It is empty while the
         request runs, records no event, touches no log and mutates nothing.
         """
@@ -1172,7 +1201,9 @@ class Scheduler:
             if request not in self._requests: raise ContractError("E_REQUEST_UNKNOWN")
             payload = self._encode_payload({"request_id": request, "reason": reason})
             root = self._requests[request]; root.stopped = root.stopped or reason
-            _record_stop_reason(root, reason)
+            # Every explicit stop is its own hold: the same reason twice is two
+            # holds, and a resume names each of them (section 10, decision 2).
+            _record_explicit_stop(root, reason)
             self._emit(None, "request.stopped", payload, encoded=True)
 
     def resume(self, request: str, generation: int, *, expected_reasons: list[str], operator: str, note: str) -> None:
@@ -1192,7 +1223,9 @@ class Scheduler:
         Naming every reason is what keeps a hold that was stacked on an already
         stopped request -- an operator's safety pause above all -- from being
         cleared by this one call: the list must equal
-        :meth:`stop_reasons` exactly, in the same order.
+        :meth:`stop_reasons` exactly, in the same order.  Every explicit stop is
+        its own entry, so a reason the operator gave twice is named twice; the
+        automatic reasons are one entry each.
 
         All of that is checked -- in the order the contract fixes, the unknown
         usage of the request and of every task before the budget of both --
@@ -1214,11 +1247,12 @@ class Scheduler:
         # attempt-001, L2).
         if not expected:
             raise ContractError("E_STOP_REASON")
-        named: set[str] = set()
+        # A reason may be named more than once: every explicit stop is its own
+        # hold, so naming the same reason twice is naming two holds.  Only the
+        # shape is checked here -- a non-empty exact ``str`` for every element.
         for reason in expected:
-            if type(reason) is not str or not reason or reason in named:
+            if type(reason) is not str or not reason:
                 raise ContractError("E_STOP_REASON")
-            named.add(reason)
         with self._lock:
             self._epoch(generation)
             if type(request) is not str:
