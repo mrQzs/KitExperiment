@@ -179,6 +179,25 @@ class SupervisedRunOracle(ExplicitCase):
         self.refused(scheduler, "E_FENCED", lambda: self.resolve(scheduler, op, "NOT_STARTED", generation=0), op=op)
         self.refused(scheduler, "E_RESOLVE_CONFLICT", lambda: self.resolve(scheduler, op, "NOT_STARTED"), op=op)
 
+    def test_recover_does_not_overturn_a_decided_supervised_run(self):
+        # Planner completion after the review of attempt-001 (finding M): the
+        # restart recovery never takes a START_UNKNOWN operation over, so a
+        # ``recover(NOT_STARTED)`` on a supervised one would be an operator
+        # calling it unstarted by another name.
+        scheduler = self.scheduler()
+        op = self.unknown(scheduler, supervised=True)
+        scheduler.rollover()
+        self.refused(scheduler, "E_RECOVERY_CONFLICT",
+                     lambda: scheduler.recover(op, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=EVIDENCE), op=op)
+        scheduler.recover(op, "owner-2", 2, outcome="START_UNKNOWN", evidence_hash=EVIDENCE)
+        self.assertEqual(scheduler.operation(op)["generation"], 2)
+        with self.subTest(case="a handoff nobody described"):
+            other = self.scheduler()
+            bare = self.unknown(other, supervised=False)
+            other.rollover()
+            other.recover(bare, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=EVIDENCE)
+            self.assertEqual(other.operation(bare)["state"], "NOT_STARTED")
+
     def test_recover_still_decides_not_started_from_the_records(self):
         scheduler = self.scheduler()
         op = self.claim(scheduler)

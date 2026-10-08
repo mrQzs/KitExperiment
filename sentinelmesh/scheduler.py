@@ -1051,10 +1051,17 @@ class Scheduler:
                 raise ContractError("E_RECOVERY_STATE")
             if self._requests[op.request_id].stopped is None:
                 raise ContractError("E_RECOVERY_NOT_STOPPED")
-            if outcome == "NOT_STARTED" and (op.state == "RUNNING" or op.started):
+            if outcome == "NOT_STARTED" and (op.state == "RUNNING" or op.started
+                                             or (op.state == "START_UNKNOWN" and op.run is not None)):
                 # A run the ledger saw start -- ``run.started`` -- is not one
                 # that can be decided as never having started, whatever state it
-                # reached afterwards.
+                # reached afterwards.  Nor is a supervised run (one with a run
+                # descriptor) that was already decided START_UNKNOWN: the restart
+                # recovery never takes such an operation over, so this would be an
+                # operator overturning that decision -- the very thing
+                # ``resolve_unknown`` refuses (review of explicit-holds
+                # attempt-001, M).  A supervised handoff still undecided
+                # (HANDOFF_ACCEPTED) is unaffected: its records decide.
                 raise ContractError("E_RECOVERY_CONFLICT")
             from_generation = op.generation
             if outcome == "NOT_STARTED":

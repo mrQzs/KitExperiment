@@ -420,13 +420,21 @@ class SupervisedRunCase(ExplicitCase):
 
     def test_recover_still_decides_a_supervised_handoff_not_started(self):
         scheduler = self.scheduler()
-        op = self.unknown(scheduler, supervised=True, running=False)
+        op = self.claim(scheduler, "task-1")
+        scheduler.handoff(op, "owner-1", 1, run=self.descriptor(op))
         scheduler.rollover()
-        # ``recover`` is unchanged: it is the path that takes an operation over
-        # from the records, and the records say this run never started.
+        # An undecided supervised handoff is taken over from its records, and the
+        # records say this run never started.
         scheduler.recover(op, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=EVIDENCE)
         self.assertEqual(scheduler.operation(op)["state"], "NOT_STARTED")
         self.assertEqual(scheduler.operation(op)["generation"], 2)
+        # A supervised run already decided START_UNKNOWN is not: that would be an
+        # operator overturning the decision (review of attempt-001, M).
+        decided = self.scheduler()
+        unknown = self.unknown(decided, supervised=True, running=False)
+        decided.rollover()
+        self.refused(decided, "E_RECOVERY_CONFLICT",
+                     lambda: decided.recover(unknown, "owner-2", 2, outcome="NOT_STARTED", evidence_hash=EVIDENCE))
         # The difference from the case above is the start the ledger saw: the
         # very same takeover refuses it, exactly as it did before.
         other = self.scheduler()
