@@ -66,6 +66,13 @@ MAX_STREAM_BYTES = 16 * 1_048_576
 # read is not pulled in whole first.
 _CHUNK_BYTES = 1 << 16
 
+# ``O_NOFOLLOW`` is POSIX-only: where the platform has no such flag (Windows) the
+# link refusal is done by hand instead -- ``lstat`` the path, open it in binary
+# mode, and compare the identity of what was really opened with the ``lstat`` one.
+# Whether the flag exists is a fact about the platform, so it is settled once at
+# import time, which still reads no file and starts nothing.
+_HAS_NOFOLLOW = hasattr(os, "O_NOFOLLOW")
+
 # The dimension the handoff records itself; recording it here would double count
 # one local dispatch.
 _RESERVED_DIMENSION = "dispatches"
@@ -169,7 +176,8 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
     The stream is the vendor's own output, so it is evidence and not input: a
     file state this process cannot account for is reported, never raised, and
     never read from a link (a symlinked stream is a forged one -- the child can
-    swap it between the check and the read -- so ``O_NOFOLLOW`` refuses it).
+    swap it between the check and the read -- so ``O_NOFOLLOW`` refuses it, and
+    where the platform has no such flag the ``lstat``/identity check below does).
 
     ``expected`` is the supervisor's own fact for this stream, when the caller has
     one: the device, the inode, the byte count and the digest of the stream the
@@ -192,12 +200,32 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
     if expected is not None:
         expected = _checked_expected(expected)
     path = os.path.join(evidence_dir, STREAM_NAME)
+    # What the ``lstat`` of the path saw, on a platform where the link refusal is
+    # made by hand; ``None`` where ``O_NOFOLLOW`` already refuses the link.
+    pinned: Optional[os.stat_result] = None
     try:
-        # ``O_NOFOLLOW``: a stream reached through a link is refused rather than
-        # followed.  ``O_NONBLOCK``: opening a fifo for reading would otherwise
-        # wait for a writer forever, before the regular-file check could refuse
-        # it; it changes nothing for a regular file.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        if _HAS_NOFOLLOW:
+            # ``O_NOFOLLOW``: a stream reached through a link is refused rather
+            # than followed.  ``O_NONBLOCK``: opening a fifo for reading would
+            # otherwise wait for a writer forever, before the regular-file check
+            # could refuse it; it changes nothing for a regular file.
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        else:
+            # No ``O_NOFOLLOW`` here, so the path is examined before it is
+            # opened: a missing path, a path that is not a regular file and a
+            # reparse point (a link, a mount point) are all refused without
+            # opening anything.  ``O_BINARY`` keeps the C runtime from reading
+            # the file as text, which would fold CR LF and stop at 0x1A.
+            try:
+                pinned = os.lstat(path)
+            except FileNotFoundError:
+                return _empty("missing")
+            except OSError:
+                return _empty("unreadable")
+            if (not stat.S_ISREG(pinned.st_mode)
+                    or getattr(pinned, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                return _empty("unreadable")
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     except FileNotFoundError:
         return _empty("missing")
     except OSError:
@@ -207,6 +235,11 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
         # ``fstat`` on the descriptor is used because a second ``stat`` on the
         # path could race with what was really opened.
         if not stat.S_ISREG(info.st_mode):
+            return _empty("unreadable")
+        if pinned is not None and (info.st_dev, info.st_ino) != (pinned.st_dev, pinned.st_ino):
+            # What was opened is not the file the ``lstat`` saw: a link planted
+            # at the path after it, or the path swapped between the two calls.
+            # The identity is the only thing that settles which file was read.
             return _empty("unreadable")
         if expected is not None and (info.st_dev, info.st_ino, info.st_size) != (
                 expected["device"], expected["inode"], expected["bytes"]):

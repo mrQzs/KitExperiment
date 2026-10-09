@@ -28,7 +28,9 @@ import json
 import sys
 from typing import Any, Callable
 
+from .adapter_run import MAX_STREAM_BYTES, read_stream
 from .durable_ledger import LedgerError, open_ledger
+from .pi_events import DIALECT, translate
 from .scheduler import RESOLUTIONS, UNRESOLVED, ContractError
 
 #: The states a run of an older generation was left undecided in.  A run of the
@@ -38,6 +40,10 @@ _UNDECIDED = frozenset({"RESERVED", "HANDOFF_ACCEPTED", "RUNNING"})
 #: The resolutions ``resolve`` offers, in a stable order for the usage message.
 #: The scheduler owns the set: what it refuses, this never offers.
 _RESOLUTIONS = tuple(sorted(RESOLUTIONS))
+#: The output-stream dialects ``reference`` understands, and nothing else: the
+#: ledger records no dialect, so the operator names the one the run wrote and a
+#: dialect nobody implemented is refused by argparse instead of being guessed at.
+_DIALECTS = (DIALECT,)
 
 
 def _write_line(stream: Any, payload: Any) -> None:
@@ -116,6 +122,66 @@ def _usage_incomplete(reservation: dict[str, int], usage: dict[str, dict[str, An
     return False
 
 
+def _missing_dimensions(reservation: dict[str, int], usage: dict[str, dict[str, Any]]) -> list[str]:
+    """The reserved dimensions with no usage of a known, final amount.
+
+    The rule of ``_usage_incomplete``, one dimension at a time and in the order
+    the operation claimed its reservation in: an operator reads what is missing
+    in the order the run holds it, never in an alphabetical one.
+    """
+    return [dimension for dimension in reservation
+            if _usage_incomplete({dimension: reservation[dimension]}, usage)]
+
+
+def _stream_summary(stream: dict[str, Any]) -> dict[str, Any]:
+    """The stream's reportable fields: what it is, plus how it failed.
+
+    ``run_adapter_operation`` reports a stream the same way, so an operator reads
+    one shape whatever read it.  The events themselves are the translator's
+    input, not something an operator has to look at.
+    """
+    summary = {"status": stream["status"], "sha256": stream["sha256"], "bytes": stream["bytes"]}
+    if stream["status"] == "invalid":
+        summary["line"] = stream["line"]
+        summary["code"] = stream["code"]
+    return summary
+
+
+def _pi_reference(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """The ``pi-session-v3`` reference value of one translated stream.
+
+    Only :func:`~sentinelmesh.pi_events.translate` decides the numbers -- nothing
+    is recounted here, so the pairing, ordering and termination rules stay the
+    translator's own.  A stream that cannot be called complete still reports the
+    sums of the assistant messages that were legal, with the reasons; they are
+    listed in one fixed order, so the same stream always reads the same way.
+    """
+    translation = translate(events)
+    reasons: list[str] = []
+    if translation.terminal is None:
+        # Only ``agent_settled`` ends a run: an ``agent_end`` is not a terminal.
+        reasons.append("no_terminal")
+    if any(event["type"] == "assistant" and event["payload"]["usage"] is None
+           for event in translation.events):
+        # An illegal usage leaves that one message out of the sum.
+        reasons.append("illegal_usage")
+    if translation.unknown > 0:
+        # An unknown or malformed frame, or a frame after the terminal one.
+        reasons.append("unknown_frames")
+    return {"complete": not reasons, "reasons": reasons, "terminal": translation.terminal,
+            "last_stop_reason": translation.last_stop_reason, "usage": dict(translation.usage),
+            "assistant_messages": translation.assistant_messages, "tool_calls": translation.tool_calls,
+            "tool_errors": translation.tool_errors, "agent_cycles": translation.agent_cycles,
+            "frames": translation.frames, "unknown": translation.unknown,
+            "models": [[provider, model] for provider, model in translation.models]}
+
+
+#: The reference each dialect computes from the events of a stream that read
+#: ``ok``.  One dialect in this version; a dialect nobody implemented never
+#: reaches here, because argparse refuses it before the ledger is opened.
+_REFERENCES: dict[str, Callable[[list[dict[str, Any]]], dict[str, Any]]] = {DIALECT: _pi_reference}
+
+
 def _attention(ledger: Any, request_id: str) -> list[dict[str, Any]]:
     """The operations of one request an operator has to look at, in claim order.
 
@@ -172,6 +238,51 @@ def _status(ledger: Any, path: str) -> dict[str, Any]:
 
 def cmd_status(args: argparse.Namespace) -> int:
     return _with_ledger(args, lambda ledger: _status(ledger, args.ledger))
+
+
+def cmd_reference(args: argparse.Namespace) -> int:
+    """Read one supervised run's output stream and print the usage it adds up to.
+
+    The reference is a candidate for the operator's own ``settle`` and nothing
+    more: the command opens the ledger, reads the stream the run recorded in its
+    evidence directory and closes the ledger again.  It calls no mutating method
+    and writes nothing next to the stream, so what it prints is a reading of what
+    the run wrote and not a claim the ledger holds -- what is entered afterwards
+    stays the operator's decision, with the stream's own digest as its evidence.
+
+    A stream that is missing, unreadable, too large or invalid is an answer and
+    not a failure: the command exits 0 and reports the state, with no reference
+    value.  That is the crash case the command exists for -- the controller is
+    gone, the supervisor's own stream fact was never recorded, and the only
+    thing left to read is the file itself.
+    """
+    def work(ledger: Any) -> dict[str, Any]:
+        view = ledger.operation(args.operation)
+        run = ledger.run_descriptor(args.operation)
+        if run is None:
+            # No handoff to a supervised run, so there is no stream to read: the
+            # operation's usage is the controller's own business.
+            raise ContractError("E_NOT_SUPERVISED",
+                                "operation %s was never handed off to a supervised run" % args.operation)
+        usage = ledger.operation_usage(args.operation)
+        # No ``expected``: the supervisor's stream fact is written when it reaps
+        # the group, and a controller that died mid-run left none behind.  The
+        # ceiling is the largest one, because the stream is read once, by hand,
+        # and not while the run writes it.
+        stream = read_stream(run["evidence_dir"], max_bytes=MAX_STREAM_BYTES)
+        return {"command": "reference", "operation_id": view["operation_id"],
+                "request_id": view["request_id"], "task_id": view["task_id"],
+                "state": view["state"], "generation": view["generation"],
+                # The evidence directory exactly as the run recorded it: a
+                # relative one is resolved against the operator's own working
+                # directory, which is why it is printed unchanged.
+                "evidence_dir": run["evidence_dir"], "dialect": args.dialect,
+                "reservation": view["reservation"], "recorded": usage,
+                "missing": _missing_dimensions(view["reservation"], usage),
+                "stream": _stream_summary(stream),
+                "reference": (None if stream["status"] != "ok"
+                              else _REFERENCES[args.dialect](stream["events"]))}
+    return _with_ledger(args, work)
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -251,6 +362,13 @@ def register(subparsers: Any) -> None:
     p = commands.add_parser("status", help="read-only view of a ledger and of what needs an operator")
     p.add_argument("ledger", help="path of the ledger file")
     p.set_defaults(func=cmd_status)
+
+    p = commands.add_parser("reference", help="read one supervised run's stream and print its usage as a reference")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.add_argument("--operation", required=True, help="operation the reference belongs to")
+    p.add_argument("--dialect", required=True, choices=_DIALECTS,
+                   help="dialect of the run's output stream")
+    p.set_defaults(func=cmd_reference)
 
     p = commands.add_parser("stop", help="put an explicit hold on a request")
     p.add_argument("ledger", help="path of the ledger file")
