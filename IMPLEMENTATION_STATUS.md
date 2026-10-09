@@ -19,6 +19,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Supervised start records and replay gate (macOS) | `supervised_record.py`, `posix_supervisor.py` `before_start` | real process-tree tests on macOS 15.7.9: a canonical 0600 handoff recorded before the start and the observation after it (staged with O_EXCL, published by hard link, never overwritten); `replay_decision` reads only those records: a timeout with confirmed cleanup may be replayed; an unconfirmed cleanup, a controller killed after the start (START_UNKNOWN) and records for another invocation may not; damaged, oversized, symlinked or FIFO records fail closed; observation schema v2 carries the stream facts in a closed `streams` object (v1 records are refused) and `recorded_streams` hands them to recovery. Crash-consistent only; power-loss durability not verified |
 | Scheduler wiring for supervised runs (macOS) | `scheduler.py` (NOT_STARTED, `release_proven_unstarted`, `unknown` reason, `mark_running` identity, `recover`), `supervised_operation.py` | real process-tree tests on macOS 15.7.9 through the in-memory Scheduler: runs that ended with confirmed cleanup (completed, failed, timed out) go to REVIEW_PENDING with the process identity recorded; an unconfirmed cleanup is START_UNKNOWN (CLEANUP_UNCONFIRMED) with holds kept and the request stopped; a handoff proven not started releases its holds and reservations but keeps the dispatch and the attempt; on the live path what the supervisor returned comes first and forged or contradicting records never release or finish a run; after a rollover the new generation recovers fenced operations from the records on disk. A run reaches review only while both output streams are still exactly what the supervisor recorded in memory (CLEANUP_UNCONFIRMED when the pinned file changed after the reap, START_UNKNOWN when it was replaced or never digested), and recovery checks the recorded streams the same way; the specification must belong to the operation's request; an optional `before_finish` hook receives the in-memory run while the operation is still RUNNING. The Scheduler is the 07 in-memory prototype; `durable_ledger` makes it persistent and `restart_recovery` takes it over after a controller restart (rows below) |
 | Adapter runs under the supervisor (macOS) | `adapter_run.py` | real-process tests on macOS 15.7.9: a normalized `adapter_protocol.Invocation` runs through the Scheduler bridge; the supervised stdout is read without following links (a regular file within a byte ceiling) as normalized-event JSONL and reduced by the adapter; usage is recorded only for a settled and complete result while the run is still RUNNING, just before `finish` (through the bridge's `before_finish` hook), only when the bytes reduced are exactly the ones the supervisor digested, with the supervisor's digest as the evidence; every usage dimension must be reserved by the operation before the handoff; every other stream or run state records nothing. The stream format is the normalized adapter protocol, not any vendor's native output |
+| Pi native event translation (captured) | `pi_events.py` | `translate` turns Pi's `--mode json` session v3 frames into the normalized adapter protocol and `PiNativeAdapter` settles them with the reference reducer unchanged: usage is the sum of the assistant `message_end` counters (snapshots and mirrors never count; an illegal value leaves the whole stream unrecorded, never padded with zeros), only `agent_settled` ends a run (a non-`stop` final message ends in `error`), and unknown or malformed frames become bounded `unknown` events so the run never settles and usage stays unknown. Checked against the dispatcher's own sums on 31 real Step runs that pi_dispatch captured (pi 0.99.2 and 1.0.1 on Windows, 1.0.2 and 1.0.4 on macOS; two cut by the time limit): five reduced streams are committed under `tests/fixtures/pi_native/` with the dispatcher's summary as their expected values, the full streams are planner-only evidence (`tests/test_pi_events_captured.py`, skipped where `.agent/runs` is absent). A real pi running under the supervisor with this adapter is still NOT_RUN |
 | Runtime identity/lifecycle | `runtime.py` canonical layer | exact port of the frozen Code-Kit runtime (`.agent/design/runtime-reference/`, f8ef858): verbatim reference tests, fail-closed oracle and a differential oracle over a fixed input grid; legacy `Invocation`/`SubprocessRunner` API unchanged |
 | Scheduler and budget | `scheduler.py`, `budget.py`, `planner_runtime.py` | DAG, lease, retry, fencing, reservation and unknown usage boundaries; a rejected Scheduler call leaves the ledger unchanged (exact input types, event payloads encoded before any change, `settle` mappings recorded all or nothing); `operation()` is a read-only view of one operation (request, task, state, owner, generation, reservation); `rollover()` and the constructor refuse a generation beyond 2**53-1 before anything changes |
 | Durable scheduling ledger (macOS) | `durable_ledger.py` | the in-memory Scheduler behind a SQLite command log (DELETE journal, `synchronous=FULL`, `fullfsync=ON`) linked by a SHA-256 chain: every successful mutating call, idempotent replays included, is appended before it returns, and opening replays the log to the same state, operation ids and events included. Real-process tests on macOS 15.7.9: every call that returned survives a SIGKILL of the writer; another process's rollover makes an older instance stale; damaged, re-chained, forged or foreign-format logs are refused with a ledger error and no leaked descriptor. An exception from the in-memory call other than a Scheduler refusal, a failed append and a stale head all invalidate the instance (fail closed); create is atomic (`O_EXCL`) and removes only the file it created; SQLite opens the file the kernel resolves. Power-loss durability not verified |
@@ -31,14 +32,22 @@ offline evidence from capabilities that require a real provider or platform.
 | Persistence | `persistence.py` | SQLite WAL/FULL resources, idempotency, generation fencing and hash-chain journal |
 | Observability/migration/observer | `observability.py`, `migration.py`, `observer.py` | redaction, CAS preview, source-bound read-only observer degradation |
 
-The current KitExperiment check (macOS 15.7.9, Python 3.12 venv first on PATH)
-is:
+The current KitExperiment check (Windows Server 2025, system Python 3.12.10 and
+pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
+Windows) is:
 
 ```text
-python -m pytest -q                 837 passed
+python -m pytest -q                 603 passed, 288 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
+
+The last macOS count before the repositories moved back to Windows on
+2026-10-08 was 837 passed at `bd9c029`; on macOS the same tree also runs the
+POSIX rows. The 33 cases that failed on Windows after the move were all POSIX
+facts exercised without a platform guard (PATH rules, boot id, `/dev/fd`,
+`SIGKILL`, `link/..`, `O_NOFOLLOW`) and now carry
+`@unittest.skipIf(os.name != "posix", ...)` (`62124c9`).
 
 Pi evidence is recorded in `.agent/reviews/pi-acceptance.v2-a002.md`. The
 actual execution used `bb/step-5-preview` with requested thinking `high` and
@@ -221,13 +230,34 @@ The durable scheduling ledger is recorded in `.agent/design/durable-ledger.md`
   looked like an argument error, and no test could see a missing close -- which
   the planner completed in `2e303d0`.
 
+The Pi native event translation is recorded in
+`.agent/design/pi-native-events.md` (the user's decisions in section 5,
+planner decisions N1–N16) and `.agent/reviews/pi-native-events/`:
+- `pi-native-events` was ACCEPTED_WITH_EXCEPTION (Windows, pi 0.99.2). The
+  candidate implements the contract clause by clause: `check --fresh` 7/7,
+  35 of 36 mutations caught with the oracle and the executor tests together,
+  and the translation agrees with the dispatcher's sums on all 31 captured
+  streams and with the planner draft event for event. The one exception, found
+  by the independent review, was the executor's test for "run hands the
+  reducer copies of the events", written against a fresh `translate()` call so
+  it could never fail; G5 was waived for that point and the planner completed
+  the test (36 of 36 mutations caught afterwards), compared reasons whole
+  instead of by prefix, and pinned three readings the contract had left open
+  (a malformed first header still counts as the header, the object and type
+  checks come before the terminal gate, an unencodable frame digests to no
+  bytes). Integrated as `0ab0211` (oracle and fixtures), `301857c`
+  (candidate) and `a97f3cd` (completion); full suite 603 passed on Windows.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
 approved evidence: real Pi/Claude provider CLI calls, credentials and network
 access, native Windows Job Objects, native Linux process supervision,
-translating a vendor's native events into the normalized adapter protocol
-(the supervised adapter path has native macOS evidence for that protocol only),
+a real pi running under the supervisor with its native stream translated (the
+translation itself has captured evidence, see the Pi native event translation
+row; the supervised adapter path has native macOS evidence for the normalized
+protocol only, and frame types no captured run has shown -- compaction, retry,
+queue, `entry_appended` -- fail closed as unknown until a later dialect),
 power-loss durability of the ledger and of the start records, operator
 authority and the evidence behind an operator's resolution (recorded, never
 verified),
