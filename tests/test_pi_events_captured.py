@@ -16,13 +16,21 @@ It checks two things the committed fixtures cannot:
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import io
 import json
 import os
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
+from sentinelmesh import cli
 from sentinelmesh.adapter_protocol import Invocation
-from sentinelmesh.pi_events import TERMINAL_FRAME, USAGE_KEYS, PiNativeAdapter, translate
+from sentinelmesh.adapter_run import STREAM_NAME
+from sentinelmesh.durable_ledger import create_ledger
+from sentinelmesh.pi_events import DIALECT, TERMINAL_FRAME, USAGE_KEYS, PiNativeAdapter, translate
 from sentinelmesh.protocols import strict_json_loads
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +122,57 @@ class CapturedStreams(unittest.TestCase):
                                   full.usage_complete))
                 self.assertEqual(full.frames - reduced.frames,
                                  meta["reduction"]["elided_message_updates"] + meta["reduction"]["elided_tool_updates"])
+
+
+@unittest.skipUnless(attempts(), "captured Pi streams are planner evidence; none under %s" % runs_dir())
+class CapturedReference(unittest.TestCase):
+    """``smctl ledger reference`` on the largest full stream this machine holds.
+
+    The fixtures the oracle uses are reduced; this is the command on a stream as
+    the dispatcher wrote it, copied in as a supervised run's ``stdout.log``, so
+    the 16 MiB ceiling and the file reading are exercised on real bytes.
+    """
+
+    def test_the_reference_of_the_largest_captured_stream_agrees_with_the_dispatcher(self):
+        attempt = max(attempts(), key=lambda found: (found / "events.jsonl").stat().st_size)
+        summary = summary_of(attempt)
+        work = Path(tempfile.mkdtemp(prefix="ledger-reference-captured-")).resolve()
+        self.addCleanup(shutil.rmtree, work, True)
+        evidence = work / "evidence"
+        evidence.mkdir()
+        shutil.copyfile(attempt / "events.jsonl", evidence / STREAM_NAME)
+        raw = (evidence / STREAM_NAME).read_bytes()
+        path = str(work / "ledger.db")
+        caps = {"dispatches": 9, "total_tokens": 10 ** 9}
+        ledger = create_ledger(path)
+        ledger.seed_request("req-1", "repo-1", caps, concurrency=4)
+        ledger.seed_task("req-1", "task-1", caps)
+        op = ledger.claim("req-1", "task-1", 1, "idem-task-1", "owner-1", 1, 1, {"dispatches": 1, "total_tokens": 10 ** 8},
+                          ["src/task-1.py"])["operation_id"]
+        ledger.handoff(op, "owner-1", 1, run={"spec": {"request_id": "req-1", "run_id": op,
+                                                         "command": ["pi", "--mode", "json"], "cwd": str(work),
+                                                         "environment_sha256": "a" * 64, "timeout_seconds": 1800},
+                                                "evidence_dir": str(evidence), "worktree_id": "wt-1"})
+        ledger.unknown(op, "owner-1", 1)
+        ledger.rollover()
+        ledger.close()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["ledger", "reference", path, "--operation", op, "--dialect", DIALECT])
+        self.assertEqual((code, err.getvalue()), (0, ""))
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["stream"], {"status": "ok", "sha256": hashlib.sha256(raw).hexdigest(),
+                                            "bytes": len(raw)})
+        reference = result["reference"]
+        self.assertEqual(reference["frames"], summary["lines"])
+        for vendor, dimension in USAGE_KEYS:
+            self.assertEqual(reference["usage"][dimension], summary["usage"][vendor], dimension)
+        self.assertEqual((reference["complete"], reference["terminal"]),
+                         (summary["complete"], TERMINAL_FRAME if summary["complete"] else None))
+        self.assertEqual(reference["assistant_messages"], summary["assistant_messages"])
+        self.assertEqual(reference["tool_calls"], sum(summary["tool_calls"].values()))
+        self.assertEqual(reference["tool_errors"], summary["tool_errors"])
+        self.assertEqual(result["missing"], ["total_tokens"])
 
 
 if __name__ == "__main__":
