@@ -201,6 +201,7 @@ class DurableLedgerOracle(LedgerCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual(json.loads(done.stdout), json.loads(json.dumps(expected)))
 
+    @unittest.skipIf(os.name != "posix", "needs SIGKILL; Windows stays NOT_RUN")
     def test_every_call_that_returned_survives_a_kill(self):
         create_ledger(self.path).close()
         done = self.child("import json, os, signal, sys\n"
@@ -441,6 +442,7 @@ class DurableLedgerOracle(LedgerCase):
         first.close()
         second.close()
 
+    @unittest.skipIf(os.name != "posix", "a read-only directory does not refuse a new file on Windows")
     def test_a_failed_append_makes_the_instance_unavailable_and_records_nothing(self):
         ledger = create_ledger(self.path)
         ledger.seed_request("req-1", "repo-1", CAPS)

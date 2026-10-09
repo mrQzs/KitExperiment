@@ -264,6 +264,7 @@ class ClosingOracle(CliCase):
                 ledger.request_ids()
             self.assertEqual(ctx.exception.code, "E_LEDGER_UNAVAILABLE", "a command left its ledger open")
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd or /proc/self/fd; Windows stays NOT_RUN")
     def test_every_command_closes_the_ledger(self):
         ops = self.crashed()
         fd_dir = "/dev/fd" if os.path.isdir("/dev/fd") else "/proc/self/fd"

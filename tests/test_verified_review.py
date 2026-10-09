@@ -380,6 +380,7 @@ class RecoveryStreamTests(Base):
             self.assertEqual(self.calls, [], "the candidate hash was computed")
 
 
+@unittest.skipIf(os.name != "posix", "read_stream opens with O_NOFOLLOW; Windows stays NOT_RUN")
 class ReadStreamTests(Base):
     def setUp(self):
         super().setUp()

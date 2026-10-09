@@ -59,6 +59,7 @@ class ProcessIdentityProbes(unittest.TestCase):
             with self.subTest(argv0=argv0, cwd=cwd):
                 self.assertEqual(self.code_of(resolve_executable, argv0, cwd=cwd, environment={}), "E_RUNTIME_IDENTITY")
 
+    @unittest.skipIf(os.name != "posix", "resolves 'sh' through /usr/bin:/bin; Windows stays NOT_RUN")
     def test_path_entries_must_be_absolute(self):
         self.assertTrue(resolve_executable("sh", cwd="/", environment={"PATH": "/usr/bin:/bin"}).endswith("sh"))
         for path in ("bin:/usr/bin:/bin", "/usr/bin::/bin", ":/bin"):

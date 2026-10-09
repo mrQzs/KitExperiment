@@ -572,6 +572,7 @@ class BootIdTests(RejectionAssertions):
         return native
 
 
+@unittest.skipIf(os.name != "posix", "resolve_executable follows POSIX PATH rules (':'-separated, '/'-rooted entries, executable bits); Windows stays NOT_RUN")
 class ResolveExecutableTests(RejectionAssertions):
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory()
@@ -950,6 +951,7 @@ class FileSha256Tests(RejectionAssertions):
         self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
 
     @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores file permissions")
+    @unittest.skipIf(os.name != "posix", "chmod 0o000 does not make a file unreadable on Windows")
     def test_unreadable_file_is_rejected(self):
         path = self.write("unreadable", b"identity payload\n")
         self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
@@ -960,6 +962,7 @@ class FileSha256Tests(RejectionAssertions):
         self.assertEqual(file_sha256(path), hashlib.sha256(b"identity payload\n").hexdigest())
 
 
+@unittest.skipIf(os.name != "posix", "capture_process_identity needs a native boot id (macOS sysctl or Linux /proc); Windows stays NOT_RUN")
 class CaptureProcessIdentityTests(RejectionAssertions):
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory()

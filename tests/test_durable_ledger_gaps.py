@@ -115,6 +115,7 @@ class DurableLedgerGaps(unittest.TestCase):
         self.execute(path, ("INSERT INTO commands(seq, command, sha256, previous) VALUES (?, ?, ?, ?)",
                             (last[0] + 1, command, digest, last[2])))
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_a_refused_open_leaks_no_descriptor(self):
         nested = '{"method":"rollover","arguments":{"x":' + "[" * 200000 + "]" * 200000 + "}}"
         damaged = {}
@@ -175,6 +176,7 @@ class DurableLedgerGaps(unittest.TestCase):
                     self.assertEqual(self.code_of(create_ledger, str(target)), "E_LEDGER_EXISTS")
                 self.assertEqual(target.read_bytes(), content, "create took over a file it did not create")
 
+    @unittest.skipIf(os.name != "posix", "rename-while-open and inode identity are POSIX facts; Windows stays NOT_RUN")
     def test_a_failed_create_removes_only_its_own_file(self):
         target = self.work / "new.db"
         real_connect = sqlite3.connect
@@ -312,6 +314,7 @@ class DurableLedgerGaps(unittest.TestCase):
         reopened.close()
 
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_any_exception_from_a_replayed_call_is_a_damaged_ledger(self):
         # The Scheduler refuses everything a log could carry with its own
         # ``ContractError`` today; any other exception a replayed call raises is
@@ -326,6 +329,7 @@ class DurableLedgerGaps(unittest.TestCase):
                 self.assertEqual(fd_count(), before, "a refused open left its connection open")
         open_ledger(self.path).close()
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_a_create_that_fails_after_making_its_file_leaves_nothing_behind(self):
         real_connect = sqlite3.connect
 
@@ -358,6 +362,7 @@ class DurableLedgerGaps(unittest.TestCase):
                 create_ledger(str(target)).close()
 
 
+    @unittest.skipIf(os.name != "posix", "Windows collapses 'link/..' lexically before following the link; the kernel-resolved path is a POSIX fact")
     def test_the_ledger_is_the_file_the_kernel_resolves(self):
         # ``a/link/..`` is ``b`` for the kernel but ``a`` for a path collapsed
         # as text: what is checked, created and removed must be what is opened.
@@ -433,6 +438,7 @@ class DurableLedgerGaps(unittest.TestCase):
         with open_ledger(self.path) as ledger:
             self.assertEqual(ledger.seq, 2)
 
+    @unittest.skipIf(os.name != "posix", "NTFS accepts a lone surrogate in a file name; E_LEDGER_PATH is a POSIX fact")
     def test_a_path_the_file_system_cannot_encode_is_refused(self):
         before = sorted(os.listdir(self.work))
         for name in ("\ud800.db", "ledger-\udfff.db"):
@@ -442,6 +448,7 @@ class DurableLedgerGaps(unittest.TestCase):
                 self.assertEqual(self.code_of(create_ledger, path), "E_LEDGER_PATH")
         self.assertEqual(sorted(os.listdir(self.work)), before)
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_any_failure_while_parsing_a_command_is_a_damaged_ledger(self):
         open_ledger(self.path).close()
         before = fd_count()
@@ -451,6 +458,7 @@ class DurableLedgerGaps(unittest.TestCase):
                     self.assertEqual(self.code_of(open_ledger, self.path), "E_LEDGER_REPLAY")
                 self.assertEqual(fd_count(), before, "a refused open left its connection open")
 
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_a_failure_to_close_the_creation_descriptor_removes_the_file(self):
         real_close = os.close
         closed = []

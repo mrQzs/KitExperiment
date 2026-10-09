@@ -326,6 +326,7 @@ class Lifecycle(DurableLedgerCase):
         with open_ledger(self.path) as reopened:
             self.assertEqual(reopened.seq, 3)
 
+    @unittest.skipIf(os.name != "posix", "a read-only directory does not refuse a new file on Windows")
     def test_a_failed_append_invalidates_the_instance(self):
         ledger = self.seeded()
         # The rollback journal cannot be created in a read-only directory, so the
@@ -420,6 +421,7 @@ class InMemoryFailure(DurableLedgerCase):
 
 
 class OpenPragmaFailure(DurableLedgerCase):
+    @unittest.skipIf(os.name != "posix", "descriptor census through /dev/fd; Windows stays NOT_RUN")
     def test_a_failed_pragma_closes_the_connection(self):
         ledger = self.seeded()
         ledger.close()
@@ -453,6 +455,7 @@ class OpenPragmaFailure(DurableLedgerCase):
 
 
 class CreateRefusals(DurableLedgerCase):
+    @unittest.skipIf(os.name != "posix", "a read-only directory does not refuse a new file on Windows")
     def test_a_create_that_cannot_make_its_file_leaves_nothing_behind(self):
         # Legal baseline: the same call in a writable directory creates a ledger.
         good = str(self.work / "good.db")
