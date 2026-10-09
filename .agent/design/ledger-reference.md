@@ -111,6 +111,7 @@
 - R7：没有 `O_NOFOLLOW` 的平台（实际上就是 Windows）走第 3.4 节的分支：`os.lstat` 的 `FileNotFoundError` 是 `missing`，其他 `OSError` 是 `unreadable`；不是 `S_ISREG` 或 `st_file_attributes` 含 `FILE_ATTRIBUTE_REPARSE_POINT` 是 `unreadable`；打开用 `os.O_RDONLY | os.O_BINARY`；`fstat` 不是普通文件或 `(st_dev, st_ino)` 与 `lstat` 不同是 `unreadable`。模块导入仍无副作用；两个分支之后的代码共用。
 - R8：证据分三类：五份缩减夹具经命令算出的参考值要与调度器的汇总一致（captured）；本机 `.agent/runs` 里最大的完整流（11 MB）经命令读取是规划端专用证据；Windows 分支的链接拒绝是本机原生证据（建符号链接需要权限，没有权限时跳过那一例，其余照跑）。
 - R9：不改 `status`、`settle` 与账本；不给 `settle` 加“照抄参考值”的捷径。
+- R10（a001 复审 F1，规划端裁定）：非 POSIX 分支在打开阶段遇到 `FileNotFoundError`（`lstat` 与 `open` 之间文件被删）报 `missing`，其他 `OSError` 报 `unreadable`，与 POSIX 分支对 `os.open` 的映射相同。合同第 7.3 条把 `FileNotFoundError` 混进了“其他 `OSError`”，规划端草稿与候选都按这里的读法实现；oracle 用 mock `os.open` 钉住两种映射。
 
 ## 7. 合同拆分
 

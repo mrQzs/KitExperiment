@@ -296,7 +296,7 @@ class MissingCase(ReferenceCase):
         with open_ledger(self.path) as ledger:
             ledger.observe(operations["run"], "total_tokens", "call-1", 1, None, False, EVIDENCE)
         out = self.reference(operations["run"])
-        self.assertIn("total_tokens", out["missing"])
+        self.assertEqual(out["missing"], ["total_tokens", "cache_read_tokens", "output_tokens"])
         self.assertEqual((out["recorded"]["total_tokens"]["amount"], out["recorded"]["total_tokens"]["final"]),
                          (None, False))
 
@@ -306,7 +306,7 @@ class MissingCase(ReferenceCase):
         with open_ledger(self.path) as ledger:
             ledger.observe(operations["run"], "total_tokens", "call-1", 1, 5, False, EVIDENCE)
         out = self.reference(operations["run"])
-        self.assertIn("total_tokens", out["missing"])
+        self.assertEqual(out["missing"], ["total_tokens", "cache_read_tokens", "output_tokens"])
         self.assertEqual((out["recorded"]["total_tokens"]["amount"], out["recorded"]["total_tokens"]["final"]),
                          (5, False))
 
@@ -399,6 +399,7 @@ class ReasonCase(ReferenceCase):
     def test_all_three_reasons_keep_their_order(self):
         reference = self.reference_for([session(), assistant("toolUse", dict(usage(), output="7")), {"type": "queue"}])
         self.assertEqual(reference["reasons"], ["no_terminal", "illegal_usage", "unknown_frames"])
+        self.assertEqual((reference["complete"], reference["usage"], reference["unknown"]), (False, sums(), 1))
 
     def test_an_incomplete_stream_still_sums_the_legal_messages(self):
         first, second = usage(10, 5), usage(20, 7, 100)

@@ -502,6 +502,21 @@ class WithoutNofollowOracle(ReferenceCase):
             outcome = read_stream(str(self.evidence))
         self.assertEqual(outcome, {"status": "unreadable", "sha256": None, "bytes": None, "events": None})
 
+    def test_an_open_that_fails_after_the_lstat_maps_like_the_posix_branch(self):
+        """Planner decision R10 (review of attempt-001, F1): the open stage reports a
+        file that vanished after the ``lstat`` as ``missing`` and any other failure
+        to open as ``unreadable``, exactly as the POSIX branch reports ``os.open``."""
+        raw = stream_bytes([session(), assistant(), settled()])
+        self.write_stream(raw)
+        self.assertEqual(read_stream(str(self.evidence))["status"], "ok")  # legal baseline
+        with mock.patch.object(adapter_run.os, "open", side_effect=FileNotFoundError(2, "gone between the calls")):
+            self.assertEqual(read_stream(str(self.evidence)),
+                             {"status": "missing", "sha256": None, "bytes": None, "events": None})
+        with mock.patch.object(adapter_run.os, "open", side_effect=PermissionError(13, "denied")):
+            self.assertEqual(read_stream(str(self.evidence)),
+                             {"status": "unreadable", "sha256": None, "bytes": None, "events": None})
+        self.assertEqual(read_stream(str(self.evidence))["status"], "ok")
+
     def test_an_identity_that_is_not_the_lstat_one_is_refused(self):
         raw = stream_bytes([session(), assistant(), settled()])
         path = self.write_stream(raw)
