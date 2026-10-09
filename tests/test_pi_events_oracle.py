@@ -16,6 +16,7 @@ Two kinds of evidence, kept apart:
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -290,7 +291,7 @@ class Mapping(unittest.TestCase):
 # --- fail closed ------------------------------------------------------------
 
 class FailClosed(unittest.TestCase):
-    def odd(self, frames, kind, reason_prefix, line, frame_type):
+    def odd(self, frames, kind, reason, line, frame_type):
         translation = translate(frames)
         odd = [e for e in translation.events if e["type"] in (UNKNOWN_FRAME, INVALID_FRAME)]
         self.assertEqual(len(odd), 1, kinds(translation))
@@ -299,8 +300,7 @@ class FailClosed(unittest.TestCase):
         self.assertEqual(event["event_id"], "L%d" % line)
         payload = event["payload"]
         self.assertEqual(set(payload), {"frame_type", "line", "reason", "sha256", "bytes"})
-        self.assertEqual((payload["frame_type"], payload["line"]), (frame_type, line))
-        self.assertTrue(payload["reason"].startswith(reason_prefix), payload["reason"])
+        self.assertEqual((payload["frame_type"], payload["line"], payload["reason"]), (frame_type, line, reason))
         self.assertRegex(payload["sha256"], "^[0-9a-f]{64}$")
         self.assertIsInstance(payload["bytes"], int)
         self.assertEqual(translation.unknown, 1)
@@ -309,7 +309,7 @@ class FailClosed(unittest.TestCase):
 
     def test_a_frame_type_outside_the_dialect_is_unknown_and_the_run_does_not_settle(self):
         frames = run(assistant("toolUse"), {"type": "compaction_end", "result": {"usage": usage(5, 5)}}, assistant())
-        translation = self.odd(frames, UNKNOWN_FRAME, "frame type outside", 8, "compaction_end")
+        translation = self.odd(frames, UNKNOWN_FRAME, "frame type outside the dialect", 8, "compaction_end")
         self.assertEqual(translation.usage["input_tokens"], 20, "legal messages are still summed as a reference")
         self.assertNotIn("input_tokens", last_usage(translation))
         result = PiNativeAdapter().run(INVOCATION, frames)
@@ -321,60 +321,117 @@ class FailClosed(unittest.TestCase):
         bad_usage = assistant()
         bad_usage["message"]["usage"] = "lots"
         cases = {
-            "message without an object": ([{"type": "message_end", "message": "x"}], "message is not"),
-            "role outside the dialect": ([{"type": "message_end", "message": {"role": "tool"}}], "message role"),
-            "content not a list": ([assistant(content="ok")], "assistant content"),
-            "block without a type": ([assistant(content=[{"text": "x"}])], "assistant content block"),
-            "toolCall without an id": ([assistant(content=[{"type": "toolCall", "id": ""}])], "toolCall block"),
-            "stopReason not text": ([assistant(stopReason=None)], "stopReason"),
-            "provider not text": ([assistant(provider=5)], "provider"),
-            "model not text": ([assistant(model=["m"])], "model"),
-            "responseId not text": ([assistant(responseId=7)], "responseId"),
-            "thinkingLevel not text": ([assistant(thinkingLevel=True)], "thinkingLevel"),
-            "tool start without an id": ([tool_start("")], "toolCallId"),
-            "tool start with an empty name": ([tool_start("t-1", "")], "toolCallId"),
-            "tool end with a numeric id": ([tool_end(7)], "toolCallId"),
-            "tool end with a numeric name": ([tool_end("t-1", 5)], "toolCallId"),
+            "message without an object": ([{"type": "message_end", "message": "x"}], "message is not an object"),
+            "role outside the dialect": ([{"type": "message_end", "message": {"role": "tool"}}],
+                                         "message role outside the dialect"),
+            "content not a list": ([assistant(content="ok")], "assistant content is not a list"),
+            "block without a type": ([assistant(content=[{"text": "x"}])], "assistant content block is malformed"),
+            "block type not text": ([assistant(content=[{"type": 5}])], "assistant content block is malformed"),
+            "toolCall without an id": ([assistant(content=[{"type": "toolCall", "id": ""}])],
+                                       "toolCall block without an id"),
+            "stopReason not text": ([assistant(stopReason=None)], "stopReason is not text"),
+            "provider not text": ([assistant(provider=5)], "provider is not text"),
+            "model not text": ([assistant(model=["m"])], "model is not text"),
+            "responseId not text": ([assistant(responseId=7)], "responseId is not text"),
+            "thinkingLevel not text": ([assistant(thinkingLevel=True)], "thinkingLevel is not text"),
+            "tool start without an id": ([tool_start("")], "toolCallId or toolName is not text"),
+            "tool start with an empty name": ([tool_start("t-1", "")], "toolCallId or toolName is not text"),
+            "tool end with a numeric id": ([tool_end(7)], "toolCallId or toolName is not text"),
+            "tool end with a numeric name": ([tool_end("t-1", 5)], "toolCallId or toolName is not text"),
             "tool end without a name": ([{"type": "tool_execution_end", "toolCallId": "t", "isError": False}],
-                                        "toolCallId"),
-            "isError not a boolean": ([tool_end("t-1", error="no")], "isError"),
-            "willRetry not a boolean": ([agent_end("later")], "willRetry"),
+                                        "toolCallId or toolName is not text"),
+            "isError not a boolean": ([tool_end("t-1", error="no")], "isError is not a boolean"),
+            "willRetry not a boolean": ([agent_end("later")], "willRetry is not a boolean"),
         }
-        for label, (frames, prefix) in cases.items():
+        for label, (frames, reason) in cases.items():
             with self.subTest(case=label):
                 translation = translate([session()] + frames)
                 odd = [e for e in translation.events if e["type"] == INVALID_FRAME]
                 self.assertEqual(len(odd), 1, kinds(translation))
-                self.assertTrue(odd[0]["payload"]["reason"].startswith(prefix), odd[0]["payload"]["reason"])
+                # Reasons are compared whole (planner completion after the review of
+                # attempt-001, F4): a prefix matched more than one reason.
+                self.assertEqual(odd[0]["payload"]["reason"], reason)
                 self.assertEqual(odd[0]["payload"]["frame_type"], frames[0]["type"])
         # The usage shape is checked per value, not per key presence only.
         self.assertEqual(kinds(translate([session(), bad_usage])), ["run_started", "assistant", "usage"])
 
     def test_session_rules(self):
-        self.odd([session(version=2), assistant()], INVALID_FRAME, "session version", 1, "session")
-        self.odd([session(version=True), assistant()], INVALID_FRAME, "session version", 1, "session")
-        self.odd([session(id=3)], INVALID_FRAME, "session id", 1, "session")
-        self.odd([session(), session()], INVALID_FRAME, "second session", 2, "session")
+        self.odd([session(version=2), assistant()], INVALID_FRAME, "session version is not 3", 1, "session")
+        self.odd([session(version=True), assistant()], INVALID_FRAME, "session version is not 3", 1, "session")
+        self.odd([session(id=3)], INVALID_FRAME, "session id or timestamp is not text", 1, "session")
+        self.odd([session(), session()], INVALID_FRAME, "second session header", 2, "session")
         # The header has to be the first frame, not merely the first frame that makes an event.
-        self.odd([{"type": "agent_start"}, session()], INVALID_FRAME, "session header is not the first", 2, "session")
+        self.odd([{"type": "agent_start"}, session()], INVALID_FRAME, "session header is not the first frame", 2,
+                 "session")
+
+    def test_a_malformed_first_header_still_counts_as_the_header(self):
+        # Planner decision N10 after the review of attempt-001 (F3): a header that
+        # failed its shape check was still a header, so the next one is the second.
+        translation = translate([session(version=2), session()])
+        self.assertEqual([(e["type"], e["payload"]["reason"]) for e in translation.events],
+                         [(INVALID_FRAME, "session version is not 3"), (INVALID_FRAME, "second session header")])
+        self.assertEqual(translation.unknown, 2)
 
     def test_a_frame_after_the_terminal_is_unknown_and_the_run_is_refused(self):
         frames = run(assistant()) + [{"type": "agent_start"}]
-        self.odd(frames, UNKNOWN_FRAME, "frame after", 11, "agent_start")
+        self.odd(frames, UNKNOWN_FRAME, "frame after agent_settled", 11, "agent_start")
+        with self.assertRaises(AdapterError) as raised:
+            PiNativeAdapter().run(INVOCATION, frames)
+        self.assertEqual(raised.exception.code, "E_ADAPTER_SETTLEMENT")
+
+    def test_the_object_and_type_checks_come_before_the_terminal_gate(self):
+        # Planner decision N15 after the review of attempt-001 (F2): a frame that is
+        # not an object, or whose type is not text, is invalid wherever it appears,
+        # including after agent_settled; only a well-formed frame there is "after".
+        frames = run(assistant()) + ["x", {"type": 7}, {"type": "agent_start"}]
+        translation = translate(frames)
+        tail = [(e["type"], e["payload"]["reason"]) for e in translation.events[-3:]]
+        self.assertEqual(tail, [(INVALID_FRAME, "frame is not an object"), (INVALID_FRAME, "type is not text"),
+                                (UNKNOWN_FRAME, "frame after agent_settled")])
         with self.assertRaises(AdapterError) as raised:
             PiNativeAdapter().run(INVOCATION, frames)
         self.assertEqual(raised.exception.code, "E_ADAPTER_SETTLEMENT")
 
     def test_frames_that_are_not_objects_are_invalid(self):
-        self.odd([session(), "agent_start"], INVALID_FRAME, "frame is not", 2, None)
-        self.odd([session(), ["agent_start"]], INVALID_FRAME, "frame is not", 2, None)
-        self.odd([session(), None], INVALID_FRAME, "frame is not", 2, None)
-        self.odd([session(), {"type": 7}], INVALID_FRAME, "type is not", 2, None)
-        self.odd([session(), {"kind": "agent_start"}], INVALID_FRAME, "type is not", 2, None)
+        self.odd([session(), "agent_start"], INVALID_FRAME, "frame is not an object", 2, None)
+        self.odd([session(), ["agent_start"]], INVALID_FRAME, "frame is not an object", 2, None)
+        self.odd([session(), None], INVALID_FRAME, "frame is not an object", 2, None)
+        self.odd([session(), {"type": 7}], INVALID_FRAME, "type is not text", 2, None)
+        self.odd([session(), {"kind": "agent_start"}], INVALID_FRAME, "type is not text", 2, None)
+
+    def test_strings_copied_into_a_payload_are_bounded_by_the_reducer(self):
+        # Planner decision N4 after the review of attempt-001 (F5): the translator
+        # copies identifiers (type, toolCallId, toolName, ...) as they are and never
+        # raises; a string longer than the protocol's payload bound is refused by the
+        # reducer's own payload check, which is a refusal of the stream, not a
+        # settlement.  Real streams never get here: read_stream parses one line
+        # within 1 MiB, and Pi's identifiers are short.
+        for label, frame in {"a huge frame type": {"type": "x" * 1_100_000},
+                             "a huge tool id": tool_start("t" * 1_100_000)}.items():
+            with self.subTest(case=label):
+                frames = [session(), frame]
+                translation = translate(frames)
+                self.assertEqual(len(translation.events), 2)
+                with self.assertRaises(AdapterError) as raised:
+                    PiNativeAdapter().run(INVOCATION, frames)
+                self.assertEqual(raised.exception.code, "E_ADAPTER_EVENT")
+
+    def test_a_frame_that_cannot_be_encoded_at_all_still_becomes_an_event(self):
+        # Planner decision N16 after the review of attempt-001 (F6): when neither the
+        # canonical JSON nor repr() can be produced, the digest is that of no bytes.
+        class Unprintable:
+            def __repr__(self):
+                raise RuntimeError("no repr")
+
+        translation = translate([session(), {"type": "future_frame", "value": Unprintable()}])
+        payload = translation.events[1]["payload"]
+        self.assertEqual((translation.events[1]["type"], payload["frame_type"], payload["bytes"]),
+                         (UNKNOWN_FRAME, "future_frame", 0))
+        self.assertEqual(payload["sha256"], hashlib.sha256(b"").hexdigest())
 
     def test_an_odd_frame_payload_is_bounded_whatever_the_frame_holds(self):
         huge = {"type": "future_frame", "blob": "x" * 2_000_000, "nested": {"a": [1, 2, {"b": "y" * 100_000}]}}
-        translation = self.odd([session(), huge], UNKNOWN_FRAME, "frame type outside", 2, "future_frame")
+        translation = self.odd([session(), huge], UNKNOWN_FRAME, "frame type outside the dialect", 2, "future_frame")
         payload = translation.events[1]["payload"]
         self.assertLess(len(json.dumps(payload)), 400)
         self.assertEqual(payload["bytes"], len(json.dumps(huge, sort_keys=True, ensure_ascii=False,

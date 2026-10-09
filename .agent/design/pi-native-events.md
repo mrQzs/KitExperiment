@@ -102,7 +102,7 @@
 - N1：模块名 `pi_events`，方言名 `pi-session-v3`，adapter_id `pi`，protocol_version `pi-session-v3`。
 - N2：事件 id `L<行号>`（两个事件时加 `.assistant` / `.usage`），seq 按产出顺序，source `pi`。
 - N3：payload 只放结构事实：文本内容、thinking、工具参数与结果、`cwd` 都不进事件。
-- N4：未知与畸形帧的 payload 只放 `frame_type`、`line`、`reason`、`sha256`、`bytes`，不放原帧，所以永远有界。
+- N4：未知与畸形帧的 payload 只放 `frame_type`、`line`、`reason`、`sha256`、`bytes`，不放原帧。事件里逐字复制的标识符（`frame_type`、`tool_id`、`tool`、`session_id` 等）不另设上限：在 Pi 实际的字符串长度下 payload 有界；超过协议 payload 上限（1 MiB）的字符串由归约器的 payload 检查以 `E_ADAPTER_EVENT` 拒绝整条流，不是结算。经 `read_stream` 的真实流单行不超过 1 MiB，到不了这里（a001 复审 F5）。
 - N5：toolResult 消息不翻译也不核对；工具配对由归约器按 `tool_execution_start` / `tool_execution_end` 把守。
 - N6：翻译器保持薄：不做配对、不做 seq 之外的校验，不重复参考归约器的规则；它负责的是“把 Pi 的帧如实变成词表里的事件”。
 - N7：夹具缩减规则见 3.6；缩减流与完整流的翻译结果除事件 id（它带帧的行号，省略会改变行号）外必须相同，由规划端专用测试断言。
@@ -113,6 +113,8 @@
 - N12：assistant `message_end` 的 `message` 必须是 dict，`content` 必须是 list（块是 dict，按 `type` 计数，toolCall 块的 `id` 必须是非空 str），`stopReason`、`provider`、`model` 必须是 str；否则畸形帧。`responseId` 与 `thinkingLevel` 缺失时为 None。
 - N13：`message_end` 的 role 不是 `system` / `user` / `assistant` / `toolResult` → 畸形帧。
 - N14：空流、第一帧不是 `session`：不是畸形的“错”，而是没有 `run_started`，由归约器报 `E_ADAPTER_SETTLEMENT`；翻译器只如实产出。
+- N15（a001 复审 F2）：帧不是 dict、`type` 不是 str 的检查先于“终止之后”的门：`agent_settled` 之后的这类帧报 `pi.invalid_frame`（`frame is not an object` / `type is not text`），其余帧报 `pi.unknown_frame`（`frame after agent_settled`）。两种都失败关闭。执行器自己做了这个裁定但没写进报告，由 oracle 钉住。
+- N16（a001 复审 F6）：`_frame_digest` 的规范 JSON 与 `repr` 都失败时（例如值的 `__repr__` 抛出），`bytes` 为 0、`sha256` 是空字节串的摘要；翻译器仍不抛出。
 
 以上决定都可以在后续合同里修改；改动时更新本节。
 

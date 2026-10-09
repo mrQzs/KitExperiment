@@ -14,6 +14,7 @@ import json
 import unittest
 import unittest.mock
 
+from sentinelmesh import pi_events
 from sentinelmesh.adapter_protocol import AdapterError, Invocation, OfflineAdapter
 from sentinelmesh.pi_events import (
     DIALECT,
@@ -126,29 +127,33 @@ def odd_events(translation):
 
 class SessionHeader(unittest.TestCase):
     def test_session_id_not_text(self):
-        self.assertEqual(odd_events(translate([session()])), [])
-        odd = [e for e in translate([session(id=3)]).events if e["type"] == INVALID_FRAME]
-        self._assert_one(odd, "session", 1, "session id")
+        self._assert_one(session(id=3), "session id or timestamp is not text")
 
     def test_session_timestamp_not_text(self):
-        odd = [e for e in translate([session(timestamp=5)]).events if e["type"] == INVALID_FRAME]
-        self._assert_one(odd, "session", 1, "session id")
+        self._assert_one(session(timestamp=5), "session id or timestamp is not text")
 
     def test_session_version_as_text(self):
-        odd = [e for e in translate([session(version="3")]).events if e["type"] == INVALID_FRAME]
-        self._assert_one(odd, "session", 1, "session version")
+        self._assert_one(session(version="3"), "session version is not 3")
 
-    def _assert_one(self, odd, frame_type, line, reason_prefix):
-        self.assertEqual(len(odd), 1)
+    def _assert_one(self, bad, reason):
+        # Planner completion (review of attempt-001, F4): the legal baseline is
+        # proven for every case and the whole odd event is checked, exactly as
+        # MalformedFrames._one_invalid does for the other frames.
+        self.assertEqual(odd_events(translate([session()])), [], "the legal header produces no odd event")
+        result = translate([bad])
+        odd = [e for e in result.events if e["type"] == INVALID_FRAME]
+        self.assertEqual(len(odd), 1, [e["type"] for e in result.events])
         payload = odd[0]["payload"]
-        self.assertEqual((payload["frame_type"], payload["line"]), (frame_type, line))
-        self.assertTrue(payload["reason"].startswith(reason_prefix), payload["reason"])
+        self.assertEqual(odd[0]["event_id"], "L1")
+        self.assertEqual(set(payload), {"frame_type", "line", "reason", "sha256", "bytes"})
+        self.assertEqual((payload["frame_type"], payload["line"], payload["reason"]), ("session", 1, reason))
+        self.assertEqual((result.unknown, result.usage_complete), (1, False))
 
 
 # --- malformed known frames ------------------------------------------------
 
 class MalformedFrames(unittest.TestCase):
-    def _one_invalid(self, good, bad, reason_prefix, frame_type, line=2):
+    def _one_invalid(self, good, bad, reason, frame_type, line=2):
         self.assertEqual(odd_events(translate([session(), good])), [],
                          "the legal baseline must produce no unknown/invalid event")
         result = translate([session(), bad])
@@ -157,65 +162,76 @@ class MalformedFrames(unittest.TestCase):
         payload = odd[0]["payload"]
         self.assertEqual(odd[0]["event_id"], "L%d" % line)
         self.assertEqual((payload["frame_type"], payload["line"]), (frame_type, line))
-        self.assertTrue(payload["reason"].startswith(reason_prefix), payload["reason"])
+        # The reason is compared whole (planner completion, review of attempt-001,
+        # F4): a prefix such as "assistant content" matched two different reasons.
+        self.assertEqual(payload["reason"], reason)
         self.assertEqual(set(payload), {"frame_type", "line", "reason", "sha256", "bytes"})
         self.assertEqual(result.unknown, 1)
         self.assertFalse(result.usage_complete)
 
     def test_message_end_shapes(self):
         cases = [
-            ("message is not an object", {"type": "message_end", "message": "x"}, "message is not"),
-            ("role is not text", asst(role=5), "message role"),
-            ("role outside the dialect", asst(role="tool"), "message role"),
-            ("content is not a list", asst(content="ok"), "assistant content"),
-            ("block is not an object", asst(content=["x"]), "assistant content block"),
-            ("block type is not text", asst(content=[{"text": "x"}]), "assistant content block"),
-            ("toolCall block without an id", asst(content=[{"type": "toolCall", "name": "bash"}]), "toolCall block"),
-            ("toolCall id is empty", asst(content=[{"type": "toolCall", "id": ""}]), "toolCall block"),
-            ("toolCall id is not text", asst(content=[{"type": "toolCall", "id": 7}]), "toolCall block"),
-            ("stopReason is missing", asst_without("stopReason"), "stopReason"),
-            ("stopReason is not text", asst(stopReason=5), "stopReason"),
-            ("provider is missing", asst_without("provider"), "provider"),
-            ("provider is not text", asst(provider=5), "provider"),
-            ("model is missing", asst_without("model"), "model"),
-            ("model is not text", asst(model=["m"]), "model"),
-            ("responseId present but not text", asst(responseId=7), "responseId"),
-            ("thinkingLevel present but not text", asst(thinkingLevel=True), "thinkingLevel"),
+            ("message is not an object", {"type": "message_end", "message": "x"}, "message is not an object"),
+            ("role is not text", asst(role=5), "message role outside the dialect"),
+            ("role outside the dialect", asst(role="tool"), "message role outside the dialect"),
+            ("content is not a list", asst(content="ok"), "assistant content is not a list"),
+            ("block is not an object", asst(content=["x"]), "assistant content block is malformed"),
+            ("block without a type", asst(content=[{"text": "x"}]), "assistant content block is malformed"),
+            ("block type is not text", asst(content=[{"type": 5}]), "assistant content block is malformed"),
+            ("toolCall block without an id", asst(content=[{"type": "toolCall", "name": "bash"}]),
+             "toolCall block without an id"),
+            ("toolCall id is empty", asst(content=[{"type": "toolCall", "id": ""}]), "toolCall block without an id"),
+            ("toolCall id is not text", asst(content=[{"type": "toolCall", "id": 7}]), "toolCall block without an id"),
+            ("stopReason is missing", asst_without("stopReason"), "stopReason is not text"),
+            ("stopReason is not text", asst(stopReason=5), "stopReason is not text"),
+            ("provider is missing", asst_without("provider"), "provider is not text"),
+            ("provider is not text", asst(provider=5), "provider is not text"),
+            ("model is missing", asst_without("model"), "model is not text"),
+            ("model is not text", asst(model=["m"]), "model is not text"),
+            ("responseId present but not text", asst(responseId=7), "responseId is not text"),
+            ("thinkingLevel present but not text", asst(thinkingLevel=True), "thinkingLevel is not text"),
         ]
-        for label, bad, prefix in cases:
+        for label, bad, reason in cases:
             with self.subTest(case=label):
-                self._one_invalid(asst(), bad, prefix, "message_end")
+                self._one_invalid(asst(), bad, reason, "message_end")
 
     def test_tool_execution_start_shapes(self):
         cases = [
-            ("toolCallId is missing", tool_start_without("toolCallId"), "toolCallId"),
-            ("toolCallId is empty", tool_start(tool_id=""), "toolCallId"),
-            ("toolCallId is not text", tool_start(tool_id=7), "toolCallId"),
-            ("toolName is missing", tool_start_without("toolName"), "toolCallId"),
-            ("toolName is empty", tool_start(name=""), "toolCallId"),
-            ("toolName is not text", tool_start(name=5), "toolCallId"),
+            ("toolCallId is missing", tool_start_without("toolCallId")),
+            ("toolCallId is empty", tool_start(tool_id="")),
+            ("toolCallId is not text", tool_start(tool_id=7)),
+            ("toolName is missing", tool_start_without("toolName")),
+            ("toolName is empty", tool_start(name="")),
+            ("toolName is not text", tool_start(name=5)),
         ]
-        for label, bad, prefix in cases:
+        for label, bad in cases:
             with self.subTest(case=label):
-                self._one_invalid(tool_start(), bad, prefix, "tool_execution_start")
+                self._one_invalid(tool_start(), bad, "toolCallId or toolName is not text", "tool_execution_start")
 
     def test_tool_execution_end_shapes(self):
         cases = [
-            ("isError is missing", tool_end_without("isError"), "isError"),
-            ("isError is not a boolean", tool_end(is_error="no"), "isError"),
+            ("isError is missing", tool_end_without("isError"), "isError is not a boolean"),
+            ("isError is not a boolean", tool_end(is_error="no"), "isError is not a boolean"),
+            # The id and name rules of the end frame (planner completion, F4).
+            ("toolCallId is missing", tool_end_without("toolCallId"), "toolCallId or toolName is not text"),
+            ("toolCallId is empty", tool_end(tool_id=""), "toolCallId or toolName is not text"),
+            ("toolCallId is not text", tool_end(tool_id=7), "toolCallId or toolName is not text"),
+            ("toolName is missing", tool_end_without("toolName"), "toolCallId or toolName is not text"),
+            ("toolName is empty", tool_end(name=""), "toolCallId or toolName is not text"),
+            ("toolName is not text", tool_end(name=5), "toolCallId or toolName is not text"),
         ]
-        for label, bad, prefix in cases:
+        for label, bad, reason in cases:
             with self.subTest(case=label):
-                self._one_invalid(tool_end(), bad, prefix, "tool_execution_end")
+                self._one_invalid(tool_end(), bad, reason, "tool_execution_end")
 
     def test_agent_end_shapes(self):
         cases = [
-            ("willRetry is missing", agent_end_without("willRetry"), "willRetry"),
-            ("willRetry is not a boolean", agent_end(will_retry="later"), "willRetry"),
+            ("willRetry is missing", agent_end_without("willRetry")),
+            ("willRetry is not a boolean", agent_end(will_retry="later")),
         ]
-        for label, bad, prefix in cases:
+        for label, bad in cases:
             with self.subTest(case=label):
-                self._one_invalid(agent_end(), bad, prefix, "agent_end")
+                self._one_invalid(agent_end(), bad, "willRetry is not a boolean", "agent_end")
 
 
 # --- check order -----------------------------------------------------------
@@ -230,18 +246,18 @@ class CheckOrder(unittest.TestCase):
         self.assertEqual(odd_events(translate([session()])), [])
         payload = self._first_invalid_reason([session(), session(version=2)])
         self.assertEqual((payload["frame_type"], payload["line"]), ("session", 2))
-        self.assertTrue(payload["reason"].startswith("second session"), payload["reason"])
+        self.assertEqual(payload["reason"], "second session header")
 
     def test_role_beats_content(self):
         self.assertEqual(odd_events(translate([session(), asst()])), [])
         payload = self._first_invalid_reason(
             [session(), {"type": "message_end", "message": {"role": "tool", "content": "notlist"}}])
-        self.assertTrue(payload["reason"].startswith("message role"), payload["reason"])
+        self.assertEqual(payload["reason"], "message role outside the dialect")
 
     def test_stop_reason_beats_provider(self):
         self.assertEqual(odd_events(translate([session(), asst()])), [])
         payload = self._first_invalid_reason([session(), asst(stopReason=5, provider=5)])
-        self.assertTrue(payload["reason"].startswith("stopReason"), payload["reason"])
+        self.assertEqual(payload["reason"], "stopReason is not text")
 
 
 # --- ignored counts --------------------------------------------------------
@@ -433,24 +449,40 @@ class AdapterSurface(unittest.TestCase):
                 self.assertEqual(raised.exception.code, "E_ADAPTER_IDENTITY")
 
     def test_run_hands_the_reducer_copies_of_the_translation(self):
+        # Planner completion after the review of attempt-001 (independent review
+        # F1): the executor's version compared the reducer's events with a *fresh*
+        # translate() call, which are different objects whatever run() does, so the
+        # mutation that drops the copies survived.  The translation run() actually
+        # used is captured through the module's own translate, and the reducer's
+        # input is tampered with to show that translation was not shared.
         adapter = PiNativeAdapter()
         frames = [session(), asst(), SETTLED]
+        inner = {}
+        real_translate = pi_events.translate
+
+        def recording_translate(frames_seen):
+            inner["translation"] = real_translate(frames_seen)
+            return inner["translation"]
+
         captured = {}
         real_run = OfflineAdapter.run
 
         def spy(inner_self, inv, events):
             captured["events"] = events
+            events[0]["payload"]["tampered"] = True
             return real_run(inner_self, inv, events)
 
-        with unittest.mock.patch.object(OfflineAdapter, "run", spy):
+        with unittest.mock.patch.object(pi_events, "translate", recording_translate), \
+                unittest.mock.patch.object(OfflineAdapter, "run", spy):
             result = adapter.run(invocation("pi"), frames)
         self.assertEqual(result.status, "SUCCEEDED")
-        fresh = translate(frames)
-        self.assertEqual(len(captured["events"]), len(fresh.events))
-        for got, own in zip(captured["events"], fresh.events):
-            self.assertEqual(got, own, "the reducer must see equal events")
+        own_events = inner["translation"].events
+        self.assertEqual(len(captured["events"]), len(own_events))
+        for got, own in zip(captured["events"], own_events):
             self.assertIsNot(got, own, "the reducer must see copies, not the translator's objects")
             self.assertIsNot(got["payload"], own["payload"])
+        self.assertNotIn("tampered", own_events[0]["payload"], "the translation run() used must not change")
+        self.assertEqual(captured["events"][1], own_events[1], "a copy is still an equal event")
 
 
 if __name__ == "__main__":
