@@ -74,10 +74,11 @@
 ### 3.6 夹具与 oracle
 
 - `tests/fixtures/pi_native/reduce.py`：规划端工具，从一个 attempt 目录生成脱敏缩减流 `<名>.jsonl` 与 `<名>.meta.json`。规则：
-  - 保留每一帧与全部结构字段；每条 assistant 消息的 `message_update` 只保留第一条与最后一条，其余省略并计数（这些帧只有文本增量与累计 usage 快照，翻译器不读）；
-  - 超过 96 个字符的字符串值截成前 80 个字符加 `…[reduced len=N sha256=前 12 位]`；数字、布尔、null、键名与嵌套结构不变；
+  - 保留每一帧与全部结构字段；流式更新帧例外：每条 assistant 消息的 `message_update`、每次工具调用的 `tool_execution_update` 只保留第一条与最后一条，其余省略并计数（这些帧只有文本增量、部分结果与累计 usage 快照，翻译器不读）；
+  - 超过 64 个字符的字符串值截成前 48 个字符加 `…[reduced len=N sha256=前 12 位]`；数字、布尔、null、键名与嵌套结构不变；
   - meta 记来源（attempt、pi 版本、平台、工具版本、原文件 sha256、行数与字节数、省略条数）与调度器的独立汇总（`usage`、`assistant_messages`、`tool_calls`、`tool_errors`、`final_stop_reason`、`terminal_event`、`complete`、`event_counts`、`actual_models`）。
-- 5 份夹具：三个 pi 版本各一份完整流（都含工具错误），两份被截断的流。每份不超过 300 KB。
+- 5 份夹具：三个 pi 版本各一份完整流（都含工具错误），两份被截断的流。每份不超过 400 KB（原拟 300 KB；Windows 上 pi 1.0.1 的三次完整运行都更长，缩减后的体积主要是结构而不是文本，最大的一份 356 KiB，五份合计约 1.1 MB）。
+- 夹具里保留了约 30 行含本机路径（旧 macOS 与旧 Windows 账户的用户名）的字符串前缀；不含凭据。
 - oracle `tests/test_pi_events_oracle.py`：对每份夹具核对翻译事实与 meta 里调度器的数（用量相等、消息数相等、工具调用数相等、工具错误数相等、模型集合相等、终止与 complete 一致）；三份完整流经 `PiNativeAdapter.run` 结算为 `SUCCEEDED`、usage 等于调度器的数且 `complete` 为真；两份截断流不结算、usage unknown、翻译的累计等于调度器的数；另有合成反例（标明合成）：未知帧、第二个 session 头、`agent_settled` 之后还有帧、五种不合法的 usage 值、工具配对违规、非 `stop` 的终止、`willRetry` 为 true 的重试周期、空流、第一帧不是 session、不是 dict 的帧、`adapter_id` 不符、导入无副作用、确定性。
 - 规划端专用 `tests/test_pi_events_captured.py`：仓库里有 `.agent/runs` 时，对全部 30 次完整流复核同样的事实，并断言 translate(完整流) == translate(缩减流)（证明缩减没有改变任何结构事实）；没有 `.agent/runs` 时跳过。执行器的 worktree 看不到 `.agent/runs`，这份测试在那里只会跳过，它是规划端的证据，不进 DoD。
 
@@ -104,10 +105,10 @@
 - N4：未知与畸形帧的 payload 只放 `frame_type`、`line`、`reason`、`sha256`、`bytes`，不放原帧，所以永远有界。
 - N5：toolResult 消息不翻译也不核对；工具配对由归约器按 `tool_execution_start` / `tool_execution_end` 把守。
 - N6：翻译器保持薄：不做配对、不做 seq 之外的校验，不重复参考归约器的规则；它负责的是“把 Pi 的帧如实变成词表里的事件”。
-- N7：夹具缩减规则见 3.6；缩减流与完整流的翻译结果必须相同，由规划端专用测试断言。
+- N7：夹具缩减规则见 3.6；缩减流与完整流的翻译结果除事件 id（它带帧的行号，省略会改变行号）外必须相同，由规划端专用测试断言。
 - N8：用量维度名用小写下划线：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_write_tokens`、`total_tokens`；计数 `assistant_messages`、`tool_calls`。
 - N9：`agent_cycles` 数 `agent_start`；`agent_end` 的 `willRetry` 不是布尔值 → 畸形帧。
-- N10：`session` 必须是第一帧且 `version` 是精确 int 3；其他版本或第二个 `session` → 畸形帧（方言版本化）。
+- N10：`session` 必须是第一帧（第 1 行，不是“第一个产生事件的帧”）且 `version` 是精确 int 3，`id` 与 `timestamp` 是 str；其他版本、不在第 1 行或第二个 `session` → 畸形帧（方言版本化）。
 - N11：`tool_execution_start` / `tool_execution_end` 的 `toolCallId` 与 `toolName` 必须是非空 str，`tool_execution_end` 的 `isError` 必须是布尔值；否则畸形帧。
 - N12：assistant `message_end` 的 `message` 必须是 dict，`content` 必须是 list（块是 dict，按 `type` 计数，toolCall 块的 `id` 必须是非空 str），`stopReason`、`provider`、`model` 必须是 str；否则畸形帧。`responseId` 与 `thinkingLevel` 缺失时为 None。
 - N13：`message_end` 的 role 不是 `system` / `user` / `assistant` / `toolResult` → 畸形帧。
