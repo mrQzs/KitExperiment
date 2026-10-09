@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "task_id": "ledger-reference",
+  "plan_version": 1,
+  "title": "reference usage of a supervised run from its output stream",
+  "repository": "KitExperiment",
+  "base_sha": "7cdb039c386c418982df2a2e19d5e67e992cb0c3",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/ledger_cli.py",
+      "sentinelmesh/adapter_run.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_ledger_reference.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_ledger_reference_oracle.py",
+      "tests/test_pi_events_captured.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_reference_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_reference.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_cli.py",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_adapter_run.py",
+        "tests/test_adapter_run_gaps.py",
+        "tests/test_adapter_run_oracle.py",
+        "tests/test_pi_events.py",
+        "tests/test_pi_events_oracle.py",
+        "tests/test_verified_review.py",
+        "tests/test_verified_review_gaps.py",
+        "tests/test_verified_review_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.ledger_cli, sentinelmesh.adapter_run; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "python",
+        "-m",
+        "sentinelmesh.cli",
+        "ledger",
+        "reference",
+        "--help"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "--dialect"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "命令、参数与参数错误的退出码（Behavior contract 第 1 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V08"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "流程、检查顺序、拒绝码与“从不写”（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "输出的 13 个键、`missing` 与 `stream` 摘要（第 3–5 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "`pi-session-v3` 的参考值、`reasons` 的顺序与不完整时仍给累计（第 6 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "`read_stream` 的非 POSIX 分支，POSIX 分支逐字不变（第 7 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "兼容性与导入无副作用（第 8 条）；Step 3 的测试齐全，不自行做变异检查",
+      "evidence": [
+        "V03",
+        "V04",
+        "V07",
+        "review"
+      ]
+    },
+    {
+      "id": "D07",
+      "text": "所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
