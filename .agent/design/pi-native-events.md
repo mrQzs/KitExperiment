@@ -36,7 +36,7 @@
 
 - `DIALECT = "pi-session-v3"`。
 - `translate(frames) -> PiTranslation`：输入是已解析的帧（每行一个 dict，正是 `read_stream` 返回的 `events`，也是 `OfflineAdapter.run` 的第二个参数）；输出规范化事件（dict 列表，可直接交给 `normalize_events` 与 `OfflineAdapter.run`）与翻译事实。翻译器对流的内容从不抛出：帧不是 dict、类型未知、形状不对，都变成一个未知事件；只有 `frames` 不可迭代才报 `AdapterError("E_ADAPTER_EVENT")`，与参考的 `normalize_events` 相同。
-- `PiTranslation`（frozen dataclass）：`events`（元组）、`dialect`、`frames`（帧数）、`ignored`（没有产生事件的已知帧按类型计数）、`unknown`（未知或畸形帧数）、`usage`（五个 token 的累计，dict）、`usage_complete`（布尔）、`assistant_messages`、`tool_calls`、`tool_errors`、`agent_cycles`、`terminal`（`"agent_settled"` 或 None）、`last_stop_reason`、`models`（`(provider, model)` 去重排序的元组）。
+- `PiTranslation`（frozen dataclass，字段按这个顺序）：`dialect`、`events`（元组）、`frames`（帧数）、`ignored`（没有产生事件的已知帧按类型计数）、`unknown`（未知或畸形帧数）、`usage`（五个 token 的累计，dict）、`usage_complete`（布尔）、`assistant_messages`、`tool_calls`、`tool_errors`、`agent_cycles`、`terminal`（`"agent_settled"` 或 None）、`last_stop_reason`、`models`（`(provider, model)` 去重排序的元组）。（合同第 2 条的顺序；原稿把 `events` 写在 `dialect` 前面，执行器按合同实现并指出了这一点。）
 - `PiNativeAdapter(OfflineAdapter)`：`adapter_id = "pi"`、`protocol_version = "pi-session-v3"`；`translate(frames)`；`run(invocation, frames)` 先翻译，再用参考归约器（`OfflineAdapter.run` 的规则，`expected_source` 为 `"pi"`）结算；`probe()` 在父类的基础上加 `dialect`。这样 `run_adapter_operation(scheduler, PiNativeAdapter(), …)` 不改一行就能消费真实 Pi 的 stdout。
 
 ### 3.2 映射表
@@ -108,7 +108,7 @@
 - N7：夹具缩减规则见 3.6；缩减流与完整流的翻译结果除事件 id（它带帧的行号，省略会改变行号）外必须相同，由规划端专用测试断言。
 - N8：用量维度名用小写下划线：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_write_tokens`、`total_tokens`；计数 `assistant_messages`、`tool_calls`。
 - N9：`agent_cycles` 数 `agent_start`；`agent_end` 的 `willRetry` 不是布尔值 → 畸形帧。
-- N10：`session` 必须是第一帧（第 1 行，不是“第一个产生事件的帧”）且 `version` 是精确 int 3，`id` 与 `timestamp` 是 str；其他版本、不在第 1 行或第二个 `session` → 畸形帧（方言版本化）。
+- N10：`session` 必须是第一帧（第 1 行，不是“第一个产生事件的帧”）且 `version` 是精确 int 3，`id` 与 `timestamp` 是 str；其他版本、不在第 1 行或第二个 `session` → 畸形帧（方言版本化）。一个畸形的 `session` 也算“见过 session”：之后再来的 `session` 报 `second session header`（候选 a001 的写法，规划端草稿原来报“不在第 1 行”；两种都是畸形帧，以集成的写法为准）。
 - N11：`tool_execution_start` / `tool_execution_end` 的 `toolCallId` 与 `toolName` 必须是非空 str，`tool_execution_end` 的 `isError` 必须是布尔值；否则畸形帧。
 - N12：assistant `message_end` 的 `message` 必须是 dict，`content` 必须是 list（块是 dict，按 `type` 计数，toolCall 块的 `id` 必须是非空 str），`stopReason`、`provider`、`model` 必须是 str；否则畸形帧。`responseId` 与 `thinkingLevel` 缺失时为 None。
 - N13：`message_end` 的 role 不是 `system` / `user` / `assistant` / `toolResult` → 畸形帧。
@@ -126,4 +126,5 @@
 
 ## 8. 进度
 
-- 2026-10-09：设计说明写成，待用户决定第 5 节。
+- 2026-10-09：设计说明写成；用户决定第 5 节；oracle `396e0a9`（`pi-base/pi-native-events`）、合同 `11cdd6c`；派遣 a001（pi 0.99.2，Windows，912 s，0 工具错误，事件流以 `agent_settled` 结束——证实 0.99.2 的流也是这个方言）。
+- a001 验收：`check --fresh` 7/7；变异 36 个合起来抓住 35（漏掉的“交给父类的不是拷贝”是等价写法：父类不改输入，拷贝与否不可观察），只用执行器测试 26（漏掉的 10 个按分工由 oracle 把守）；规划端在本机对 31 次完整流（含 a001 自己的流）复核，候选与调度器、与规划端草稿都一致。
