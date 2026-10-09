@@ -131,4 +131,10 @@
 
 ## 9. 进度与遗留
 
-- 用户已决定第 5 节；规划端草稿与 oracle 验证中。
+- 已集成：oracle `02b04ef`、a001 `015fe05`、规划端补全 `1e5832e`；复审 `.agent/reviews/ledger-reference/attempt-001.md`（PASS，独立复审 PASS）；干净工作树全量 684 passed / 289 skipped（带 `.agent/runs` 时 688 passed / 286 skipped）。
+- a001 的验收：`check --fresh` 8/8；两轮变异各抓住 32/34（oracle 加执行器测试、只用执行器测试），漏掉的两个是数额为 None 永远不是最终值、`lstat` 的普通文件检查被重解析点检查与打开遮蔽；规划端草稿阶段就已知。
+- 遗留：
+  - 16 MiB 上限（第 3.5 节）：接近 1800 秒的运行可能超过，提高上限要连同 adapter 路径一起决定；
+  - POSIX 分支逐字不变，但本机跳过全部原生用例，回到 macOS 后跑一次 V03/V04；
+  - `read_stream` 对含 NUL 的路径仍抛 `ValueError`（基线行为；账本里的证据目录不可能含 NUL）；
+  - 只有 `pi-session-v3` 一种方言，规范化协议的流等有真实生产者再加；方言不记在账本里。

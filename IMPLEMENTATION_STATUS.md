@@ -26,6 +26,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Restart recovery (macOS) | `restart_recovery.py`, `scheduler.py` (run descriptors), `durable_ledger.py` | every supervised handoff records its run descriptor (the invocation's fields, the evidence directory and the worktree), checked before anything changes and kept as a private copy that the durable ledger replays; `recover_after_restart` rolls the ledger over once, cancels claims that never reached a handoff and settles the handoffs the old controller never decided (HANDOFF_ACCEPTED, RUNNING) from their records with `recover_supervised_operation`; operations already decided, START_UNKNOWN above all, are left alone; a failure is reported per operation, while a ledger error or an interrupt stops the recovery; requests stay stopped for an operator. Real-process tests on macOS 15.7.9 SIGKILL a controller after the records, before the review and mid-run, and recover from the ledger it left (REVIEW_PENDING, REVIEW_PENDING, START_UNKNOWN), the result surviving a reopen. Recovery from records alone keeps the trust limits of `recover_supervised_operation` |
 | Operator resolution and request resume | `scheduler.py` (`resolve_unknown`, `resume`), `durable_ledger.py` | an operator resolves a START_UNKNOWN operation as NOT_STARTED, ABANDONED (process confirmed gone, result void, the task may be claimed again as a new attempt; its reservation stays held until its usage is complete) or FINISHED (into review with a candidate), and the operator's name, an evidence digest and a note are recorded, never verified; a stopped request resumes only for the current generation and every stop reason since the last resume, named in order (`stop_reasons` reads them, so a hold stacked on a stopped request cannot be cleared unnamed), with nothing START_UNKNOWN, nothing an older generation left undecided, no unknown usage and no exposure over the request's or any task's cap; attempts, usage and history are kept and no cap is raised. Real-process test on macOS 15.7.9: a controller killed mid-run, the restart recovery, the operator's usage, resolution and verdict, the resume, a reopen of the durable ledger, and the abandoned task run again to review. Every explicit `stop()` is a hold of its own (the same reason twice is named twice), while the automatic reasons count once. A run the ledger saw start, and any run handed to the supervisor (a run descriptor), can never be called unstarted by an operator, through `resolve_unknown` or `recover`, so a controller killed mid-run cannot have its run's usage taken as zero; an undecided supervised handoff is still decided from its records |
 | Operator CLI (`smctl ledger`) | `ledger_cli.py`, `cli.py`, `scheduler.py` (`request_ids`, `operation_usage`) | `status`, `stop`, `settle`, `resolve` and `resume` on a durable ledger: each command replays the ledger, makes at most one change at its current generation through the ledger's own methods and closes it; success is one UTF-8 JSON line on stdout, a ledger refusal is exit 3 with the ledger's code on stderr and leaves the file unchanged, an argument error is exit 2. `status` lists the stop reasons and the operations that need an operator (start unknown, undecided, usage unknown) and never writes; `resume` takes every stop reason by hand. Tested in process and through `python -m sentinelmesh.cli`, an ascii terminal included. A write while a controller holds the ledger makes that controller stale (fail closed) |
+| Crash-run usage reference (`smctl ledger reference`) | `ledger_cli.py`, `adapter_run.py` (`read_stream` without `O_NOFOLLOW`) | a read-only command that opens the ledger, reads the `stdout.log` named by a supervised run's descriptor (no stream fact survives a crash, so the file's own digest is the evidence) and prints a reference value next to the reservation and the usage already recorded: the dialect is named by hand (`--dialect pi-session-v3`, the only one), the Pi translation supplies the sums even when the stream is incomplete, marked with the reasons in order (no terminal, an illegal usage, unknown frames), `missing` lists the reserved dimensions without a known final amount in reservation order, a stream that is missing, unreadable, too large or invalid is an answer with no reference, and the command never writes; the operator still settles by hand with the stream digest. Checked on Windows against the five reduced real streams and, planner-only, the largest full captured stream (11 MB). `read_stream` now also reads without `O_NOFOLLOW` (Windows): `lstat` first, a link or reparse point refused before the open, a binary open, and the identity of what was opened compared with the `lstat` one; the POSIX branch is textually unchanged and keeps its macOS evidence |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -37,10 +38,13 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 603 passed, 288 skipped
+python -m pytest -q                 684 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
+
+With the captured Pi streams present under `.agent/runs` (planner evidence,
+ignored by git) the same tree runs 688 passed / 286 skipped.
 
 The last macOS count before the repositories moved back to Windows on
 2026-10-08 was 837 passed at `bd9c029`; on macOS the same tree also runs the
@@ -248,6 +252,22 @@ planner decisions N1–N16) and `.agent/reviews/pi-native-events/`:
   bytes). Integrated as `0ab0211` (oracle and fixtures), `301857c`
   (candidate) and `a97f3cd` (completion); full suite 603 passed on Windows.
 
+The crash-run usage reference is recorded in
+`.agent/design/ledger-reference.md` (the user's decisions in section 5,
+planner decisions R1–R10) and `.agent/reviews/ledger-reference/`:
+- `ledger-reference` passed (Windows, pi 0.99.2, 737 s, no scope finding).
+  `check --fresh` 8/8; two mutation rounds caught 32 of 34 each, with the
+  oracle and the executor tests together and with the executor tests alone
+  (the two left are an amount of `None`, which the ledger never records as
+  final, and the `lstat` regular-file check, shadowed by the reparse-point
+  check and the open). The independent review recommended PASS and found one
+  low point: an open that fails with `FileNotFoundError` after the `lstat`
+  reads as `missing` where the contract had written `unreadable`; the planner
+  ruled for the candidate (the POSIX branch reports `os.open` the same way),
+  recorded it as R10, pinned both mappings in the oracle and tightened three
+  of the executor's assertions. Integrated as `02b04ef` (oracle), `015fe05`
+  (candidate) and `1e5832e` (completion); full suite 684 passed on Windows.
+
 ## Explicitly not proven by this repository
 
 The following remain `NOT_RUN` or `BLOCKED` until separately captured with
@@ -258,6 +278,9 @@ translation itself has captured evidence, see the Pi native event translation
 row; the supervised adapter path has native macOS evidence for the normalized
 protocol only, and frame types no captured run has shown -- compaction, retry,
 queue, `entry_appended` -- fail closed as unknown until a later dialect),
+the runtime behaviour of `read_stream`'s POSIX branch since the move to
+Windows (its text is unchanged; the native cases that exercise it are
+skipped here),
 power-loss durability of the ledger and of the start records, operator
 authority and the evidence behind an operator's resolution (recorded, never
 verified),
