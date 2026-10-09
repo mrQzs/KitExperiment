@@ -1,0 +1,66 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "step"
+      }
+    ],
+    "assistant_messages": 46,
+    "complete": true,
+    "event_counts": {
+      "agent_end": 1,
+      "agent_settled": 1,
+      "agent_start": 1,
+      "message_end": 99,
+      "message_start": 99,
+      "message_update": 7770,
+      "session": 1,
+      "tool_execution_end": 51,
+      "tool_execution_start": 51,
+      "tool_execution_update": 59,
+      "turn_end": 46,
+      "turn_start": 46
+    },
+    "final_stop_reason": "stop",
+    "lines": 8225,
+    "terminal_event": "agent_settled",
+    "tool_calls": {
+      "bash": 21,
+      "edit": 9,
+      "gash": 1,
+      "grep": 5,
+      "read": 14,
+      "write": 1
+    },
+    "tool_errors": 2,
+    "usage": {
+      "cacheRead": 2153216,
+      "cacheWrite": 0,
+      "input": 93474,
+      "output": 26484,
+      "totalTokens": 2273174
+    }
+  },
+  "fixture": "macos-pi104-explicit-holds-a001",
+  "reduction": {
+    "bytes": 300408,
+    "elided_message_updates": 7678,
+    "elided_tool_updates": 17,
+    "kept_lines": 530,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 824
+  },
+  "source": {
+    "attempt_id": "explicit-holds.v1.a001",
+    "created_at": "2026-10-08T18:53:08Z",
+    "events_bytes": 4381787,
+    "events_lines": 8225,
+    "events_sha256": "68f9c96dca759e09ea0c9b1c3e081446b6c2cfb89eefa08a9ca4430a5b4131f6",
+    "pi_version": "1.0.4",
+    "platform": "macOS-15.7.9-x86_64-i386-64bit",
+    "task_id": "explicit-holds",
+    "tool_version": "2.4.2"
+  }
+}

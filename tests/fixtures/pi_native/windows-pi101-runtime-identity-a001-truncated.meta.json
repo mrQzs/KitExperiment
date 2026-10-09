@@ -1,0 +1,61 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "bb"
+      }
+    ],
+    "assistant_messages": 49,
+    "complete": false,
+    "event_counts": {
+      "agent_start": 1,
+      "message_end": 108,
+      "message_start": 108,
+      "message_update": 18471,
+      "session": 1,
+      "tool_execution_end": 57,
+      "tool_execution_start": 57,
+      "tool_execution_update": 127,
+      "turn_end": 49,
+      "turn_start": 50
+    },
+    "final_stop_reason": "toolUse",
+    "lines": 19029,
+    "terminal_event": null,
+    "tool_calls": {
+      "bash": 47,
+      "edit": 1,
+      "read": 9
+    },
+    "tool_errors": 2,
+    "usage": {
+      "cacheRead": 2318336,
+      "cacheWrite": 0,
+      "input": 114344,
+      "output": 57299,
+      "totalTokens": 2489979
+    }
+  },
+  "fixture": "windows-pi101-runtime-identity-a001-truncated",
+  "reduction": {
+    "bytes": 258574,
+    "elided_message_updates": 18373,
+    "elided_tool_updates": 33,
+    "kept_lines": 623,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 644
+  },
+  "source": {
+    "attempt_id": "pi-runtime-identity.v1.a001",
+    "created_at": "2026-10-04T05:38:44Z",
+    "events_bytes": 6959191,
+    "events_lines": 19029,
+    "events_sha256": "3ebcc3cf8fb9171520d119f080376e792bf3ce9b4a47d1e473666a5124ab11cd",
+    "pi_version": "1.0.1",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "task_id": "pi-runtime-identity",
+    "tool_version": "2.2.2"
+  }
+}

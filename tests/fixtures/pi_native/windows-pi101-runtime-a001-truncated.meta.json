@@ -1,0 +1,60 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "bb"
+      }
+    ],
+    "assistant_messages": 16,
+    "complete": false,
+    "event_counts": {
+      "agent_start": 1,
+      "message_end": 41,
+      "message_start": 42,
+      "message_update": 6359,
+      "session": 1,
+      "tool_execution_end": 23,
+      "tool_execution_start": 23,
+      "tool_execution_update": 41,
+      "turn_end": 16,
+      "turn_start": 17
+    },
+    "final_stop_reason": "toolUse",
+    "lines": 6564,
+    "terminal_event": null,
+    "tool_calls": {
+      "bash": 16,
+      "read": 7
+    },
+    "tool_errors": 1,
+    "usage": {
+      "cacheRead": 319232,
+      "cacheWrite": 0,
+      "input": 54164,
+      "output": 6947,
+      "totalTokens": 380343
+    }
+  },
+  "fixture": "windows-pi101-runtime-a001-truncated",
+  "reduction": {
+    "bytes": 99343,
+    "elided_message_updates": 6325,
+    "elided_tool_updates": 9,
+    "kept_lines": 230,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 250
+  },
+  "source": {
+    "attempt_id": "pi-runtime.v1.a001",
+    "created_at": "2026-10-04T05:12:25Z",
+    "events_bytes": 2553023,
+    "events_lines": 6564,
+    "events_sha256": "ff8d0e26fc3bb94c69f9d57ffe6ba917aabd1e9d436e608ba7731230b419c4fc",
+    "pi_version": "1.0.1",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "task_id": "pi-runtime",
+    "tool_version": "2.2.2"
+  }
+}

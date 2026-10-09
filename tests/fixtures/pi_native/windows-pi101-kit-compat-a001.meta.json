@@ -1,0 +1,68 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "bb"
+      }
+    ],
+    "assistant_messages": 50,
+    "complete": true,
+    "event_counts": {
+      "agent_end": 1,
+      "agent_settled": 1,
+      "agent_start": 1,
+      "message_end": 124,
+      "message_start": 124,
+      "message_update": 22625,
+      "session": 1,
+      "tool_execution_end": 72,
+      "tool_execution_start": 72,
+      "tool_execution_update": 102,
+      "turn_end": 50,
+      "turn_start": 50
+    },
+    "final_stop_reason": "stop",
+    "lines": 23223,
+    "terminal_event": "agent_settled",
+    "tool_calls": {
+      "bash": 42,
+      "brep": 1,
+      "edit": 11,
+      "grep": 1,
+      "input": 1,
+      "ls": 1,
+      "read": 13,
+      "write": 2
+    },
+    "tool_errors": 16,
+    "usage": {
+      "cacheRead": 3336704,
+      "cacheWrite": 0,
+      "input": 133502,
+      "output": 69748,
+      "totalTokens": 3539954
+    }
+  },
+  "fixture": "windows-pi101-kit-compat-a001",
+  "reduction": {
+    "bytes": 364187,
+    "elided_message_updates": 22525,
+    "elided_tool_updates": 18,
+    "kept_lines": 680,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 975
+  },
+  "source": {
+    "attempt_id": "pi-runtime-kit-compat.v1.a001",
+    "created_at": "2026-10-04T06:21:27Z",
+    "events_bytes": 9247405,
+    "events_lines": 23223,
+    "events_sha256": "2e3b2084e4f2304401dc39122fcf23f9ddb6a00448ba3c99d59a00bc1ba709ad",
+    "pi_version": "1.0.1",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "task_id": "pi-runtime-kit-compat",
+    "tool_version": "2.2.2"
+  }
+}

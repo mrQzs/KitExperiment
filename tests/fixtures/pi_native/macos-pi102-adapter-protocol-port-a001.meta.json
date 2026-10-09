@@ -1,0 +1,64 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "step"
+      }
+    ],
+    "assistant_messages": 22,
+    "complete": true,
+    "event_counts": {
+      "agent_end": 1,
+      "agent_settled": 1,
+      "agent_start": 1,
+      "message_end": 49,
+      "message_start": 49,
+      "message_update": 4427,
+      "session": 1,
+      "tool_execution_end": 25,
+      "tool_execution_start": 25,
+      "tool_execution_update": 54,
+      "turn_end": 22,
+      "turn_start": 22
+    },
+    "final_stop_reason": "stop",
+    "lines": 4677,
+    "terminal_event": "agent_settled",
+    "tool_calls": {
+      "bash": 18,
+      "edit": 1,
+      "read": 5,
+      "write": 1
+    },
+    "tool_errors": 1,
+    "usage": {
+      "cacheRead": 561408,
+      "cacheWrite": 0,
+      "input": 41471,
+      "output": 13431,
+      "totalTokens": 616310
+    }
+  },
+  "fixture": "macos-pi102-adapter-protocol-port-a001",
+  "reduction": {
+    "bytes": 150438,
+    "elided_message_updates": 4383,
+    "elided_tool_updates": 18,
+    "kept_lines": 276,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 419
+  },
+  "source": {
+    "attempt_id": "adapter-protocol-port.v1.a001",
+    "created_at": "2026-10-06T12:05:46Z",
+    "events_bytes": 2100599,
+    "events_lines": 4677,
+    "events_sha256": "645b67ed0569d8bbaeb556d7039ed9f985e0dde788689d9a36e53490e015819f",
+    "pi_version": "1.0.2",
+    "platform": "macOS-15.7.9-x86_64-i386-64bit",
+    "task_id": "adapter-protocol-port",
+    "tool_version": "2.4.1"
+  }
+}
