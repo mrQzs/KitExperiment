@@ -191,6 +191,10 @@ class RequestAttributionCase(EventsCase):
                                                                          "--limit", 10000)["events"]
                                   if event["operation_id"] is None], types)
                 self.assertTrue(types, "the scenario records no request-level event for %s" % request)
+        # The scenario has to record all four request-level types, or the attribution
+        # by payload above is proven for fewer than it claims (review of attempt-001, F1).
+        self.assertEqual({event["type"] for event in expected if event["type"] in REQUEST_LEVEL},
+                         set(REQUEST_LEVEL))
         # The fence belongs to no request at all.
         fenced = [event for event in expected if event["type"] == "controller.fenced"]
         self.assertEqual(len(fenced), 1)
