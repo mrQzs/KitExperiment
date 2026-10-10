@@ -29,7 +29,7 @@ import re
 import sys
 from typing import Any, Callable
 
-from .adapter_run import MAX_STREAM_BYTES, read_stream
+from .adapter_run import MAX_LINE_BYTES, MAX_STREAM_BYTES, read_stream
 from .durable_ledger import LedgerError, open_ledger
 from .pi_events import DIALECT, translate
 from .scheduler import RESOLUTIONS, UNRESOLVED, ContractError
@@ -413,9 +413,10 @@ def cmd_reference(args: argparse.Namespace) -> int:
         usage = ledger.operation_usage(args.operation)
         # No ``expected``: the supervisor's stream fact is written when it reaps
         # the group, and a controller that died mid-run left none behind.  The
-        # ceiling is the largest one, because the stream is read once, by hand,
+        # ceilings are the largest ones, because the stream is read once, by hand,
         # and not while the run writes it.
-        stream = read_stream(run["evidence_dir"], max_bytes=MAX_STREAM_BYTES)
+        stream = read_stream(run["evidence_dir"], max_bytes=MAX_STREAM_BYTES,
+                             max_line_bytes=MAX_LINE_BYTES)
         return {"command": "reference", "operation_id": view["operation_id"],
                 "request_id": view["request_id"], "task_id": view["task_id"],
                 "state": view["state"], "generation": view["generation"],

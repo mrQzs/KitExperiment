@@ -259,7 +259,7 @@ class AdapterRunGaps(unittest.TestCase):
         evidence = self.write_stream(raw)
         self.assertEqual(read_stream(str(evidence)), {"status": "ok", "sha256": hashlib.sha256(raw).hexdigest(),
                                                       "bytes": len(raw), "events": [COMPLETE[0]]})
-        for limit in (0, -1, True, 1.5, "64", MAX_STREAM_BYTES + 1, 16 * 1_048_576 * 2):
+        for limit in (0, -1, True, 1.5, "64", MAX_STREAM_BYTES + 1, MAX_STREAM_BYTES * 2):
             with self.subTest(limit=limit):
                 with self.assertRaises(AdapterError) as raised:
                     read_stream(str(evidence), max_bytes=limit)

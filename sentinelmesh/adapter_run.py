@@ -46,12 +46,12 @@ import stat
 from typing import Any, Mapping, Optional
 
 from .adapter_protocol import AdapterError, Invocation, OfflineAdapter
-from .core import ProtocolError, strict_json_loads
+from .core import DEFAULT_MAX_JSON_BYTES, ProtocolError, strict_json_loads
 from .runtime import InvocationSpec
 from .supervised_operation import run_supervised_operation
 
-__all__ = ["DEFAULT_MAX_STREAM_BYTES", "MAX_STREAM_BYTES", "STREAM_NAME",
-           "read_stream", "run_adapter_operation", "supervised_spec"]
+__all__ = ["DEFAULT_MAX_LINE_BYTES", "DEFAULT_MAX_STREAM_BYTES", "MAX_LINE_BYTES", "MAX_STREAM_BYTES",
+           "STREAM_NAME", "read_stream", "run_adapter_operation", "supervised_spec"]
 
 # The supervisor's stdout evidence file, created ``O_EXCL`` inside the caller's
 # evidence directory.
@@ -60,7 +60,13 @@ STREAM_NAME = "stdout.log"
 # caller may ask for.  The upper bound is what keeps a caller from asking this
 # process to read an unbounded amount of a child's output into memory.
 DEFAULT_MAX_STREAM_BYTES = 1_048_576
-MAX_STREAM_BYTES = 16 * 1_048_576
+MAX_STREAM_BYTES = 64 * 1_048_576
+# Byte ceiling for one line of that stream: the protocol's own per-document
+# limit by default, and the longest line a caller may ask the parser to accept.
+# A longer line is what a long conversation's mirroring frame grows into, so
+# the ceiling is a parameter rather than a constant only.
+DEFAULT_MAX_LINE_BYTES = DEFAULT_MAX_JSON_BYTES
+MAX_LINE_BYTES = 8 * 1_048_576
 
 # Reading is chunked so a stream that grows past the ceiling while it is being
 # read is not pulled in whole first.
@@ -91,6 +97,14 @@ def _check_max_bytes(max_bytes: Any) -> int:
         raise AdapterError("E_ADAPTER_SCHEMA",
                            "max_stream_bytes must be an integer in 1..%d" % MAX_STREAM_BYTES)
     return max_bytes
+
+
+def _check_max_line_bytes(max_line_bytes: Any) -> int:
+    """Require an exact ``int`` line ceiling inside ``1..MAX_LINE_BYTES``."""
+    if type(max_line_bytes) is not int or not 1 <= max_line_bytes <= MAX_LINE_BYTES:
+        raise AdapterError("E_ADAPTER_SCHEMA",
+                           "max_line_bytes must be an integer in 1..%d" % MAX_LINE_BYTES)
+    return max_line_bytes
 
 
 def _checked_expected(expected: Any) -> dict[str, Any]:
@@ -170,7 +184,7 @@ def _empty(status: str) -> dict[str, Any]:
 
 
 def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
-                  expected: Any = None) -> dict[str, Any]:
+                  expected: Any = None, max_line_bytes: int = DEFAULT_MAX_LINE_BYTES) -> dict[str, Any]:
     """Read the supervised run's stdout stream and parse its normalized events.
 
     The stream is the vendor's own output, so it is evidence and not input: a
@@ -186,6 +200,12 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
     recorded ones, is ``changed`` -- what this call would have reduced is
     demonstrably not the stream the run wrote, whatever its size.
 
+    ``max_line_bytes`` is the longest line the parser is asked to accept: it
+    bounds one event object, not the stream, so it may be larger than
+    ``max_bytes``.  A line over it is ``invalid`` with the protocol's own
+    ``E_JSON_LIMIT``, at that line's 1-based number; the depth stays the
+    parser's own.
+
     ``missing`` and ``unreadable`` are answers, not errors: the first is how a
     run that never started looks, the second is a stream that cannot be used as
     evidence at all.  ``too_large`` and ``invalid`` name the two ways a stream
@@ -193,10 +213,12 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
     protocol's own ``code`` (``E_JSON_SYNTAX``, ``E_JSON_LIMIT``, ...) or
     ``E_ADAPTER_STREAM`` when a line parsed to something that is not an event
     object.  In every case nothing is raised except an out-of-range
-    ``max_bytes`` or a malformed ``expected``: what is on disk is a fact about
-    the run, and the decision (record no usage) belongs to the caller.
+    ``max_bytes``, an out-of-range ``max_line_bytes`` or a malformed
+    ``expected``: what is on disk is a fact about the run, and the decision
+    (record no usage) belongs to the caller.
     """
     _check_max_bytes(max_bytes)
+    _check_max_line_bytes(max_line_bytes)
     if expected is not None:
         expected = _checked_expected(expected)
     path = os.path.join(evidence_dir, STREAM_NAME)
@@ -267,10 +289,10 @@ def read_stream(evidence_dir: Any, *, max_bytes: int = DEFAULT_MAX_STREAM_BYTES,
             os.close(descriptor)
         except OSError:
             pass
-    return _parse_stream(raw)
+    return _parse_stream(raw, max_line_bytes)
 
 
-def _parse_stream(raw: bytes) -> dict[str, Any]:
+def _parse_stream(raw: bytes, max_line_bytes: int) -> dict[str, Any]:
     """Return the digest, the byte count and the events, or the line that failed."""
     sha256 = hashlib.sha256(raw).hexdigest()
     # One event object per line; a missing final newline is still a line, an
@@ -281,7 +303,7 @@ def _parse_stream(raw: bytes) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     for line, segment in enumerate(segments, start=1):
         try:
-            parsed = strict_json_loads(segment)
+            parsed = strict_json_loads(segment, max_bytes=max_line_bytes)
         except ProtocolError as exc:
             return {"status": "invalid", "sha256": sha256, "bytes": len(raw), "events": None,
                     "line": line, "code": exc.code}
@@ -309,7 +331,8 @@ def _check_dimensions(usage_dimensions: Any) -> tuple[str, ...]:
 
 
 def _reduce(adapter: OfflineAdapter, invocation: Invocation, evidence_dir: str,
-            max_bytes: int, expected: Any = None) -> tuple[dict[str, Any], Optional[Any], Optional[str]]:
+            max_bytes: int, expected: Any = None, max_line_bytes: int = DEFAULT_MAX_LINE_BYTES
+            ) -> tuple[dict[str, Any], Optional[Any], Optional[str]]:
     """Read the stream and reduce it; return ``(stream, result, result_error)``.
 
     ``expected`` is the supervisor's own fact for this stream, when the caller has
@@ -324,7 +347,8 @@ def _reduce(adapter: OfflineAdapter, invocation: Invocation, evidence_dir: str,
     failure of this call, so its code is carried back and the result stays
     ``None`` -- nothing is recorded from a stream the adapter rejected.
     """
-    stream = read_stream(evidence_dir, max_bytes=max_bytes, expected=expected)
+    stream = read_stream(evidence_dir, max_bytes=max_bytes, expected=expected,
+                        max_line_bytes=max_line_bytes)
     if stream["status"] != "ok":
         return stream, None, None
     try:
@@ -350,14 +374,15 @@ def run_adapter_operation(
     allowed_secret_names: frozenset[str] = frozenset(),
     now: int = 0,
     max_stream_bytes: int = DEFAULT_MAX_STREAM_BYTES,
+    max_line_bytes: int = DEFAULT_MAX_LINE_BYTES,
 ) -> dict[str, Any]:
     """Run one adapter invocation under the supervisor and reduce what it wrote.
 
     Every check on the caller's arguments -- the invocation, the adapter, the
     adapter id bound into the invocation, the usage dimensions, the stream
-    ceiling, the runtime specification and the reservation the operation holds --
-    runs *before* the handoff, so a refused call starts nothing, leaves the
-    operation in ``RESERVED`` and writes no evidence.  Their errors are raised
+    ceiling, the line ceiling, the runtime specification and the reservation the
+    operation holds -- runs *before* the handoff, so a refused call starts
+    nothing, leaves the operation in ``RESERVED`` and writes no evidence.  Their errors are raised
     unchanged: ``AdapterError`` for this module's own contract,
     ``ContractError`` for the scheduler's, ``RuntimeErrorCode`` for the runtime's.
 
@@ -388,6 +413,7 @@ def run_adapter_operation(
         raise AdapterError("E_ADAPTER_IDENTITY", "invocation adapter does not match the adapter")
     dimensions = _check_dimensions(usage_dimensions)
     _check_max_bytes(max_stream_bytes)
+    _check_max_line_bytes(max_line_bytes)
     spec = supervised_spec(invocation, cwd=cwd, timeout_seconds=timeout_seconds)
     _check_reserved_dimensions(scheduler, invocation.run_id, dimensions)
 
@@ -403,7 +429,8 @@ def run_adapter_operation(
         recorded with the usage is one this process can account for.
         """
         fact = run.streams["stdout"]
-        stream, result, result_error = _reduce(adapter, invocation, evidence_dir, max_stream_bytes, expected=fact)
+        stream, result, result_error = _reduce(adapter, invocation, evidence_dir, max_stream_bytes,
+                                                expected=fact, max_line_bytes=max_line_bytes)
         if result is not None and result.settled is True and result.raw_complete is True:
             usage = result.usage
             mapping = {dimension: usage[dimension] for dimension in dimensions
@@ -435,7 +462,8 @@ def run_adapter_operation(
     if report["value"] is None:
         # Any path that did not reach the end review: the stream is read for the
         # report only, and nothing is recorded from it.
-        stream, result, result_error = _reduce(adapter, invocation, evidence_dir, max_stream_bytes)
+        stream, result, result_error = _reduce(adapter, invocation, evidence_dir, max_stream_bytes,
+                                                max_line_bytes=max_line_bytes)
         recorded, skipped = {}, list(dimensions)
     else:
         stream, result, result_error, recorded, skipped = report["value"]
