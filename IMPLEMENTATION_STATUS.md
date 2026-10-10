@@ -27,6 +27,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Operator resolution and request resume | `scheduler.py` (`resolve_unknown`, `resume`), `durable_ledger.py` | an operator resolves a START_UNKNOWN operation as NOT_STARTED, ABANDONED (process confirmed gone, result void, the task may be claimed again as a new attempt; its reservation stays held until its usage is complete) or FINISHED (into review with a candidate), and the operator's name, an evidence digest and a note are recorded, never verified; a stopped request resumes only for the current generation and every stop reason since the last resume, named in order (`stop_reasons` reads them, so a hold stacked on a stopped request cannot be cleared unnamed), with nothing START_UNKNOWN, nothing an older generation left undecided, no unknown usage and no exposure over the request's or any task's cap; attempts, usage and history are kept and no cap is raised. Real-process test on macOS 15.7.9: a controller killed mid-run, the restart recovery, the operator's usage, resolution and verdict, the resume, a reopen of the durable ledger, and the abandoned task run again to review. Every explicit `stop()` is a hold of its own (the same reason twice is named twice), while the automatic reasons count once. A run the ledger saw start, and any run handed to the supervisor (a run descriptor), can never be called unstarted by an operator, through `resolve_unknown` or `recover`, so a controller killed mid-run cannot have its run's usage taken as zero; an undecided supervised handoff is still decided from its records |
 | Operator CLI (`smctl ledger`) | `ledger_cli.py`, `cli.py`, `scheduler.py` (`request_ids`, `operation_usage`) | `status`, `stop`, `settle`, `resolve` and `resume` on a durable ledger: each command replays the ledger, makes at most one change at its current generation through the ledger's own methods and closes it; success is one UTF-8 JSON line on stdout, a ledger refusal is exit 3 with the ledger's code on stderr and leaves the file unchanged, an argument error is exit 2. `status` lists the stop reasons and the operations that need an operator (start unknown, undecided, usage unknown) and never writes; `resume` takes every stop reason by hand. Tested in process and through `python -m sentinelmesh.cli`, an ascii terminal included. A write while a controller holds the ledger makes that controller stale (fail closed) |
 | Crash-run usage reference (`smctl ledger reference`) | `ledger_cli.py`, `adapter_run.py` (`read_stream` without `O_NOFOLLOW`) | a read-only command that opens the ledger, reads the `stdout.log` named by a supervised run's descriptor (no stream fact survives a crash, so the file's own digest is the evidence) and prints a reference value next to the reservation and the usage already recorded: the dialect is named by hand (`--dialect pi-session-v3`, the only one), the Pi translation supplies the sums even when the stream is incomplete, marked with the reasons in order (no terminal, an illegal usage, unknown frames), `missing` lists the reserved dimensions without a known final amount in reservation order, a stream that is missing, unreadable, too large or invalid is an answer with no reference, and the command never writes; the operator still settles by hand with the stream digest. Checked on Windows against the five reduced real streams and, planner-only, the largest full captured stream (11 MB). `read_stream` now also reads without `O_NOFOLLOW` (Windows): `lstat` first, a link or reparse point refused before the open, a binary open, and the identity of what was opened compared with the `lstat` one; the POSIX branch is textually unchanged and keeps its macOS evidence |
+| Ledger checkpoint and compaction (`smctl ledger compact`) | `durable_ledger.py`, `ledger_cli.py` | format `sentinelmesh-ledger-v2` adds a `checkpoint` table: `DurableScheduler.compact()` writes the whole in-memory state -- requests, tasks, operations with their usage and run descriptors, idempotency keys, resource holds and every event -- at the instance's sequence number, with a digest over the sequence number, the link to the last command and the state text, and removes the commands it covers, all in one `BEGIN IMMEDIATE` transaction checked against the log head; opening loads the checkpoint, verifies its digest and shape (exact field sets and types, references that hold, events numbered from 1), registers its operation ids as used and replays only the commands after it, so a checkpoint plus its tail rebuilds exactly what a full replay would, events and private state included. The command chain is never rewritten and the identity `(seq, sha)` of the log does not change, so a compaction by another process leaves a live controller current while an append still makes it stale; any failure of a compaction invalidates the instance; a damaged or forged checkpoint, a tail that does not continue it and a v1 file are refused. Compaction is explicit only (the CLI or a controller's own call); the file does not shrink (no `VACUUM`) and the state keeps growing with the events. Verified on Windows by compacting at every prefix of a 33-call scenario and in real child processes |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -38,7 +39,7 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 684 passed, 289 skipped
+python -m pytest -q                 730 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -267,6 +268,26 @@ planner decisions R1–R10) and `.agent/reviews/ledger-reference/`:
   recorded it as R10, pinned both mappings in the oracle and tightened three
   of the executor's assertions. Integrated as `02b04ef` (oracle), `015fe05`
   (candidate) and `1e5832e` (completion); full suite 684 passed on Windows.
+
+The ledger checkpoint and compaction is recorded in
+`.agent/design/ledger-compaction.md` (the user's decisions in section 5,
+planner decisions K1–K10) and `.agent/reviews/ledger-compaction/`:
+- `ledger-compaction` attempt-001 timed out at the 1800 s limit with the
+  candidate complete and no executor report: the implementation, the
+  executor tests (30 cases) and the self-checks were done, and the time went
+  into the long test list the contract asked for. Per the kit's rule for a
+  timed-out but complete candidate it was REVISE (class TIMEOUT), the
+  planner's itemized review replaced the report, and the rework commit was
+  integrated directly. `check --fresh` 8/8; two mutation rounds caught
+  46 of 46 with the oracle and the executor tests together and
+  44 of 46 with the executor tests alone (two cases were shadowed
+  by another rule; the completion edits an operation whose holds were released
+  and a task nobody claimed, after which the executor tests catch both). The
+  independent review found process deviations only -- three probes with
+  `tempfile.mkdtemp()` left uncleaned, piped self-checks -- and low polish
+  points the planner completed. Integrated as `dfb56a3` and `38f0c4e`
+  (oracle), `76252ed` (candidate) and `c7c280d` (completion); full suite
+  730 passed on Windows.
 
 ## Explicitly not proven by this repository
 
