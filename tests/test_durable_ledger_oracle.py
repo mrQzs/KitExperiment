@@ -165,7 +165,7 @@ class LedgerCase(unittest.TestCase):
 
 class DurableLedgerOracle(LedgerCase):
     def test_the_public_surface_matches_the_scheduler(self):
-        self.assertEqual(LEDGER_FORMAT, "sentinelmesh-ledger-v1")
+        self.assertEqual(LEDGER_FORMAT, "sentinelmesh-ledger-v2")
         self.assertEqual(MUTATING_METHODS, ("seed_request", "seed_task", "claim", "handoff", "mark_running", "renew",
                                             "observe", "settle", "finish", "fixture_verdict", "unknown",
                                             "release_proven_unstarted", "recover", "cancel_unstarted", "stop",
@@ -314,7 +314,7 @@ class DurableLedgerOracle(LedgerCase):
         db.close()
         with self.subTest(case="open a database that is not a ledger"):
             self.assertEqual(self.code_of(LedgerError, open_ledger, str(foreign)), "E_LEDGER_FORMAT")
-        for label, statement in (("another format", "UPDATE meta SET value='sentinelmesh-ledger-v2' WHERE key='format'"),
+        for label, statement in (("another format", "UPDATE meta SET value='sentinelmesh-ledger-v1' WHERE key='format'"),
                                  ("an extra meta key", "INSERT INTO meta(key, value) VALUES ('note', 'x')"),
                                  ("a generation that is not an integer", "UPDATE meta SET value='one' WHERE key='generation'")):
             with self.subTest(case=label):
