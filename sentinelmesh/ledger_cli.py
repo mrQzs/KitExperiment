@@ -240,6 +240,28 @@ def cmd_status(args: argparse.Namespace) -> int:
     return _with_ledger(args, lambda ledger: _status(ledger, args.ledger))
 
 
+def cmd_compact(args: argparse.Namespace) -> int:
+    """Write a checkpoint of the whole state and remove the commands it covers.
+
+    The one write command that records no decision: it appends no command, emits
+    no event and moves no generation, so the ledger's history is unchanged --
+    only the commands the checkpoint already covers stop being replayed one by
+    one.  The ledger is opened (replayed) first, so a path that cannot be opened
+    at all is reported the same way a refused command is, and the instance is
+    closed in the ``finally`` whatever happens.
+
+    It is explicit on purpose: when the commands an audit needs may be dropped is
+    an operator's decision, so a ledger that has to keep them has to be backed up
+    before this runs.
+    """
+    def work(ledger: Any) -> dict[str, Any]:
+        result = ledger.compact()
+        return {"command": "compact", "ledger": args.ledger, "generation": ledger.generation,
+                "seq": result["seq"], "last_sha": result["last_sha"], "sha256": result["sha256"],
+                "removed": result["removed"]}
+    return _with_ledger(args, work)
+
+
 def cmd_reference(args: argparse.Namespace) -> int:
     """Read one supervised run's output stream and print the usage it adds up to.
 
@@ -369,6 +391,10 @@ def register(subparsers: Any) -> None:
     p.add_argument("--dialect", required=True, choices=_DIALECTS,
                    help="dialect of the run's output stream")
     p.set_defaults(func=cmd_reference)
+
+    p = commands.add_parser("compact", help="write a checkpoint of the whole state and drop the commands it covers")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.set_defaults(func=cmd_compact)
 
     p = commands.add_parser("stop", help="put an explicit hold on a request")
     p.add_argument("ledger", help="path of the ledger file")

@@ -17,9 +17,8 @@ semantics.  This module wraps it in a single-host, append-only command log:
 The log is deliberately conservative: a rollback journal (``DELETE``),
 ``synchronous=FULL`` and ``fullfsync=ON``, which is what 07 appendix B.4 chose
 for the same job.  Durability across a power loss was not measured and stays
-``NOT_RUN``; no snapshots, no compaction, no multi-host locking and no ledger on
-a network file system are claimed.  Run descriptors and the recovery driver are
-a separate contract.
+``NOT_RUN``; no multi-host locking and no ledger on a network file system are
+claimed.  Run descriptors and the recovery driver are a separate contract.
 
 Version 2 of the contract tightened three of those rules, and the module follows
 it:
@@ -52,9 +51,38 @@ and a failure to close the creation descriptor removes the created file.  A
 process killed between creating the file and the first commit still leaves an
 empty file behind: ``create_ledger`` then reports ``E_LEDGER_EXISTS`` and
 ``open_ledger`` ``E_LEDGER_FORMAT`` until an operator removes it.
+
+Checkpoints and compaction arrived with the second version of the *format*,
+because replaying a log grew faster than the log itself -- the replay of a
+``claim`` walks every operation -- while loading the same state from JSON did
+not.  A
+checkpoint row holds the whole in-memory state, events included, at one sequence
+number, and :meth:`DurableScheduler.compact` writes it and removes the commands
+it covers inside one ``BEGIN IMMEDIATE`` transaction.  Opening then loads the
+checkpoint and replays only the commands after it, which rebuilds exactly what a
+full replay does -- every read-only view, every event and the private state of
+the in-memory ``Scheduler``.  The command chain is never rewritten: the entry
+after a checkpoint links to the checkpoint's ``last_sha`` with the digest it
+always had, so the tail of a compacted ledger is byte for byte the tail of the
+ledger it came from.  Compaction is explicit -- an operator's command or a
+controller's own call -- and never automatic: the append path does not look at
+the length of the log, because a threshold is policy and not ledger.
+
+The checkpoint is verified, not re-derived: the digest covers its sequence
+number, its link and its state text, and the state is checked for shape -- exact
+field sets, exact types, references that exist and hold together -- and nothing
+more.  Budgets and transitions are not proven again, because the checkpoint was
+written by this module from a ``Scheduler`` that had already passed every guard;
+what the checks refuse is a damaged or forged file.  The format moved to
+``sentinelmesh-ledger-v2`` for the same fail-closed reason: a format 1 file has
+no ``checkpoint`` table, and a binary that does not know about checkpoints would
+read a compacted ledger as an empty one.  There is no migration -- a format 1
+file is refused.
 """
 from __future__ import annotations
 
+import copy
+import dataclasses
 from hashlib import sha256
 import inspect
 import json
@@ -65,9 +93,9 @@ import threading
 from pathlib import Path
 from typing import Any, Mapping
 
-from .scheduler import ContractError, Scheduler
+from .scheduler import ContractError, Scheduler, _Operation, _Request, _Task, _Usage
 
-LEDGER_FORMAT = "sentinelmesh-ledger-v1"
+LEDGER_FORMAT = "sentinelmesh-ledger-v2"
 
 #: Every mutating method of :class:`Scheduler`, in the order the contract fixes.
 MUTATING_METHODS = ("seed_request", "seed_task", "claim", "handoff", "mark_running", "renew", "observe", "settle",
@@ -84,9 +112,32 @@ _MAX_GENERATION_DIGITS = 16
 #: anything else is a forged log.
 _OPERATION_ID = re.compile(r"\Aop-[0-9a-f]{32}\Z")
 
+#: A checkpoint link: the digest of the command it follows, or "" at sequence 0.
+_LINK = re.compile(r"\A[0-9a-f]{64}\Z")
+
+#: The states an operation can be in.  The Scheduler owns them; a checkpoint that
+#: records another one describes a ledger that never existed.
+_OPERATION_STATES = frozenset({"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "START_UNKNOWN", "REVIEW_PENDING",
+                               "ACCEPTED", "REJECTED", "ABANDONED", "NOT_STARTED", "CANCELLED_NOT_STARTED"})
+
+#: The keys of the checkpoint state, in the order they are written.
+_STATE_KEYS = ("generation", "requests", "tasks", "operations", "idempotency", "resource_holds", "events")
+
+#: The field sets of the four private dataclasses, taken from the dataclasses
+#: themselves: a field the Scheduler gains refuses every older checkpoint.
+_REQUEST_FIELDS = frozenset(field.name for field in dataclasses.fields(_Request))
+_TASK_FIELDS = frozenset(field.name for field in dataclasses.fields(_Task))
+_OPERATION_FIELDS = frozenset(field.name for field in dataclasses.fields(_Operation))
+_USAGE_FIELDS = frozenset(field.name for field in dataclasses.fields(_Usage))
+
+#: The keys of one event, exactly.
+_EVENT_KEYS = frozenset({"seq", "operation_id", "type", "generation", "payload"})
+
 _SCHEMA = ("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
            "CREATE TABLE commands(seq INTEGER PRIMARY KEY, command TEXT NOT NULL, "
-           "sha256 TEXT NOT NULL, previous TEXT NOT NULL)")
+           "sha256 TEXT NOT NULL, previous TEXT NOT NULL)",
+           "CREATE TABLE checkpoint(seq INTEGER PRIMARY KEY, last_sha TEXT NOT NULL, "
+           "state TEXT NOT NULL, sha256 TEXT NOT NULL)")
 
 
 class LedgerError(Exception):
@@ -117,6 +168,19 @@ def _check_path(path: Any) -> str:
 def entry_sha256(previous: str, command: str) -> str:
     """Digest of one log entry: the previous digest, a newline, the command."""
     return sha256(previous.encode("ascii") + b"\n" + command.encode("utf-8")).hexdigest()
+
+
+def checkpoint_sha256(seq: int, last_sha: str, state: str) -> str:
+    """Digest of one checkpoint row: the sequence, a newline, the link, a newline, the state.
+
+    Every column of the row but the digest itself is covered, so touching the
+    sequence number, the link to the command chain or the state text is visible.
+    The link is what ties the checkpoint to the chain: it is the digest of the
+    command the state covers, which is also the ``previous`` of the command after
+    it, so a checkpoint cannot be moved along the log without breaking one of the
+    two.
+    """
+    return sha256(("%d\n%s\n" % (seq, last_sha)).encode("ascii") + state.encode("utf-8")).hexdigest()
 
 
 def _rollback(db: sqlite3.Connection) -> None:
@@ -216,19 +280,24 @@ def _encode_command(name: str, arguments: Mapping[str, Any], result: Any) -> byt
         raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
 
 
-def _strict_loads(text: str) -> Any:
-    """Strict JSON: duplicate keys, NaN and Infinity are refused, never repaired."""
+def _strict_loads(text: str, code: str = "E_LEDGER_REPLAY") -> Any:
+    """Strict JSON: duplicate keys, NaN and Infinity are refused, never repaired.
+
+    ``code`` is what a refusal reports: a command that cannot be parsed is
+    ``E_LEDGER_REPLAY``, a checkpoint state that cannot be is
+    ``E_LEDGER_CHECKPOINT``.
+    """
 
     def object_hook(pairs):
         result: dict[str, Any] = {}
         for key, value in pairs:
             if key in result:
-                raise LedgerError("E_LEDGER_REPLAY", f"duplicate key {key!r}")
+                raise LedgerError(code, f"duplicate key {key!r}")
             result[key] = value
         return result
 
     def constant(name):
-        raise LedgerError("E_LEDGER_REPLAY", name)
+        raise LedgerError(code, name)
 
     try:
         return json.loads(text, object_pairs_hook=object_hook, parse_constant=constant)
@@ -237,20 +306,289 @@ def _strict_loads(text: str) -> Any:
     except RecursionError as exc:
         # A command nested past what the parser can walk is a damaged ledger,
         # not a crash of the reader.
-        raise LedgerError("E_LEDGER_REPLAY", "a command nested too deeply to parse") from exc
+        raise LedgerError(code, "a command nested too deeply to parse") from exc
     except ValueError as exc:
-        raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
+        raise LedgerError(code, str(exc)) from exc
     except Exception as exc:
         # ``MemoryError`` above all: the same failure in the replayed call is
         # already ``E_LEDGER_REPLAY`` (review of attempt-002, F4).
-        raise LedgerError("E_LEDGER_REPLAY", f"the command could not be parsed: {type(exc).__name__}") from exc
+        raise LedgerError(code, f"the command could not be parsed: {type(exc).__name__}") from exc
 
 
-def _verify_chain(rows: list[tuple[Any, ...]]) -> tuple[list[str], str]:
-    """Check the numbering and the hash chain; return the commands and the last digest."""
+def _encode_state(scheduler: Scheduler) -> str:
+    """The whole in-memory state of one ``Scheduler`` as one JSON object.
+
+    Seven keys, and the mappings keep their own iteration order -- requests in
+    seeding order, operations in claim order, usage in recording order -- because
+    that order is what the read-only views of the writer showed and what the
+    reopened ledger has to show again.  Keys are therefore *not* sorted.
+    ``resource_keys`` becomes a list (a tuple is not a JSON type) and is restored
+    as a tuple when the state is decoded again.
+    """
+    state: dict[str, Any] = {
+        "generation": scheduler._generation,
+        "requests": {request_id: dataclasses.asdict(request)
+                     for request_id, request in scheduler._requests.items()},
+        "tasks": [[request_id, task_id, dataclasses.asdict(task)]
+                  for (request_id, task_id), task in scheduler._tasks.items()],
+        "operations": {operation_id: dataclasses.asdict(operation)
+                       for operation_id, operation in scheduler._operations.items()},
+        "idempotency": [[request_id, key, operation_id]
+                        for (request_id, key), operation_id in scheduler._idempotency.items()],
+        "resource_holds": [[repo_id, resource, operation_id]
+                           for (repo_id, resource), operation_id in scheduler._resource_holds.items()],
+        "events": scheduler._events,
+    }
+    try:
+        return json.dumps(_jsonable(state), separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+
+
+def _fields_of(record: Any, fields: frozenset, label: str) -> dict[str, Any]:
+    """``record`` as a mapping with exactly ``fields`` -- or a damaged checkpoint."""
+    if type(record) is not dict or set(record) != fields:
+        raise LedgerError("E_LEDGER_CHECKPOINT", f"a {label} without exactly its own fields")
+    return record
+
+
+def _exact_int(value: Any) -> bool:
+    """An exact integer: a ``bool`` is not one, and neither is a float."""
+    return type(value) is int
+
+
+def _int_map(record: Mapping[str, Any]) -> dict[str, int]:
+    """A mapping of dimensions to exact integers -- a capacity, a reservation."""
+    if type(record) is not dict or not all(type(item) is int for item in record.values()):
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a mapping of dimensions that is not one of integers")
+    return dict(record)
+
+
+def _decode_state(text: str, stored_generation: int) -> _ReplayScheduler:
+    """Rebuild a ``Scheduler`` from a checkpoint state, or refuse the file.
+
+    The checks are the shape of the state and nothing else: exact field sets,
+    exact types (a ``bool`` is not an ``int``), references that exist and hold
+    together, events numbered from one.  Budgets, transitions and idempotency are
+    *not* proven again -- the checkpoint was written from a ``Scheduler`` that had
+    already passed every guard, and what is being refused here is a damaged or
+    forged file.  Anything unexpected is ``E_LEDGER_CHECKPOINT``.
+
+    The mappings keep the order the JSON had, so a reopened ledger shows the same
+    order the writer did.
+    """
+    state = _strict_loads(text, "E_LEDGER_CHECKPOINT")
+    if type(state) is not dict or set(state) != set(_STATE_KEYS):
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a state without exactly its own keys")
+    generation = state["generation"]
+    if not _exact_int(generation) or generation < stored_generation:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a generation that is not an integer at or above the stored one")
+    try:
+        scheduler = _ReplayScheduler(generation=generation)
+    except ContractError as exc:
+        # A generation the Scheduler refuses describes a ledger that never ran.
+        raise LedgerError("E_LEDGER_CHECKPOINT", str(exc)) from exc
+
+    requests_raw = state["requests"]
+    if type(requests_raw) is not dict:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "requests that are not an object")
+    requests: dict[str, _Request] = {}
+    for request_id, record in requests_raw.items():
+        fields = _fields_of(record, _REQUEST_FIELDS, "request")
+        stopped = fields["stopped"]
+        stop_reasons = fields["stop_reasons"]
+        if (type(fields["repo_id"]) is not str or type(fields["max_concurrency"]) is not int
+                or (stopped is not None and type(stopped) is not str)
+                or type(stop_reasons) is not list or not all(type(reason) is str for reason in stop_reasons)):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a request field of the wrong type")
+        requests[request_id] = _Request(repo_id=fields["repo_id"], caps=_int_map(fields["caps"]),
+                                        max_concurrency=fields["max_concurrency"], stopped=stopped,
+                                        stop_reasons=list(stop_reasons))
+
+    tasks_raw = state["tasks"]
+    if type(tasks_raw) is not list:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "tasks that are not an array")
+    tasks: dict[tuple[str, str], _Task] = {}
+    for entry in tasks_raw:
+        if type(entry) is not list or len(entry) != 3:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a task entry that is not a triple")
+        request_id, task_id, fields = entry
+        if (type(request_id) is not str or type(task_id) is not str or request_id not in requests
+                or (request_id, task_id) in tasks):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a task naming an unknown request, or recorded twice")
+        record = _fields_of(fields, _TASK_FIELDS, "task")
+        caps = _int_map(record["caps"])
+        if (type(record["max_attempts"]) is not int or type(record["guard_version"]) is not int
+                or type(record["fixture_eligible"]) is not bool):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a task field of the wrong type")
+        tasks[(request_id, task_id)] = _Task(caps=caps, max_attempts=record["max_attempts"],
+                                            guard_version=record["guard_version"],
+                                            fixture_eligible=record["fixture_eligible"])
+
+    operations_raw = state["operations"]
+    if type(operations_raw) is not dict:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "operations that are not an object")
+    operations: dict[str, _Operation] = {}
+    for operation_id, record in operations_raw.items():
+        if _OPERATION_ID.fullmatch(operation_id) is None:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an operation id the Scheduler would not generate")
+        fields = _fields_of(record, _OPERATION_FIELDS, "operation")
+        if fields["operation_id"] != operation_id:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an operation recorded under another id")
+        if (type(fields["request_id"]) is not str or type(fields["task_id"]) is not str
+                or (fields["request_id"], fields["task_id"]) not in tasks):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an operation naming an unknown task")
+        if type(fields["state"]) is not str or fields["state"] not in _OPERATION_STATES:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a state the Scheduler never records")
+        for name in ("plan_version", "guard_version", "generation", "lease_until"):
+            if not _exact_int(fields[name]):
+                raise LedgerError("E_LEDGER_CHECKPOINT", f"an operation {name} that is not an integer")
+        for name in ("idempotency_key", "request_digest", "owner"):
+            if type(fields[name]) is not str:
+                raise LedgerError("E_LEDGER_CHECKPOINT", f"an operation {name} that is not text")
+        candidate_hash = fields["candidate_hash"]
+        if candidate_hash is not None and type(candidate_hash) is not str:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a candidate hash that is neither text nor null")
+        resource_keys = fields["resource_keys"]
+        if type(resource_keys) is not list or not all(type(item) is str for item in resource_keys):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource key that is not text")
+        if type(fields["started"]) is not bool:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a started that is not a boolean")
+        run = fields["run"]
+        if run is not None and type(run) is not dict:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a run descriptor that is neither an object nor null")
+        usage_raw = fields["usage"]
+        if type(usage_raw) is not dict:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "usage that is not an object")
+        usage: dict[str, _Usage] = {}
+        for dimension, item in usage_raw.items():
+            observed = _fields_of(item, _USAGE_FIELDS, "observation")
+            amount = observed["amount"]
+            if (type(observed["call_key"]) is not str or not _exact_int(observed["revision"])
+                    or (amount is not None and not _exact_int(amount))
+                    or type(observed["final"]) is not bool
+                    or type(observed["evidence_hash"]) is not str):
+                raise LedgerError("E_LEDGER_CHECKPOINT", "an observation field of the wrong type")
+            usage[dimension] = _Usage(call_key=observed["call_key"], revision=observed["revision"],
+                                      amount=amount, final=observed["final"],
+                                      evidence_hash=observed["evidence_hash"])
+        operations[operation_id] = _Operation(
+            operation_id=operation_id, request_id=fields["request_id"], task_id=fields["task_id"],
+            plan_version=fields["plan_version"], guard_version=fields["guard_version"],
+            idempotency_key=fields["idempotency_key"], request_digest=fields["request_digest"],
+            owner=fields["owner"], generation=fields["generation"], lease_until=fields["lease_until"],
+            state=fields["state"], reservation=_int_map(fields["reservation"]),
+            resource_keys=tuple(resource_keys), candidate_hash=candidate_hash, usage=usage,
+            run=copy.deepcopy(run), started=fields["started"])
+
+    idempotency_raw = state["idempotency"]
+    if type(idempotency_raw) is not list:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "idempotency entries that are not an array")
+    idempotency: dict[tuple[str, str], str] = {}
+    for entry in idempotency_raw:
+        if type(entry) is not list or len(entry) != 3:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an idempotency entry that is not a triple")
+        request_id, key, operation_id = entry
+        if type(request_id) is not str or type(key) is not str or type(operation_id) is not str:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an idempotency entry that is not text")
+        operation = operations.get(operation_id)
+        if operation is None or operation.request_id != request_id or operation.idempotency_key != key:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an idempotency entry that does not name its own operation")
+        if (request_id, key) in idempotency:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an idempotency key recorded twice")
+        idempotency[(request_id, key)] = operation_id
+    # Every operation is reached by exactly one key: a claim without one, or a
+    # second one, describes a ledger the Scheduler never held.
+    if len(idempotency) != len(operations):
+        raise LedgerError("E_LEDGER_CHECKPOINT", "an operation without exactly one idempotency key")
+
+    holds_raw = state["resource_holds"]
+    if type(holds_raw) is not list:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "resource holds that are not an array")
+    resource_holds: dict[tuple[str, str], str] = {}
+    for entry in holds_raw:
+        if type(entry) is not list or len(entry) != 3:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource hold that is not a triple")
+        repo_id, resource, operation_id = entry
+        if type(repo_id) is not str or type(resource) is not str or type(operation_id) is not str:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource hold that is not text")
+        operation = operations.get(operation_id)
+        if operation is None or requests[operation.request_id].repo_id != repo_id:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource hold of another repository")
+        if resource not in operation.resource_keys:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource hold its operation does not hold")
+        if (repo_id, resource) in resource_holds:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a resource held twice")
+        resource_holds[(repo_id, resource)] = operation_id
+
+    events_raw = state["events"]
+    if type(events_raw) is not list:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "events that are not an array")
+    for index, event in enumerate(events_raw, start=1):
+        if type(event) is not dict or set(event) != _EVENT_KEYS:
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an event without exactly its own keys")
+        if not _exact_int(event["seq"]) or event["seq"] != index:
+            raise LedgerError("E_LEDGER_CHECKPOINT", f"an event numbered {event['seq']!r} where {index} was expected")
+        if (event["operation_id"] is not None and type(event["operation_id"]) is not str
+                or type(event["type"]) is not str or not _exact_int(event["generation"])):
+            raise LedgerError("E_LEDGER_CHECKPOINT", "an event field of the wrong type")
+
+    scheduler._requests = requests
+    scheduler._tasks = tasks
+    scheduler._operations = operations
+    scheduler._idempotency = idempotency
+    scheduler._resource_holds = resource_holds
+    scheduler._events = list(events_raw)
+    return scheduler
+
+
+def _read_checkpoint(db: sqlite3.Connection) -> tuple[int, str, str] | None:
+    """The one checkpoint row, verified -- or ``None`` when there is none.
+
+    At most one row: the table's key is the sequence number, so a second row is
+    a file two writers disagreed about and is refused.  The row's own digest
+    covers every other column of it.
+    """
+    try:
+        rows = db.execute("SELECT seq, last_sha, state, sha256 FROM checkpoint").fetchall()
+    except sqlite3.Error as exc:
+        if _missing_table(exc):
+            raise LedgerError("E_LEDGER_FORMAT", "the checkpoint table is missing") from exc
+        raise LedgerError("E_LEDGER_OPEN", str(exc)) from exc
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "more than one checkpoint row")
+    row = rows[0]
+    if len(row) != 4:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a checkpoint row without four columns")
+    seq, last_sha, state, digest = row
+    if not _exact_int(seq) or seq < 0:
+        raise LedgerError("E_LEDGER_CHECKPOINT", f"a checkpoint sequence {seq!r}")
+    if type(last_sha) is not str or type(state) is not str or type(digest) is not str:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a checkpoint row with a non-text column")
+    if seq == 0:
+        # The empty state has no command to link to.
+        if last_sha != "":
+            raise LedgerError("E_LEDGER_CHECKPOINT", "a link above sequence 0")
+    elif _LINK.fullmatch(last_sha) is None:
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a link that is not a command digest")
+    if digest != checkpoint_sha256(seq, last_sha, state):
+        raise LedgerError("E_LEDGER_CHECKPOINT", "a checkpoint digest that does not verify")
+    return seq, last_sha, state
+
+
+def _verify_chain(rows: list[tuple[Any, ...]], start_seq: int = 0, previous: str = "") -> tuple[list[str], str]:
+    """Check the numbering and the hash chain; return the commands and the last digest.
+
+    ``start_seq`` and ``previous`` are where the rows begin: the sequence numbers
+    run from ``start_seq + 1`` and the first row has to link to ``previous``,
+    which is the digest of the command before them -- the empty string when the
+    rows are the whole log, a checkpoint's link when they are the tail after one.
+    """
     commands: list[str] = []
-    previous = ""
-    for expected_seq, row in enumerate(rows, start=1):
+    for offset, row in enumerate(rows, start=1):
+        expected_seq = start_seq + offset
         if len(row) != 4:
             raise LedgerError("E_LEDGER_CHAIN", "a command row without four columns")
         seq, command, digest, row_previous = row
@@ -263,6 +601,24 @@ def _verify_chain(rows: list[tuple[Any, ...]]) -> tuple[list[str], str]:
         previous = digest
         commands.append(command)
     return commands, previous
+
+
+def _head(db: sqlite3.Connection) -> tuple[int, str]:
+    """The identity of the state the log holds: ``(seq, sha)`` of its last command.
+
+    The last command of the ``commands`` table when there is one; otherwise the
+    checkpoint's own ``(seq, last_sha)``; otherwise the empty log.  This is what
+    an instance compares itself against before it appends or compacts: a
+    compaction by another instance leaves it unchanged -- the state the log holds
+    did not move -- while an append by one does not.
+    """
+    row = db.execute("SELECT seq, sha256 FROM commands ORDER BY seq DESC LIMIT 1").fetchone()
+    if row is not None:
+        return row[0], row[1]
+    row = db.execute("SELECT seq, last_sha FROM checkpoint").fetchone()
+    if row is not None:
+        return row[0], row[1]
+    return 0, ""
 
 
 def _stored_generation(meta: Mapping[str, str]) -> int:
@@ -382,6 +738,10 @@ class DurableScheduler:
     the in-memory state already, and a log that does not know about it would no
     longer replay.  A wrong signature is refused before the call and leaves the
     instance usable.
+
+    :meth:`compact` writes a checkpoint of the whole state and removes the
+    commands it covers, in one transaction, and leaves the instance's identity
+    ``(seq, sha)`` -- and with it the instance -- where it was.
     """
 
     def __init__(self, path: str, scheduler: Scheduler, db: sqlite3.Connection, seq: int, last_sha: str):
@@ -399,7 +759,13 @@ class DurableScheduler:
 
     @property
     def seq(self) -> int:
-        """How many commands this instance has applied."""
+        """The sequence number of the last command this instance's state covers.
+
+        Not how many commands the log holds: after a compaction the commands it
+        covered are gone, and the number is the checkpoint's sequence plus the
+        commands replayed after it.  An uncompacted ledger reads exactly as it
+        always did.
+        """
         with self._lock:
             self._require_available()
             return self._seq
@@ -567,11 +933,7 @@ class DurableScheduler:
         except sqlite3.Error as exc:
             raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
         try:
-            head = db.execute("SELECT seq, sha256 FROM commands ORDER BY seq DESC LIMIT 1").fetchone()
-            if self._seq == 0:
-                if head is not None:
-                    raise LedgerError("E_LEDGER_STALE", "the log already has entries")
-            elif head is None or head[0] != self._seq or head[1] != self._last_sha:
+            if _head(db) != (self._seq, self._last_sha):
                 raise LedgerError("E_LEDGER_STALE", "the log moved on past this instance")
             db.execute("INSERT INTO commands(seq, command, sha256, previous) VALUES (?, ?, ?, ?)",
                        (self._seq + 1, text, digest, previous))
@@ -581,6 +943,63 @@ class DurableScheduler:
             raise
         self._seq += 1
         self._last_sha = digest
+
+    def compact(self) -> dict[str, Any]:
+        """Write a checkpoint of the whole state and remove the commands it covers.
+
+        One ``BEGIN IMMEDIATE`` transaction does all of it: the log head is
+        checked against this instance's own ``(seq, sha)`` -- a different one
+        means another instance appended and this one is stale -- the checkpoint
+        row is replaced, and every command at or below this instance's sequence
+        number is deleted.  The instance's identity does not change, so it stays
+        usable and its next append is the command after the checkpoint, linked to
+        it exactly as it would have been without the compaction.
+
+        This is not a mutating method: no command is recorded, no event is
+        emitted and the generation does not move.  Compaction is explicit -- an
+        operator's ``smctl ledger compact`` or a controller's own call -- because
+        when to drop the commands an audit needs is policy, not ledger.
+
+        The failures follow the append's rules: a ledger error is passed on, any
+        other exception becomes ``E_LEDGER_WRITE``, and the instance is
+        invalidated either way -- a half-written checkpoint is not a state this
+        instance can keep appending to.  A stale instance is refused before
+        anything is written.
+        """
+        with self._lock:
+            self._require_available()
+            try:
+                state = _encode_state(self._scheduler)
+                digest = checkpoint_sha256(self._seq, self._last_sha, state)
+                db = self._db
+                if db is None:  # pragma: no cover -- ``_require_available`` just checked
+                    raise LedgerError("E_LEDGER_UNAVAILABLE", "the ledger instance is closed or has failed")
+                try:
+                    db.execute("BEGIN IMMEDIATE")
+                except sqlite3.Error as exc:
+                    raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+                try:
+                    if _head(db) != (self._seq, self._last_sha):
+                        raise LedgerError("E_LEDGER_STALE", "the log moved on past this instance")
+                    db.execute("DELETE FROM checkpoint")
+                    db.execute("INSERT INTO checkpoint(seq, last_sha, state, sha256) VALUES (?, ?, ?, ?)",
+                               (self._seq, self._last_sha, state, digest))
+                    cursor = db.execute("DELETE FROM commands WHERE seq <= ?", (self._seq,))
+                    removed = cursor.rowcount
+                    db.execute("COMMIT")
+                except BaseException:
+                    _rollback(db)
+                    raise
+            except LedgerError:
+                self._invalidate()
+                raise
+            except Exception as exc:
+                self._invalidate()
+                raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+            except BaseException:
+                self._invalidate()
+                raise
+            return {"seq": self._seq, "last_sha": self._last_sha, "sha256": digest, "removed": removed}
 
 
 def _make_method(name: str):
@@ -684,8 +1103,13 @@ def open_ledger(path: str) -> DurableScheduler:
 
     The connection is a read-write file URI, so a path that is not there is
     refused instead of created.  Every step after it -- the pragmas, the read,
-    the chain check, the replay Scheduler and the replay itself -- closes the
-    connection before reporting, and reports a ledger error only.
+    the chain check, the checkpoint, the replay Scheduler and the replay itself
+    -- closes the connection before reporting, and reports a ledger error only.
+
+    A ledger with a checkpoint is loaded from it and only the commands after it
+    are replayed: the tail has to start at the checkpoint's sequence plus one and
+    link to its digest, and the state has to verify.  What comes out is the state
+    a full replay of the whole log would have produced.
     """
     location = _check_path(path)
     try:
@@ -699,6 +1123,7 @@ def open_ledger(path: str) -> DurableScheduler:
         try:
             db.execute("BEGIN")
             meta = _read_meta(db)
+            checkpoint = _read_checkpoint(db)
             rows = db.execute("SELECT seq, command, sha256, previous FROM commands ORDER BY seq").fetchall()
         except sqlite3.Error as exc:
             if _missing_table(exc):
@@ -708,12 +1133,24 @@ def open_ledger(path: str) -> DurableScheduler:
             _rollback(db)
         generation = _stored_generation(meta)
         try:
+            # Built from the stored generation first, so a meta generation the
+            # Scheduler refuses is a damaged ledger whatever the checkpoint says.
             scheduler = _ReplayScheduler(generation=generation)
         except ContractError as exc:
             # A stored generation the Scheduler refuses is a damaged ledger.
             raise LedgerError("E_LEDGER_FORMAT", str(exc)) from exc
-        commands, last_sha = _verify_chain(rows)
         used: dict[str, tuple[Any, Any]] = {}
+        if checkpoint is None:
+            start_seq, previous = 0, ""
+        else:
+            start_seq, previous, state = checkpoint
+            scheduler = _decode_state(state, generation)
+            # The operations the checkpoint holds are already claimed: a tail
+            # claim that reuses one of their ids with another request or key is a
+            # forgery, exactly as two claims sharing an id are.
+            for operation_id, operation in scheduler._operations.items():
+                used[operation_id] = (operation.request_id, operation.idempotency_key)
+        commands, last_sha = _verify_chain(rows, start_seq, previous)
         for command_text in commands:
             _replay(scheduler, command_text, used)
     except BaseException:
@@ -722,7 +1159,8 @@ def open_ledger(path: str) -> DurableScheduler:
         except Exception:  # the ledger error at hand is the one to report
             pass
         raise
-    return DurableScheduler(location, scheduler, db, len(commands), last_sha)
+    return DurableScheduler(location, scheduler, db, start_seq + len(commands), last_sha)
 
 
-__all__ = ["LEDGER_FORMAT", "MUTATING_METHODS", "DurableScheduler", "LedgerError", "create_ledger", "open_ledger"]
+__all__ = ["LEDGER_FORMAT", "MUTATING_METHODS", "DurableScheduler", "LedgerError", "create_ledger", "open_ledger",
+           "entry_sha256", "checkpoint_sha256"]
