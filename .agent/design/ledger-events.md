@@ -100,4 +100,10 @@
 
 ## 9. 进度与遗留
 
-- 用户已决定第 5 节；规划端草稿与 oracle 验证中。
+- 已集成：oracle `cdb1e62`、a001 `054631a`、规划端补全 `028d882`；复审 `.agent/reviews/ledger-events/attempt-001.md`（PASS，独立复审 PASS）；干净工作树全量 755 passed / 289 skipped。
+- a001 的验收：571 s；`check --fresh` 8/8；变异 24/24（oracle 加执行器测试）与 19/24（只用执行器测试；漏掉的五条是合同刻意留给 oracle 的规则）。
+- 草稿阶段：24 个偏差抓住 23 个，漏掉的“接受 `--limit 0`”靠空页上的 `IndexError` 碰巧以退出码 2 退出；oracle 改为要求 argparse 的 `usage:` 行后抓住。
+- 遗留：
+  - 读取是整份事件的深拷贝再过滤，几万条事件几十毫秒；事件再多一个数量级时要给 Scheduler 加按序号区间读取的接口；
+  - 没有时间过滤：事件没有时间戳；
+  - `_EVENT_TYPES` 在 `ledger_cli` 里写死，Scheduler 加新类型要同步（oracle 用源码里的 `_emit` 字面量核对）。

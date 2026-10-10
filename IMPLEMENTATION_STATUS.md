@@ -28,6 +28,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Operator CLI (`smctl ledger`) | `ledger_cli.py`, `cli.py`, `scheduler.py` (`request_ids`, `operation_usage`) | `status`, `stop`, `settle`, `resolve` and `resume` on a durable ledger: each command replays the ledger, makes at most one change at its current generation through the ledger's own methods and closes it; success is one UTF-8 JSON line on stdout, a ledger refusal is exit 3 with the ledger's code on stderr and leaves the file unchanged, an argument error is exit 2. `status` lists the stop reasons and the operations that need an operator (start unknown, undecided, usage unknown) and never writes; `resume` takes every stop reason by hand. Tested in process and through `python -m sentinelmesh.cli`, an ascii terminal included. A write while a controller holds the ledger makes that controller stale (fail closed) |
 | Crash-run usage reference (`smctl ledger reference`) | `ledger_cli.py`, `adapter_run.py` (`read_stream` without `O_NOFOLLOW`) | a read-only command that opens the ledger, reads the `stdout.log` named by a supervised run's descriptor (no stream fact survives a crash, so the file's own digest is the evidence) and prints a reference value next to the reservation and the usage already recorded: the dialect is named by hand (`--dialect pi-session-v3`, the only one), the Pi translation supplies the sums even when the stream is incomplete, marked with the reasons in order (no terminal, an illegal usage, unknown frames), `missing` lists the reserved dimensions without a known final amount in reservation order, a stream that is missing, unreadable, too large or invalid is an answer with no reference, and the command never writes; the operator still settles by hand with the stream digest. Checked on Windows against the five reduced real streams and, planner-only, the largest full captured stream (11 MB). `read_stream` now also reads without `O_NOFOLLOW` (Windows): `lstat` first, a link or reparse point refused before the open, a binary open, and the identity of what was opened compared with the `lstat` one; the POSIX branch is textually unchanged and keeps its macOS evidence |
 | Ledger checkpoint and compaction (`smctl ledger compact`) | `durable_ledger.py`, `ledger_cli.py` | format `sentinelmesh-ledger-v2` adds a `checkpoint` table: `DurableScheduler.compact()` writes the whole in-memory state -- requests, tasks, operations with their usage and run descriptors, idempotency keys, resource holds and every event -- at the instance's sequence number, with a digest over the sequence number, the link to the last command and the state text, and removes the commands it covers, all in one `BEGIN IMMEDIATE` transaction checked against the log head; opening loads the checkpoint, verifies its digest and shape (exact field sets and types, references that hold, events numbered from 1), registers its operation ids as used and replays only the commands after it, so a checkpoint plus its tail rebuilds exactly what a full replay would, events and private state included. The command chain is never rewritten and the identity `(seq, sha)` of the log does not change, so a compaction by another process leaves a live controller current while an append still makes it stale; any failure of a compaction invalidates the instance; a damaged or forged checkpoint, a tail that does not continue it and a v1 file are refused. Compaction is explicit only (the CLI or a controller's own call); the file does not shrink (no `VACUUM`) and the state keeps growing with the events. Verified on Windows by compacting at every prefix of a 33-call scenario and in real child processes |
+| Operator reads of the events (`smctl ledger events`) | `ledger_cli.py`, `durable_ledger.py` (`checkpoint_seq`) | a read-only command that prints the recorded events exactly as the Scheduler emitted them, filtered by request (an operation's events by the operation's request, request-level events by their payload, `controller.fenced` by none), by operation and by any of the sixteen event types, and paged by sequence number (`--after`, `--limit` of at most 10000, default 100, with `next`); the header reports the ledger's checkpoint, since the events are the only history left before it, and `status` keeps its shape. Decimal-digit arguments only; an unknown request, operation or type is refused before anything is read. Checked on Windows against the whole history of the 33-call scenario |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -39,7 +40,7 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 730 passed, 289 skipped
+python -m pytest -q                 755 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -288,6 +289,18 @@ planner decisions K1–K10) and `.agent/reviews/ledger-compaction/`:
   points the planner completed. Integrated as `dfb56a3` and `38f0c4e`
   (oracle), `76252ed` (candidate) and `c7c280d` (completion); full suite
   730 passed on Windows.
+
+The operator reads of the events are recorded in
+`.agent/design/ledger-events.md` (the user's decisions in section 5, planner
+decisions E1–E7) and `.agent/reviews/ledger-events/`:
+- `ledger-events` passed (Windows, pi 0.99.2, 571 s, no scope finding). The
+  contract kept the executor's test list short after the compaction timeout:
+  `check --fresh` 8/8, mutations 24/24 with the oracle and the executor tests
+  together and 19/24 with the executor tests alone (the five left are rules
+  the contract left to the oracle), independent review PASS with one low
+  test point the planner completed. Integrated as `cdb1e62` (oracle),
+  `054631a` (candidate) and `028d882` (completion); full suite 755 passed on
+  Windows.
 
 ## Explicitly not proven by this repository
 
