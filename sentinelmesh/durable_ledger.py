@@ -55,16 +55,15 @@ empty file behind: ``create_ledger`` then reports ``E_LEDGER_EXISTS`` and
 Checkpoints and compaction arrived with the second version of the *format*,
 because replaying a log grew faster than the log itself -- the replay of a
 ``claim`` walks every operation -- while loading the same state from JSON did
-not.  A
-checkpoint row holds the whole in-memory state, events included, at one sequence
-number, and :meth:`DurableScheduler.compact` writes it and removes the commands
-it covers inside one ``BEGIN IMMEDIATE`` transaction.  Opening then loads the
-checkpoint and replays only the commands after it, which rebuilds exactly what a
-full replay does -- every read-only view, every event and the private state of
-the in-memory ``Scheduler``.  The command chain is never rewritten: the entry
-after a checkpoint links to the checkpoint's ``last_sha`` with the digest it
-always had, so the tail of a compacted ledger is byte for byte the tail of the
-ledger it came from.  Compaction is explicit -- an operator's command or a
+not.  A checkpoint row holds the whole in-memory state, events included, at one
+sequence number, and :meth:`DurableScheduler.compact` writes it and removes the
+commands it covers inside one ``BEGIN IMMEDIATE`` transaction.  Opening then
+loads the checkpoint and replays only the commands after it, which rebuilds
+exactly what a full replay does -- every read-only view, every event and the
+private state of the in-memory ``Scheduler``.  The command chain is never
+rewritten: the entry after a checkpoint links to the checkpoint's ``last_sha``
+with the digest it always had, so the tail of a compacted ledger is byte for
+byte the tail of the ledger it came from.  Compaction is explicit -- an operator's command or a
 controller's own call -- and never automatic: the append path does not look at
 the length of the log, because a threshold is policy and not ledger.
 
@@ -1137,7 +1136,6 @@ def open_ledger(path: str) -> DurableScheduler:
             # Scheduler refuses is a damaged ledger whatever the checkpoint says.
             scheduler = _ReplayScheduler(generation=generation)
         except ContractError as exc:
-            # A stored generation the Scheduler refuses is a damaged ledger.
             raise LedgerError("E_LEDGER_FORMAT", str(exc)) from exc
         used: dict[str, tuple[Any, Any]] = {}
         if checkpoint is None:

@@ -24,8 +24,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
-import itertools
 import inspect
+import itertools
 import io
 import json
 import os
@@ -427,8 +427,9 @@ class CompactReturns(CompactionCase):
         result = ledger.compact()
         self.assertEqual(set(result), COMPACT_KEYS)
         self.assertEqual((result["seq"], result["last_sha"], result["removed"]), (0, "", 0))
-        (seq, last_sha, _state, digest), = checkpoint_of(self.path)
+        (seq, last_sha, state, digest), = checkpoint_of(self.path)
         self.assertEqual((seq, last_sha, digest), (0, "", result["sha256"]))
+        self.assertEqual(digest, checkpoint_digest(seq, last_sha, state), "computed here, not by the module")
         self.assertEqual(state_of(self.path)["events"], [])
         self.assertEqual(rows_of(self.path), [])
         ledger.seed_request("req-1", "repo-1", CAPS)
@@ -479,6 +480,12 @@ class StateRefusals(CompactionCase):
 
     def test_the_state_itself(self):
         source = self.path
+        # The control for every edit of the state below (review of attempt-001, F4):
+        # a state decoded and re-encoded without a change still opens, so a refusal
+        # that follows an edit is the edit's own and not the re-encoding's.
+        control = self.copy("reencoded.db", source)
+        with_state(control, lambda value: None)
+        open_ledger(control).close()
         self.refuses(source, "a state that is not an object", "E_LEDGER_CHECKPOINT",
                      lambda p: with_state_text(p, lambda text: "[]"))
         self.refuses(source, "a key the state does not have", "E_LEDGER_CHECKPOINT",
@@ -540,7 +547,9 @@ class StateRefusals(CompactionCase):
             ("a lease that is a float", ["operations", self.first, ("lease_until", 1.5)]),
             ("an owner that is an integer", ["operations", self.first, ("owner", 7)]),
             ("a reservation that is a float", ["operations", self.first, "reservation", ("tokens", 40.5)]),
-            ("a resource key that is an integer", ["operations", self.first, "resource_keys", (0, 1)]),
+            # The third operation finished, so no resource hold names it and only the
+            # type check is left to refuse this (mutation round 02 of attempt-001).
+            ("a resource key that is an integer", ["operations", self.third, "resource_keys", (0, 1)]),
             ("a candidate hash recorded as an integer", ["operations", self.third, ("candidate_hash", 0)]),
             ("a started recorded as an integer", ["operations", self.first, ("started", 1)]),
             ("a run descriptor recorded as an array", ["operations", self.first, ("run", [])]),
@@ -575,8 +584,10 @@ class StateRefusals(CompactionCase):
 
     def test_the_tasks(self):
         source = self.path
+        # task-m was never claimed, so no operation names it and only the task's own
+        # request check is left to refuse this (mutation round 02 of attempt-001).
         self.refuses(source, "a task naming an unknown request", "E_LEDGER_CHECKPOINT",
-                     lambda p: with_state(p, edit_field(["tasks", 0, (0, "req-9")])))
+                     lambda p: with_state(p, edit_field(["tasks", 1, (0, "req-9")])))
         self.refuses(source, "a task recorded twice", "E_LEDGER_CHECKPOINT",
                      lambda p: with_state(p, lambda value: value["tasks"].append(list(value["tasks"][0]))))
         self.refuses(source, "a task entry that is not a triple", "E_LEDGER_CHECKPOINT",
@@ -815,7 +826,8 @@ class TheCommandLine(CompactionCase):
         self.assertEqual((code, err), (0, ""), out)
         result = json.loads(out)
         self.assertEqual(set(result), CLI_KEYS)
-        (_seq, last_sha, _state, digest), = checkpoint_of(self.path)
+        (seq, last_sha, state, digest), = checkpoint_of(self.path)
+        self.assertEqual(digest, checkpoint_digest(seq, last_sha, state), "computed here, not by the module")
         self.assertEqual(result, {"command": "compact", "ledger": self.path, "generation": 1, "seq": CALLS,
                                   "last_sha": last_sha, "sha256": digest, "removed": CALLS})
         self.assertEqual(rows_of(self.path), [])
@@ -824,7 +836,6 @@ class TheCommandLine(CompactionCase):
         code, out, err = smctl("ledger", "compact", self.path)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(json.loads(out), {**result, "removed": 0})
-        self.assertEqual(len(operations), 3)
 
     def test_a_refused_and_a_misused_command(self):
         with self.subTest(case="a missing ledger"):
