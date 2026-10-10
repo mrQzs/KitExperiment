@@ -87,7 +87,7 @@
 一份合同 `pi-native-events`：新建 `sentinelmesh/pi_events.py` 与执行器测试 `tests/test_pi_events.py`。oracle、夹具与缩减脚本由规划端先提交进基线并列入 forbidden。
 
 之后另议：
-- 真实 Pi 的受监督运行（候选 1b）：需要 macOS 上的监督器与凭据批准；本合同之后它只差 `adapter=PiNativeAdapter()` 与 `max_stream_bytes=MAX_STREAM_BYTES`；
+- 真实 Pi 的受监督运行（候选 1b）：需要 macOS 上的监督器与凭据批准；本合同之后它只差 `adapter=PiNativeAdapter()` 与 `max_stream_bytes=MAX_STREAM_BYTES, max_line_bytes=MAX_LINE_BYTES`（后者自 stream-ceilings 起）；
 - 崩溃运行的参考用量（候选 2）：`PiNativeAdapter.translate(frames).usage` 就是参考值，再由 `smctl ledger status` 展示。
 
 ## 5. 用户决定（2026-10-09，均选推荐项）
@@ -132,6 +132,6 @@
 - a001 验收：`check --fresh` 7/7；变异 36 个合起来抓住 35，只用执行器测试 26（漏掉的 10 个按分工由 oracle 把守）；规划端在本机对 31 次完整流（含 a001 自己的流）复核，候选与调度器、与规划端草稿都一致。独立复审建议 REVISE：漏掉的 M33 对应合同点名的“传给父类的是拷贝”用例，执行器写成了空断言（拿另一次 `translate()` 的结果比身份）。结论 ACCEPTED_WITH_EXCEPTION（豁免 G5，这一条由规划端补全），另有 F2/F3/F5/F6 四处合同没写明的读法记为 N4、N10、N15、N16。
 - 已集成：oracle `0ab0211`、a001 `301857c`、规划端补全 `a97f3cd`（拷贝用例改为截获 `run` 内部的翻译并篡改验证、reason 全等、三个形状用例、N10/N15/N16/N4 的 oracle 用例）；干净工作树全量 603 passed / 288 skipped（Windows），补全后 36 个偏差全部抓住，31 次完整流复核一致。
 - 遗留：
-  - 真实 pi 的受监督运行（候选 1b）仍是 NOT_RUN：需要 macOS 的监督器与凭据批准，接线只差 `adapter=PiNativeAdapter()` 与 `max_stream_bytes=MAX_STREAM_BYTES`；
+  - 真实 pi 的受监督运行（候选 1b）仍是 NOT_RUN：需要 macOS 的监督器与凭据批准，接线只差 `adapter=PiNativeAdapter()` 与 `max_stream_bytes=MAX_STREAM_BYTES, max_line_bytes=MAX_LINE_BYTES`；
   - 没见过的帧类型（compaction、retry、queue、`entry_appended`）按未知失败关闭，新版 pi 出现它们时请求会停在用量未知，要另立方言版本；
   - 崩溃运行的参考用量（候选 2）可以直接用 `PiNativeAdapter.translate(frames).usage` 与 `usage_complete`。

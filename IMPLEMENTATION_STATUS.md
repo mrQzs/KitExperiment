@@ -29,6 +29,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Crash-run usage reference (`smctl ledger reference`) | `ledger_cli.py`, `adapter_run.py` (`read_stream` without `O_NOFOLLOW`) | a read-only command that opens the ledger, reads the `stdout.log` named by a supervised run's descriptor (no stream fact survives a crash, so the file's own digest is the evidence) and prints a reference value next to the reservation and the usage already recorded: the dialect is named by hand (`--dialect pi-session-v3`, the only one), the Pi translation supplies the sums even when the stream is incomplete, marked with the reasons in order (no terminal, an illegal usage, unknown frames), `missing` lists the reserved dimensions without a known final amount in reservation order, a stream that is missing, unreadable, too large or invalid is an answer with no reference, and the command never writes; the operator still settles by hand with the stream digest. Checked on Windows against the five reduced real streams and, planner-only, the largest full captured stream (11 MB). `read_stream` now also reads without `O_NOFOLLOW` (Windows): `lstat` first, a link or reparse point refused before the open, a binary open, and the identity of what was opened compared with the `lstat` one; the POSIX branch is textually unchanged and keeps its macOS evidence |
 | Ledger checkpoint and compaction (`smctl ledger compact`) | `durable_ledger.py`, `ledger_cli.py` | format `sentinelmesh-ledger-v2` adds a `checkpoint` table: `DurableScheduler.compact()` writes the whole in-memory state -- requests, tasks, operations with their usage and run descriptors, idempotency keys, resource holds and every event -- at the instance's sequence number, with a digest over the sequence number, the link to the last command and the state text, and removes the commands it covers, all in one `BEGIN IMMEDIATE` transaction checked against the log head; opening loads the checkpoint, verifies its digest and shape (exact field sets and types, references that hold, events numbered from 1), registers its operation ids as used and replays only the commands after it, so a checkpoint plus its tail rebuilds exactly what a full replay would, events and private state included. The command chain is never rewritten and the identity `(seq, sha)` of the log does not change, so a compaction by another process leaves a live controller current while an append still makes it stale; any failure of a compaction invalidates the instance; a damaged or forged checkpoint, a tail that does not continue it and a v1 file are refused. Compaction is explicit only (the CLI or a controller's own call); the file does not shrink (no `VACUUM`) and the state keeps growing with the events. Verified on Windows by compacting at every prefix of a 33-call scenario and in real child processes |
 | Operator reads of the events (`smctl ledger events`) | `ledger_cli.py`, `durable_ledger.py` (`checkpoint_seq`) | a read-only command that prints the recorded events exactly as the Scheduler emitted them, filtered by request (an operation's events by the operation's request, request-level events by their payload, `controller.fenced` by none), by operation and by any of the sixteen event types, and paged by sequence number (`--after`, `--limit` of at most 10000, default 100, with `next`); the header reports the ledger's checkpoint, since the events are the only history left before it, and `status` keeps its shape. Decimal-digit arguments only; an unknown request, operation or type is refused before anything is read. Checked on Windows against the whole history of the 33-call scenario |
+| Stream ceilings (`read_stream`, `run_adapter_operation`, `smctl ledger reference`) | `adapter_run.py`, `ledger_cli.py` | the largest stream a caller may ask `read_stream` to read is 64 MiB (was 16 MiB; the default stays 1 MiB), and the longest line the parser accepts is a parameter, `max_line_bytes`, 1 MiB by default (the protocol's own document limit) and 8 MiB at most, checked before the file is touched and, on the run path, before the handoff; `smctl ledger reference` reads with both maxima, so the controller and the operator get the same answer for the same file. Measured on the 34 captured Step streams: a run at the kit's own 1800 s limit wrote 11.3 MB with a 719 KB `agent_end` line, about 1.5 times under both old ceilings; the translators copy counts and identifiers out of a frame, never its content, so a longer line leaves the normalized payload limit untouched. Checked on Windows with byte-exact synthetic streams |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -40,7 +41,7 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 755 passed, 289 skipped
+python -m pytest -q                 781 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -301,6 +302,19 @@ decisions E1–E7) and `.agent/reviews/ledger-events/`:
   test point the planner completed. Integrated as `cdb1e62` (oracle),
   `054631a` (candidate) and `028d882` (completion); full suite 755 passed on
   Windows.
+
+The stream ceilings are recorded in `.agent/design/stream-ceilings.md` (the
+measurements in section 1, the user's decisions in section 5, planner
+decisions S1–S8) and `.agent/reviews/stream-ceilings/`:
+- `stream-ceilings` passed (Windows, pi 0.99.2, 467 s, no scope finding):
+  `check --fresh` 8/8, mutations 28/28 with the oracle and the executor tests
+  together and 15/28 with the executor tests alone (the thirteen left are
+  rules the contract left to the oracle), independent review PASS with two
+  low tidiness points the planner completed; the hand-through of the line
+  ceiling to the two reductions on the run path is not reachable by any test
+  on Windows and was confirmed by the reviewer's stub probe. Integrated as
+  `53355a5` (oracle), `0c33ad4` (candidate) and `f60538e` (completion); full
+  suite 781 passed on Windows.
 
 ## Explicitly not proven by this repository
 
