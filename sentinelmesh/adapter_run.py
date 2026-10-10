@@ -382,8 +382,8 @@ def run_adapter_operation(
     adapter id bound into the invocation, the usage dimensions, the stream
     ceiling, the line ceiling, the runtime specification and the reservation the
     operation holds -- runs *before* the handoff, so a refused call starts
-    nothing, leaves the operation in ``RESERVED`` and writes no evidence.  Their errors are raised
-    unchanged: ``AdapterError`` for this module's own contract,
+    nothing, leaves the operation in ``RESERVED`` and writes no evidence.
+    Their errors are raised unchanged: ``AdapterError`` for this module's own contract,
     ``ContractError`` for the scheduler's, ``RuntimeErrorCode`` for the runtime's.
 
     The stream is reduced once, on the one path that reaches the end review,

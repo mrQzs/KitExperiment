@@ -30,7 +30,6 @@ from sentinelmesh.pi_events import DIALECT
 from sentinelmesh.process_identity import environment_digest
 from sentinelmesh.scheduler import Scheduler
 
-MIB = 1_048_576
 LF = bytes([10])
 BASE_ENV = {"LANG": "C", "PATH": "/usr/bin:/bin"}
 # One assistant message, as the dialect counts it.
