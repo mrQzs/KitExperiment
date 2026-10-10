@@ -33,7 +33,7 @@ import unittest
 from pathlib import Path
 
 from sentinelmesh.adapter_protocol import AdapterError, AdapterResult, Invocation, OfflineAdapter
-from sentinelmesh.adapter_run import read_stream, run_adapter_operation, supervised_spec
+from sentinelmesh.adapter_run import MAX_STREAM_BYTES, read_stream, run_adapter_operation, supervised_spec
 from sentinelmesh.process_identity import environment_digest
 from sentinelmesh.runtime import InvocationSpec, RuntimeErrorCode
 from sentinelmesh.scheduler import ContractError, Scheduler
@@ -371,7 +371,7 @@ class AdapterRunOracle(unittest.TestCase):
         for value in bad_dimensions:
             cases.append(("usage dimensions %r" % (value,), AdapterError, "E_ADAPTER_SCHEMA",
                           lambda op, ev_, v=value: self.run_op(self.invocation(op, "pass"), ev_, usage_dimensions=v)))
-        for limit in (0, True, 1.5, 16 * 1_048_576 + 1):
+        for limit in (0, True, 1.5, MAX_STREAM_BYTES + 1):
             cases.append(("stream limit %r" % (limit,), AdapterError, "E_ADAPTER_SCHEMA",
                           lambda op, ev_, v=limit: self.run_op(self.invocation(op, "pass"), ev_, max_stream_bytes=v)))
         for label, error, code, call in cases:

@@ -130,7 +130,7 @@ class CapturedReference(unittest.TestCase):
 
     The fixtures the oracle uses are reduced; this is the command on a stream as
     the dispatcher wrote it, copied in as a supervised run's ``stdout.log``, so
-    the 16 MiB ceiling and the file reading are exercised on real bytes.
+    the largest stream ceiling and the file reading are exercised on real bytes.
     """
 
     def test_the_reference_of_the_largest_captured_stream_agrees_with_the_dispatcher(self):
