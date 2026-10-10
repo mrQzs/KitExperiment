@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any, Callable
 
@@ -44,6 +45,54 @@ _RESOLUTIONS = tuple(sorted(RESOLUTIONS))
 #: ledger records no dialect, so the operator names the one the run wrote and a
 #: dialect nobody implemented is refused by argparse instead of being guessed at.
 _DIALECTS = (DIALECT,)
+
+#: The event types the Scheduler emits, and the only ones ``events`` offers.  The
+#: set is the Scheduler's own: an operator selecting a type nobody emits is a
+#: usage error (exit 2) rather than a filter that silently matches nothing.
+_EVENT_TYPES = (
+    "controller.fenced",
+    "request.created",
+    "request.resumed",
+    "request.stop_observed",
+    "request.stopped",
+    "run.finished_for_review",
+    "run.started",
+    "run.verdict",
+    "scheduler.cancelled_before_handoff",
+    "scheduler.claimed",
+    "scheduler.handoff_accepted",
+    "scheduler.not_started",
+    "scheduler.recovered",
+    "scheduler.start_unknown",
+    "scheduler.unknown_resolved",
+    "usage.observed",
+)
+#: The page size ``events`` uses when the operator names none.
+_DEFAULT_EVENTS = 100
+#: The largest page ``events`` returns: a long ledger's output stays bounded.
+_MAX_EVENTS = 10000
+
+
+def _digits(text: str) -> int:
+    """One non-negative integer written in decimal digits, and nothing else.
+
+    ``int`` itself would take a sign, underscores, surrounding whitespace or a
+    decimal point, and a value that reads as a number is not the same as a
+    sequence number the operator meant: ``--after 1.5`` is a typo, not the first
+    event after one.  A refusal here is argparse's own, so the ledger is not even
+    opened for a value it would have to guess at.
+    """
+    if re.fullmatch("[0-9]+", text) is None:
+        raise argparse.ArgumentTypeError("%r is not a sequence number written in decimal digits" % text)
+    return int(text)
+
+
+def _page_size(text: str) -> int:
+    """The ``--limit`` value: decimal digits, and at least one event."""
+    value = _digits(text)
+    if not 1 <= value <= _MAX_EVENTS:
+        raise argparse.ArgumentTypeError("the page size must be between 1 and %d" % _MAX_EVENTS)
+    return value
 
 
 def _write_line(stream: Any, payload: Any) -> None:
@@ -262,6 +311,81 @@ def cmd_compact(args: argparse.Namespace) -> int:
     return _with_ledger(args, work)
 
 
+def _belongs_to_request(ledger: Any, event: dict[str, Any], request_id: str,
+                         operations: dict[str, str]) -> bool:
+    """Whether one recorded event belongs to the request the operator named.
+
+    An event of an operation belongs to that operation's request -- the claim
+    recorded which request it was made for, and the ledger is the only place
+    that knows it.  A request-level event carries its own ``request_id`` in the
+    payload.  An event with no operation and no such payload -- the fence the
+    controller recorded -- belongs to no request at all, which is why a payload
+    that is not an object matches nothing instead of being guessed at.
+
+    The operation lookups are cached in ``operations``, because the read is the
+    whole event log and one request's history walks every operation id in it.
+    """
+    operation_id = event["operation_id"]
+    if operation_id is not None:
+        if operation_id not in operations:
+            operations[operation_id] = ledger.operation(operation_id)["request_id"]
+        return operations[operation_id] == request_id
+    payload = event["payload"]
+    return isinstance(payload, dict) and payload.get("request_id") == request_id
+
+
+def _events(ledger: Any, args: argparse.Namespace) -> dict[str, Any]:
+    """The events the filters select, paged, with the ledger's own header.
+
+    Read-only from end to end: the events are read once, filtered in the order
+    the ledger recorded them (sequence numbers ascend) and paged, and no
+    mutating method is called -- an operator reading the history leaves it
+    exactly as it was, checkpoint included.
+    """
+    if args.request is not None and args.request not in ledger.request_ids():
+        raise ContractError("E_REQUEST_UNKNOWN", "request %s is not one this ledger knows" % args.request)
+    if args.operation is not None:
+        # Unknown or not exactly a string: the ledger's own refusal, before any
+        # event is read.
+        ledger.operation(args.operation)
+    operations: dict[str, str] = {}
+    events = ledger.events
+    wanted = []
+    for event in events:
+        if args.request is not None and not _belongs_to_request(ledger, event, args.request, operations):
+            continue
+        if args.operation is not None and event["operation_id"] != args.operation:
+            continue
+        if args.type and event["type"] not in args.type:
+            continue
+        wanted.append(event)
+    remaining = [event for event in wanted if event["seq"] > args.after]
+    page = remaining[:args.limit]
+    return {"command": "events", "ledger": args.ledger, "generation": ledger.generation,
+            "seq": ledger.seq, "checkpoint": ledger.checkpoint_seq, "total": len(events),
+            "matched": len(wanted), "events": page,
+            "next": page[-1]["seq"] if len(remaining) > len(page) else None}
+
+
+def cmd_events(args: argparse.Namespace) -> int:
+    """Read the events the ledger recorded, filtered and paged.
+
+    A compaction drops the commands it covers, so the events are the only
+    complete history a ledger keeps -- and this is the operator's way to read
+    them: by request (an operation's request, or the payload's for a
+    request-level event; the fence belongs to none), by operation, by type, and
+    a page at a time with ``--after`` and ``--limit``.  Every event is printed
+    exactly as the Scheduler recorded it, with no derived field added: what the
+    ledger holds is the audit material, and an operator reading it is not
+    offered a second version of it.
+
+    The header reports where the ledger's checkpoint is, because that is the
+    command that tells the operator which history is left in the commands and
+    which is only here.
+    """
+    return _with_ledger(args, lambda ledger: _events(ledger, args))
+
+
 def cmd_reference(args: argparse.Namespace) -> int:
     """Read one supervised run's output stream and print the usage it adds up to.
 
@@ -395,6 +519,19 @@ def register(subparsers: Any) -> None:
     p = commands.add_parser("compact", help="write a checkpoint of the whole state and drop the commands it covers")
     p.add_argument("ledger", help="path of the ledger file")
     p.set_defaults(func=cmd_compact)
+
+    p = commands.add_parser("events", help="read the events the ledger recorded, filtered and paged")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.add_argument("--request", help="only the events of this request")
+    p.add_argument("--operation", help="only the events of this operation")
+    p.add_argument("--type", action="append", choices=_EVENT_TYPES,
+                   help="only the events of this type; repeat for a union of types")
+    p.add_argument("--after", type=_digits, default=0,
+                   help="skip the events at or below this sequence number (default 0)")
+    p.add_argument("--limit", type=_page_size, default=_DEFAULT_EVENTS,
+                   help="how many events to print at most (default %d, at most %d)"
+                        % (_DEFAULT_EVENTS, _MAX_EVENTS))
+    p.set_defaults(func=cmd_events)
 
     p = commands.add_parser("stop", help="put an explicit hold on a request")
     p.add_argument("ledger", help="path of the ledger file")

@@ -743,12 +743,17 @@ class DurableScheduler:
     ``(seq, sha)`` -- and with it the instance -- where it was.
     """
 
-    def __init__(self, path: str, scheduler: Scheduler, db: sqlite3.Connection, seq: int, last_sha: str):
+    def __init__(self, path: str, scheduler: Scheduler, db: sqlite3.Connection, seq: int, last_sha: str,
+                 checkpoint_seq: int | None = None):
         self._path = path
         self._scheduler = scheduler
         self._db: sqlite3.Connection | None = db
         self._seq = seq
         self._last_sha = last_sha
+        #: The sequence number of the checkpoint this instance's state starts
+        #: from, or ``None`` when the ledger holds none.  It is read the way
+        #: every other read is and never touches the log.
+        self._checkpoint_seq = checkpoint_seq
         self._lock = threading.RLock()
 
     # -- read-only surface -------------------------------------------------- #
@@ -780,6 +785,22 @@ class DurableScheduler:
         with self._lock:
             self._require_available()
             return self._scheduler.events
+
+    @property
+    def checkpoint_seq(self) -> int | None:
+        """The sequence number of the checkpoint this instance's state starts from.
+
+        ``None`` when the ledger holds no checkpoint: the whole history is then
+        the commands the log still holds.  A compaction writes one covering
+        everything this instance has applied, so it moves to this instance's own
+        sequence number -- and stays there for the commands appended after it.
+
+        Read like every other read: an unavailable instance refuses it with
+        ``E_LEDGER_UNAVAILABLE`` and the log is never touched.
+        """
+        with self._lock:
+            self._require_available()
+            return self._checkpoint_seq
 
     def snapshot(self, request: str, task: str | None = None) -> dict[str, dict[str, int]]:
         with self._lock:
@@ -998,6 +1019,10 @@ class DurableScheduler:
             except BaseException:
                 self._invalidate()
                 raise
+            # The checkpoint is written and committed: the instance's state now
+            # starts from it.  A failure above left the ledger -- and this
+            # number -- where it was.
+            self._checkpoint_seq = self._seq
             return {"seq": self._seq, "last_sha": self._last_sha, "sha256": digest, "removed": removed}
 
 
@@ -1157,7 +1182,8 @@ def open_ledger(path: str) -> DurableScheduler:
         except Exception:  # the ledger error at hand is the one to report
             pass
         raise
-    return DurableScheduler(location, scheduler, db, start_seq + len(commands), last_sha)
+    return DurableScheduler(location, scheduler, db, start_seq + len(commands), last_sha,
+                           None if checkpoint is None else checkpoint[0])
 
 
 __all__ = ["LEDGER_FORMAT", "MUTATING_METHODS", "DurableScheduler", "LedgerError", "create_ledger", "open_ledger",
