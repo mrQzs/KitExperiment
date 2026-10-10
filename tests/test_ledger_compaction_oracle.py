@@ -281,11 +281,12 @@ def rewrite_checkpoint(path, seq, last_sha, state, digest=None):
 
 
 def with_state(path, edit):
-    """Re-encode the checkpoint's state after ``edit`` changed it, with a digest that verifies."""
+    """Re-encode the checkpoint's state after ``edit`` changed it in place, with a digest that verifies.
+
+    The edit's return value is ignored on purpose: ``pop`` returns what it removed."""
     (seq, last_sha, state, _digest), = checkpoint_of(path)
     value = json.loads(state)
-    replaced = edit(value)
-    value = value if replaced is None else replaced
+    edit(value)
     rewrite_checkpoint(path, seq, last_sha, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
 
 
@@ -582,12 +583,21 @@ class CompactionOracle(CompactionCase):
         ledger.seed_task("req-1", "task-1", CAPS)
         ledger.compact()
         ledger.close()
+        # A ledger compacted at call 20 with nothing after it: a claim appended there
+        # replays at generation 1 on a request that is not stopped, so it is legal
+        # unless it reuses an operation id the checkpoint already holds.
+        forged = str(self.work / "forged.db")
+        ledger = create_ledger(forged)
+        forged_ops, _ = scenario(ledger, stop_after=20)
+        ledger.compact()
+        ledger.close()
+        self.assertEqual(len(forged_ops), 4)
         claim = json.dumps({"method": "claim",
                             "arguments": {"request": "req-1", "task": "task-5", "plan": 1, "key": "idem-z",
                                           "owner": "owner-1", "generation": 1, "guard_version": 1,
                                           "reservation": RESERVATION, "resource_keys": ["src/z.py"], "now": 0,
                                           "lease": 30, "fail_before_commit": False},
-                            "operation_id": tail_ops[0]}, separators=(",", ":"))
+                            "operation_id": forged_ops[0]}, separators=(",", ":"))
 
         def rename_operation(value, new_key, inner):
             """Record operation ``a`` under ``new_key``; ``inner`` renames its own id too.
@@ -631,7 +641,14 @@ class CompactionOracle(CompactionCase):
              lambda p: execute(p, "DELETE FROM commands WHERE seq=21")),
             ("a tail command the checkpoint already covers", tail, "E_LEDGER_CHAIN",
              lambda p: execute(p, "INSERT INTO commands(seq, command, sha256, previous) VALUES (20, '{}', '', '')")),
-            ("a state that is not an object", head, "E_LEDGER_CHECKPOINT", lambda p: with_state(p, lambda v: [])),
+            ("a state that is not an object", head, "E_LEDGER_CHECKPOINT",
+             lambda p: with_state_text(p, lambda t: "[]")),
+            ("an integer field given a boolean", head, "E_LEDGER_CHECKPOINT",
+             lambda p: with_state(p, edit_field(["operations", a, ("lease_until", True)]))),
+            ("a revision that is a boolean", head, "E_LEDGER_CHECKPOINT",
+             lambda p: with_state(p, edit_field(["operations", a, "usage", "tokens", ("revision", True)]))),
+            ("a max_attempts that is a boolean", head, "E_LEDGER_CHECKPOINT",
+             lambda p: with_state(p, edit_field(["tasks", 0, 2, ("max_attempts", True)]))),
             ("a key the state does not have", head, "E_LEDGER_CHECKPOINT",
              lambda p: with_state(p, edit_field([("extra", 1)]))),
             ("a key missing from the state", head, "E_LEDGER_CHECKPOINT",
@@ -690,7 +707,7 @@ class CompactionOracle(CompactionCase):
              lambda p: with_state(p, edit_field(["events", 0, ("seq", 2)]))),
             ("an event without its keys", head, "E_LEDGER_CHECKPOINT",
              lambda p: with_state(p, lambda v: v["events"][0].pop("payload"))),
-            ("a tail claim reusing a checkpointed operation id", tail, "E_LEDGER_REPLAY",
+            ("a tail claim reusing a checkpointed operation id", forged, "E_LEDGER_REPLAY",
              lambda p: append_rechained(p, claim)),
             ("a format 1 file", head, "E_LEDGER_FORMAT",
              lambda p: execute(p, "UPDATE meta SET value='sentinelmesh-ledger-v1' WHERE key='format'")),
@@ -711,6 +728,16 @@ class CompactionOracle(CompactionCase):
                 self.assertEqual(self.code_of(LedgerError, open_ledger, copy), code)
                 self.assertEqual(Path(copy).read_bytes(), before, "a refused open changed the file")
         self.assertEqual(d, head_ops[3])
+        with self.subTest(case="the same claim with a fresh operation id is a legal tail"):
+            # The control for the forged claim: only the reused id made it a forgery.
+            copy = str(self.work / "forged-control.db")
+            shutil.copyfile(forged, copy)
+            fresh_id = "op-" + "f" * 32
+            append_rechained(copy, claim.replace(forged_ops[0], fresh_id))
+            reopened = open_ledger(copy)
+            self.assertEqual(reopened.operation_ids(), (*forged_ops, fresh_id))
+            self.assertEqual((reopened.operation(fresh_id)["task_id"], reopened.seq), ("task-5", 21))
+            reopened.close()
 
     def test_a_failed_compaction_invalidates_the_instance_and_changes_nothing(self):
         real_connect = sqlite3.connect
