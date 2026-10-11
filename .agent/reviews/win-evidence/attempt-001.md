@@ -45,3 +45,5 @@ V01–V08 全部通过：oracle 18 passed / 67 subtests；执行器测试 8 pass
 - F1：`supervised_operation.py` 模块文档串补一段非 POSIX 读取规则。
 - F6：`windows_supervisor.py` 模块文档串加一句 lstat 与 `O_EXCL` 之间的窗口及其结果。
 - F4、F5 写进设计说明第 9 节，作为第 3 份合同 `win-supervise` 的事实。
+
+Verdict: PASS
