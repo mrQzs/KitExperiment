@@ -320,12 +320,15 @@ def _nt_is_rooted(path: str) -> bool:
 
     On Windows a usable ``PATH`` entry (or an explicit path used as given) must
     name a rooted location: ``os.path.splitdrive`` must return a non-empty drive
-    (``C:`` or a ``\\server\share`` UNC root) *and* the remainder must be
-    absolute.  A rootless ``\tool.exe`` or a drive-relative ``C:sub\tool.exe``
-    would resolve against an unspecified working directory, so both are refused.
+    (``C:`` or a ``\\server\share`` UNC root) *and* the remainder must start
+    with a separator.  A rootless ``\tool.exe``, a drive-relative ``C:sub\tool.exe``
+    and a bare share ``\\server\share`` with nothing after it are all refused:
+    the first two would resolve against an unspecified working directory, and
+    the last names no directory the contract's rule (drive or share, then a
+    separator) accepts.
     """
-    drive, _rest = os.path.splitdrive(path)
-    return bool(drive) and os.path.isabs(path)
+    drive, rest = os.path.splitdrive(path)
+    return bool(drive) and rest[:1] in ("\\", "/")
 
 
 def _nt_path_lookup(name: str, snapshot: dict[str, str]) -> str:
@@ -373,9 +376,9 @@ def _resolve_executable_nt(argv0: str, cwd: str, snapshot: dict[str, str]) -> st
     try:
         if "\\" in argv0 or "/" in argv0:
             drive, _rest = os.path.splitdrive(argv0)
-            if drive and os.path.isabs(argv0):
+            if _nt_is_rooted(argv0):
                 candidate = argv0
-            elif (not drive and argv0.startswith(("\\", "/"))) or (drive and not os.path.isabs(argv0)):
+            elif drive or argv0.startswith(("\\", "/")):
                 raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} is not a rooted path")
             else:
                 candidate = os.path.join(cwd, argv0)

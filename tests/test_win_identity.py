@@ -176,6 +176,8 @@ class Shims(WindowsCase):
         # One change: the .exe is gone; the .cmd/.bat shims no longer match.
         os.remove(exe)
         self.assertIdentityError(lambda: self.resolve("tool"))
+        # The shim named outright is refused as well (planner completion, F2).
+        self.assertIdentityError(lambda: self.resolve("tool.cmd"))
         # The shim's own absolute path is a .cmd file and is refused too.
         self.assertIdentityError(lambda: self.resolve(os.path.join(self.directory, "tool.cmd")))
 
@@ -263,7 +265,11 @@ class ExplicitPaths(WindowsCase):
         # One change each: a rootless path and a drive-only name are refused.
         drive, rest = os.path.splitdrive(exe)
         self.assertIdentityError(lambda: self.resolve(rest))
-        self.assertIdentityError(lambda: self.resolve(drive + "tool.exe"))
+        # With PATH naming the directory that holds tool.exe, only the drive
+        # guard keeps ``C:tool.exe`` from being completed from that directory
+        # (planner completion, F1).
+        self.assertIdentityError(lambda: resolve_executable(drive + "tool.exe", cwd=self.directory,
+                                                            environment={"PATH": sub}))
 
     def test_a_directory_that_looks_like_a_program_is_refused(self):
         program = os.path.join(self.directory, "tool.exe")

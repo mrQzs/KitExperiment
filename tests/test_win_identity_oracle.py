@@ -244,6 +244,20 @@ class WindowsExecutableRules(Rejections):
             with self.subTest(argv0=argv0):
                 self.assert_rejected(lambda: self.resolved(argv0))
 
+    def test_only_the_two_program_suffixes_are_ever_completed(self):
+        # A shim earlier on PATH is not a candidate at all, so it cannot shadow
+        # a program later on PATH; and a name that already carries an extension
+        # is tried as given, never completed again.
+        self.file(self.directory, "tool.cmd")
+        later = self.file(self.other, "tool.exe")
+        both = {"PATH": self.directory + ";" + self.other}
+        self.assertEqual(self.resolved("tool", environment=both), later)
+        self.file(self.directory, "tool.cmd.exe")
+        self.file(self.directory, "notes.txt.com")
+        self.assert_rejected(lambda: self.resolved("tool.cmd"))
+        self.assert_rejected(lambda: self.resolved("notes.txt"))
+        self.assertEqual(self.resolved("tool.cmd.exe"), os.path.join(self.directory, "tool.cmd.exe"))
+
     def test_pathext_is_never_read(self):
         self.file(self.directory, "tool.cmd")
         environment = {"PATH": self.directory, "PATHEXT": ".CMD;.BAT;.EXE"}
@@ -276,6 +290,11 @@ class WindowsExecutableRules(Rejections):
         unc = "\\\\server\\share\\bin;" + self.directory
         self.assertEqual(self.resolved("tool", environment={"PATH": unc}),
                          os.path.join(self.directory, "tool.exe"))
+        # A share root is rooted only with the separator after it: the bare
+        # share names no directory the rule accepts.
+        self.assertEqual(self.resolved("tool", environment={"PATH": "\\\\server\\share\\;" + self.directory}),
+                         os.path.join(self.directory, "tool.exe"))
+        self.assert_rejected(lambda: self.resolved("tool", environment={"PATH": "\\\\server\\share;" + self.directory}))
 
     def test_explicit_paths_are_used_as_given_or_joined_with_cwd(self):
         sub = os.path.join(self.directory, "sub")
@@ -295,7 +314,7 @@ class WindowsExecutableRules(Rejections):
         exe = self.file(self.directory, "tool.exe")
         drive, rest = os.path.splitdrive(exe)
         for argv0 in (rest, rest.replace(SEP, "/"), drive + "tool.exe", drive + "sub" + SEP + "tool.exe",
-                      SEP + "tool.exe", "/tool.exe"):
+                      SEP + "tool.exe", "/tool.exe", "\\\\server\\share", "//server/share"):
             with self.subTest(argv0=argv0):
                 self.assert_rejected(lambda: self.resolved(argv0))
 
