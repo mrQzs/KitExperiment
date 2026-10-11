@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "task_id": "run-cli-once",
+  "plan_version": 1,
+  "title": "run-cli-once: smctl run init and once",
+  "repository": "KitExperiment",
+  "base_sha": "f5f1de551d79c907f2d382c0780e27ae24829a1b",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/cli.py"
+    ],
+    "allowed_new_files": [
+      "sentinelmesh/run_cli.py",
+      "tests/test_run_cli.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_run_cli_oracle.py",
+      "tests/test_ledger_cli.py",
+      "tests/test_ledger_cli_oracle.py",
+      "sentinelmesh/ledger_cli.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_cli.py",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_ledger_reference.py",
+        "tests/test_ledger_events.py",
+        "tests/test_win_wiring_oracle.py",
+        "tests/test_win_wiring.py",
+        "tests/test_restart_recovery.py",
+        "tests/test_request_resume_oracle.py",
+        "tests/test_adapter_run.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-m",
+        "sentinelmesh.cli",
+        "run",
+        "--help"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "once"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "f5f1de551d79c907f2d382c0780e27ae24829a1b",
+        "--",
+        "sentinelmesh/ledger_cli.py",
+        "sentinelmesh/durable_ledger.py",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/supervised_operation.py",
+        "sentinelmesh/supervised_record.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/adapter_protocol.py",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/restart_recovery.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "挂接、用法错误、成功与拒绝的形状（第 1–2 条）",
+      "evidence": [
+        "V01",
+        "V07"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "规格文件的校验与 `init` 的顺序——先校验、先在内存调度器上排练、再创建、任何拒绝不留文件（第 3–4 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "作业文件的校验与 `once` 的顺序——先校验、再开账本、恰好一次领取、重放不运行、交接后的拒绝带操作 id、outcome 原样输出（第 5–6 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "子进程看到的恰好是作业文件给的（第 7 条）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "`smctl ledger` 不受影响，十二个文件不变，导入无副作用（第 8 条与 Non-goals）",
+      "evidence": [
+        "V03",
+        "V04",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
