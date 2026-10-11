@@ -16,7 +16,11 @@ What Windows cannot do, measured 2026-10-10 on Windows Server 2025 (Python
 * an exclusive open does *not* fail at a dangling symbolic link: it creates the
   file through the link, so the path is examined with ``lstat`` before anything
   is opened and anything that is not a plain regular file - a link, a reparse
-  point, a directory - is refused without opening it;
+  point, a directory - is refused without opening it.  A dangling link planted
+  in the window between that ``lstat`` and the exclusive open is still refused
+  (the pin's own ``lstat`` sees a reparse point, nothing is leaked), but the
+  file created through it stays where the link pointed: nothing here removes
+  by path, so a file at a location this call never examined is left alone;
 * a file this process holds open (a write descriptor or a read-only pin) cannot
   be unlinked, renamed or replaced, so a rollback closes every descriptor first
   and only then removes what it created;

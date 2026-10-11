@@ -48,6 +48,14 @@ while the operation is still RUNNING, so a caller can settle usage against the
 supervisor's own digest -- the only moment before ``finish`` enforces the
 budget.
 
+The two record files are read here the way `sentinelmesh.supervised_record`
+reads them, only without raising.  Where the platform has no ``O_NOFOLLOW``
+(Windows) that refusal is made by hand: the path is ``lstat``-ed first, a
+reparse point or anything that is not a regular file is ``unreadable`` without
+being opened, the file is opened with ``O_BINARY`` so the C runtime cannot fold
+CR LF or stop at 0x1A, and ``fstat`` on what was opened must show the identity
+the ``lstat`` saw, or the record is ``unreadable`` as well.
+
 Importing this module has no side effect: no ``ctypes`` import, no file read, no
 environment read and no process start.
 """
