@@ -32,6 +32,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Stream ceilings (`read_stream`, `run_adapter_operation`, `smctl ledger reference`) | `adapter_run.py`, `ledger_cli.py` | the largest stream a caller may ask `read_stream` to read is 64 MiB (was 16 MiB; the default stays 1 MiB), and the longest line the parser accepts is a parameter, `max_line_bytes`, 1 MiB by default (the protocol's own document limit) and 8 MiB at most, checked before the file is touched and, on the run path, before the handoff; `smctl ledger reference` reads with both maxima, so the controller and the operator get the same answer for the same file. Measured on the 34 captured Step streams: a run at the kit's own 1800 s limit wrote 11.3 MB with a 719 KB `agent_end` line, about 1.5 times under both old ceilings; the translators copy counts and identifiers out of a frame, never its content, so a longer line leaves the normalized payload limit untouched. Checked on Windows with byte-exact synthetic streams |
 | Windows process identity (`boot_id`, `resolve_executable`) | `process_identity.py` | the first of the four Windows supervisor contracts (`.agent/design/windows-supervisor.md`): on `win32` the boot session id is the registry's `MachineGuid` and the prefetcher's `BootId` joined exactly as reported (`<guid>:<count>`, re-read on every call, any registry failure or wrong value kind refused), and an executable is resolved under the platform's own rules through the explicit environment alone: `;`-separated `PATH` entries each rooted on a drive or a share followed by a separator, a bare stem completed with `.exe` then `.com` only, `PATHEXT` never read, `.cmd`/`.bat` shims refused (the program that would run is `cmd.exe`), drive-relative and rootless paths refused before any join, the result a real-path `.exe`/`.com` file. The POSIX branches are textually unchanged. Native Windows evidence for the boot id, the interpreter's identity and the lookup rules; the registry rules also run on every platform through a scripted `winreg` |
 | Windows evidence files (`windows_supervisor` without a Job Object; by-hand record reads) | `windows_supervisor.py`, `supervised_record.py`, `supervised_operation.py` | the second Windows supervisor contract: the evidence half of the Windows supervisor keeps the POSIX rules where Windows has no flag for them. Every path is `lstat`-ed before it is opened and refused unless it is a regular, non-reparse file (Windows creates *through* a dangling symlink on an exclusive open, so the creation is preceded by an `lstat` too); a pin must have the identity of both the write descriptor and the `lstat`; a rollback closes every descriptor before it removes by identity (an open file cannot be unlinked, renamed or replaced on Windows); stream facts are read from offset 0 through the pins in binary mode (no `pread`), bounded by the one `MAX_STREAM_DIGEST_BYTES` in `posix_supervisor`; `streams_match` proves what was opened is what was seen. The record reads, the partial creation and the record digest gained the same `lstat`-first branch where `O_NOFOLLOW` is missing; the POSIX branches are textually unchanged and the wiring still goes through the POSIX supervisor. No `supervise` yet: the Job Object is the next contract |
+| Windows Job Object supervision (`windows_supervisor.supervise`) | `windows_supervisor.py` | the third Windows supervisor contract: the same signature, check order, hook, evidence files, observation and `SupervisedRun` as the POSIX supervisor, with a Job Object in place of the process group. The leader is created `CREATE_SUSPENDED`, assigned to a fresh job with `KILL_ON_JOB_CLOSE` and only then resumed, so every descendant is born inside the job; a timeout or a cancellation ends the whole job at once with `TerminateJobObject` (no grace, exit code `TERMINATED_EXIT_CODE` = 0xC000013A, reported as `timeout_killed` or `cancelled`); after the leader is gone the job's member count is polled, a survivor is a straggler, and a job not confirmed empty within the reap window (or whose count cannot be read) is `cleanup_confirmed=False` and `START_UNKNOWN`. `ctypes` is loaded on the first call, never at import. Native evidence on Windows Server 2025 with real `python` process trees: normal exit, nonzero exit, a three-level tree ended by a timeout, a straggler reaped after a normal exit, cancellation, start failure, a process refused by the job terminated while still suspended, unconfirmed cleanup, interrupt absorption in the reap poll, the handle census returning to its baseline. The wiring still goes through the POSIX supervisor: the last contract switches it |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -43,7 +44,7 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 846 passed, 289 skipped
+python -m pytest -q                 875 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -342,6 +343,17 @@ W1-W10, the four contracts in section 7) and `.agent/reviews/win-identity/`:
   holding the write handle keeps the file from being removed). Integrated as
   `3c14b2a` (oracle), `bb0fecd` (candidate) and `776f3a4` (completion); full
   suite 846 passed on Windows.
+- `win-supervise` passed (Windows, pi 0.99.2, 1134 s, no scope finding):
+  `check --fresh` 8/8, mutations 31/32 with the oracle and the executor tests
+  together (the one left was an oracle case that let the mutant's escaped
+  interrupt abort the session; fixed in the planner completion and caught
+  since) and 16/32 with the executor tests alone (the 16 left are rules the
+  contract left to the oracle), independent review PASS with no high or
+  medium finding (the handle census now pays CPython's one-time cost of a
+  failed CreateProcess before its baseline). Integrated as `dc3179a`
+  (oracle), `a387800` (candidate) and `0cf6f8f` (completion, oracle only);
+  full suite 875 passed on Windows. The wiring contract is what turns the
+  native Windows Job Object row below from NOT_RUN into evidence.
 
 ## Explicitly not proven by this repository
 

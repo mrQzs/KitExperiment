@@ -1,6 +1,6 @@
 # 设计说明：Windows 原生进程监督（windows-supervisor）
 
-状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1、2 份合同 `win-identity`、`win-evidence` 已集成，第 3 份 `win-supervise` 待写合同。
+状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1–3 份合同 `win-identity`、`win-evidence`、`win-supervise` 已集成，第 4 份 `win-wiring` 待写合同。
 前置：POSIX 监督器三份合同（posix-runtime-runner）、监督记录（supervised_record）、受监督操作（supervised_operation）、adapter 受监督运行（adapter_run）、`read_stream` 的非 POSIX 分支（ledger-reference）、输出流上限（stream-ceilings）都已集成。
 本说明重新审视 posix-runtime-runner 第 5 节第 1 条（2026-10-04：“先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN”）：当时规划端与执行端都在 macOS 上；2026-10-08 起两端都在这台 Windows Server 2025 上，情况变了，所以再问一次。
 
@@ -70,7 +70,7 @@
 - 等待：`proc.wait(timeout=spec.timeout_seconds)`；`TimeoutExpired` → `timeout`；`KeyboardInterrupt` → `cancelled`（报告，不再抛）。
 - 停止：`timeout`/`cancelled` 时直接 `TerminateJobObject(job, STATUS_CONTROL_C_EXIT)`（没有 SIGTERM 的对应物；Ctrl-Break 只对带控制台的进程有效且不可靠），stop_reason 为 `killed`；组长的退出码就是 `0xC000013A`（Windows 自己给被 Ctrl-C 杀掉的控制台进程的值），与程序自己的退出 1 可区分。
 - 回收：组长结束后轮询 `ActiveProcesses`（`_REAP_POLL_SECONDS` 0.05，上限 `_REAP_SECONDS` 2.0）；正常结束后仍有成员则 `TerminateJobObject`（`stragglers_killed=True`）再轮询；窗口内到 0 则 `cleanup_confirmed=True`，否则 False 且生命周期 `START_UNKNOWN`（与 POSIX 同）。Job 句柄在返回前关闭。
-- 中断吸收：停止与回收阶段的 `KeyboardInterrupt` 吸收到窗口结束，与 POSIX 的说明一致（纯 Python 不能密不透风，记为同一条遗留）。
+- 中断吸收：停止与回收阶段的 `KeyboardInterrupt` 吸收到窗口结束，与 POSIX 的说明一致（纯 Python 不能密不透风，记为同一条遗留）。Windows 特有的一处窗口（a001 复审 F2）：`Popen` 返回与入 Job 之间落下的中断会留下一个不在任何 Job 里、永远挂起的进程（POSIX 的同一窗口留下的是会跑完的进程）；合同未定义，oracle 钉不住，记为遗留。
 - 描述符普查：POSIX 测试用 `/dev/fd` 数描述符；Windows 的 oracle 用 `GetProcessHandleCount` 比较一次运行前后的句柄数（Job、进程、文件句柄都该归还）。
 
 ### 3.6 不变的部分
@@ -128,4 +128,8 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
   - 本轮实测补充的 Windows 事实：`O_CREAT|O_EXCL` 在悬空符号链接处会穿过链接建目标文件（所以独占创建前先 lstat）；本进程开着的文件删不掉、改不了名、也不能被别的文件覆盖（所以回滚先关后删）；没有 `os.pread`（事实用 `lseek(0)` 加 `os.read`）；没有 `O_BINARY` 的描述符是文本模式（写 LF 变 CR LF，读折 CR LF 且在 0x1A 停）。
   - 给第 3 份合同的事实（复审 F4、F5）：`_abandon_evidence` 关掉的描述符号会被下一次 `os.open` 复用，`supervise` 调用它之后必须把四个变量置 None，否则 `finally` 里的二次 `_close_fd` 会关掉别的新描述符；子进程还持有继承来的写句柄时 `os.unlink` 仍是 `PermissionError`，按身份删除要在 Job 终止并确认 `ActiveProcesses == 0` 之后，否则接受残留。lstat 与 `O_EXCL` 之间被植入悬空链接的窗口：拒绝、不泄漏，但穿过链接建出的文件留在链接指向处（永不按路径删除）。
   - 合同措辞遗漏：第 6 条该写 `(OSError, ValueError)`；执行器按“永不抛异常”读对了。
-- 下一份：`win-supervise`（第 7 节第 3 份）。
+- 第 3 份 `win-supervise` 已集成（2026-10-11）：oracle `dc3179a`（pi-base 上为 `7d3a302`）、a001 `a387800`、规划端补全 `0cf6f8f`（只改 oracle）；复审 `.agent/reviews/win-supervise/attempt-001.md`（PASS，1134 s；`check --fresh` 8/8；变异 31/32 与 16/32；独立复审 PASS，无高/中发现）；干净工作树全量 875 passed / 289 skipped。
+  - 本轮实测补充的 Win32 事实：`TerminateJobObject(job, 0xC000013A)` 后 `Popen.returncode` 是 3221225786（无符号）；整棵树 8 ms 内 `ActiveProcesses` 归 0；对挂起进程 `TerminateProcess` 后它没有写过一个字节；子进程环境块的键名被 Windows 转成大写，Python 子进程不需要 `SystemRoot`；`GetProcessHandleCount` 在一个完整周期后回到原值，但本进程第一次失败的 `CreateProcess` 永久多 8 个句柄（复审 F1，普查前要先做一次失败热身）。
+  - 给第 4 份合同的事实（复审 F3、F4）：超时/取消路径上 `stragglers_killed` 实测恒为 False（树在等完组长前就空了），与 POSIX 一致，不要给断言它为 True 的用例去掉守卫；`tests/test_supervised_record.py` 直接从 `posix_supervisor` 导入 `supervise`，它与 `test_supervised_operation.py`、`test_adapter_run.py` 用 `os.killpg`/`SIGKILL` 清理，不是平台中立用例（要么保留守卫，要么加 `kill_pid` 分支）；`sentinelmesh/` 里没有代码解读负退出码或信号号，`runtime.py` 只要求 `int`，3221225786 原样通过；替换 `Popen` 的假对象要带 `_handle`。
+  - 变异工具的教训：让中断冒出去的变异体会把 pytest 整个会话打断（退出码 2），kit 的 `mutate` 不算抓住；断言“中断被吸收”的用例要自己 `try/except KeyboardInterrupt` 再判失败。规划端草稿用的变异脚本原来把任何非零退出码都算抓住，已改成只认退出码 1。
+- 下一份：`win-wiring`（第 7 节第 4 份）：`supervised_record` 与 `supervised_operation` 按平台选监督器，`run_supervised_operation`/`run_adapter_operation` 在 Windows 上端到端，平台中立用例去掉守卫，状态文档的 NOT_RUN 行更新。
