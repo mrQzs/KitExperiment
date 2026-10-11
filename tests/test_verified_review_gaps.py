@@ -36,7 +36,6 @@ CAPS = {"dispatches": 5, "tokens": 100}
 LEADER = "import os\nos.write(1, b'leader\\n')\n"
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
 class VerifiedReviewGaps(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="verified-review-gaps-")).resolve()

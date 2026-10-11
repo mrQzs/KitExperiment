@@ -1,4 +1,4 @@
-"""Durable start records and the replay gate for the native POSIX supervisor.
+"""Durable start records and the replay gate for the native supervisor.
 
 This module is the third piece described in `.agent/design/posix-runtime-runner.md`
 (section 6): it keeps the supervisor's handoff and observation on disk in the
@@ -41,8 +41,19 @@ and the expected `InvocationSpec`, and it is read-only: it creates, modifies and
 deletes nothing.  ``streams`` takes no part in that decision; it is there so
 that `recorded_streams` can hand the facts of a recorded run to a caller that
 needs to check the files on disk against them.  Persistence across a power loss
-is *not* verified here (no directory fsync, no ``F_FULLFSYNC``); Linux and
-Windows Job Object supervision stay ``NOT_RUN``.
+is *not* verified here (no directory fsync, no ``F_FULLFSYNC``); Linux
+process-group supervision stays ``NOT_RUN``.
+
+Which supervisor a run goes through is a fact about the platform, settled on
+every call by `native_supervisor`: ``nt`` is the Windows Job Object supervisor
+(`sentinelmesh.windows_supervisor`), ``posix`` the process-group one
+(`sentinelmesh.posix_supervisor`), and any other platform is refused with
+``E_RUNTIME_PLATFORM`` before a record is written or a process is started.  The
+two supervisors run the same checks in the same order, pin the same evidence
+files and return the same `SupervisedRun`, so nothing above this module knows
+which of them ran - which is also why a file identity a platform reports wider
+than canonical JSON's integer profile is written as its decimal text here
+rather than refused (see `_record_identity`).
 
 Everything is fail-closed: a rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code.  Importing this
@@ -53,10 +64,12 @@ from __future__ import annotations
 
 import os
 import stat
+from types import ModuleType
 from typing import Any, Mapping, Optional
 
-from .core import canonical_json, strict_json_loads
-from .posix_supervisor import SupervisedRun, supervise
+from . import posix_supervisor, windows_supervisor
+from .core import MAX_SAFE_INTEGER, canonical_json, strict_json_loads
+from .posix_supervisor import SupervisedRun
 from .runtime import InvocationSpec, RuntimeErrorCode, classify_start, reconcile
 
 # The two record file names inside the caller's evidence directory.
@@ -99,6 +112,107 @@ _STREAM_NAMES = frozenset({"stdout", "stderr"})
 _FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
 _SHA256_ALPHABET = frozenset("0123456789abcdef")
 
+# A file identity is whatever the platform says it is, and Windows reports one
+# 64 bits wide (``st_ino`` is the file reference number, whose high 16 bits are
+# the volume serial, and ``st_dev`` the 64-bit volume serial), which is past the
+# canonical JSON integer profile.  A number outside the profile is written as its
+# decimal text instead: the record stays canonical JSON, the value is neither
+# rounded nor hashed into something it is not, and it is read back as the number
+# it was, so a recorded fact stays directly comparable with an ``os.lstat``.
+_DECIMAL_DIGITS = frozenset("0123456789")
+# The widest identity either platform can report: 64 bits, sign included.
+_IDENTITY_LIMIT = 2**64 - 1
+# The shortest text form of a number beyond the profile (``2**53``) and the
+# longest one a 64-bit identity can have (``2**64 - 1``, sign included), so a
+# text identity is recognisable by its length alone.
+_IDENTITY_MIN_DIGITS = 16
+_IDENTITY_MAX_DIGITS = 21
+
+
+def native_supervisor() -> ModuleType:
+    """Return the supervisor module for this platform, chosen on every call.
+
+    The choice is a fact about the running platform, so it is read from
+    ``os.name`` here rather than settled once at import time: a caller that
+    patches the platform (a test, or a process that reports another one) gets
+    the same rule the real platform gets.  Nothing is cached, and nothing is
+    imported that this module has not already imported.
+    """
+    if os.name == "nt":
+        return windows_supervisor
+    if os.name == "posix":
+        return posix_supervisor
+    raise RuntimeErrorCode("E_RUNTIME_PLATFORM", "this platform has no native supervisor")
+
+
+def supervise(
+    spec: InvocationSpec,
+    *,
+    environment: Mapping[str, str],
+    evidence_dir: str,
+    worktree_id: str,
+    allowed_secret_names: frozenset[str] = frozenset(),
+    before_start: Optional[Any] = None,
+) -> SupervisedRun:
+    """Run one invocation under the platform's supervisor, arguments unchanged.
+
+    This is a delegation and nothing else: the specification, the environment
+    mapping, the hook and the allowed secret names reach the chosen supervisor
+    as the very objects this call was given, and whatever it raises - or returns
+    - comes out unchanged.  No check is duplicated here and no exception is
+    caught, so a caller sees the supervisor's own rejection codes.
+    """
+    return native_supervisor().supervise(
+        spec,
+        environment=environment,
+        evidence_dir=evidence_dir,
+        worktree_id=worktree_id,
+        allowed_secret_names=allowed_secret_names,
+        before_start=before_start,
+    )
+
+
+def _record_identity(value: int) -> Any:
+    """Return ``value`` as a record holds it: a number, or its decimal text.
+
+    An identity inside the canonical JSON integer profile is written as the
+    number it is; one beyond it is written as its shortest decimal text, because
+    that is the only form canonical JSON can hold for it.  The text carries a
+    leading ``-`` where the number is negative, so both forms are the same
+    number either way.
+    """
+    if abs(value) <= MAX_SAFE_INTEGER:
+        return value
+    return str(value)
+
+
+def _recorded_identity(value: Any) -> Optional[int]:
+    """Return the file identity a record held, or ``None`` when it is not one.
+
+    A number is accepted as it is.  Text is accepted only in the one form
+    `_record_identity` writes: the decimal text of a number beyond the profile,
+    with at most one leading ``-``, no leading zero, no sign, no space, no
+    exponent and no radix prefix, and no wider than a 64-bit identity.  Every
+    other value - a boolean, a float, ``None``, the text of a number the profile
+    already covers, a text beyond 64 bits - is damaged evidence, because it
+    would give one identity two different written forms.
+    """
+    if type(value) is int:
+        return value
+    if type(value) is not str:
+        return None
+    digits = value[1:] if value.startswith("-") else value
+    if not _IDENTITY_MIN_DIGITS <= len(digits) <= _IDENTITY_MAX_DIGITS:
+        return None
+    if digits[0] == "0" or any(character not in _DECIMAL_DIGITS for character in digits):
+        # ``str.isdigit`` would accept fullwidth and other decimal marks; a
+        # record holds ASCII digits only.
+        return None
+    number = int(value)
+    if not MAX_SAFE_INTEGER < abs(number) <= _IDENTITY_LIMIT:
+        return None
+    return number
+
 
 def _handoff_content(spec: InvocationSpec) -> dict[str, Any]:
     """Return the handoff record for ``spec``: the start about to be attempted."""
@@ -126,7 +240,7 @@ def _observation_content(
         "schema": _OBSERVATION_SCHEMA,
         "spec_sha256": spec.digest(),
         "observation": dict(observation),
-        "streams": _copy_streams(streams),
+        "streams": _record_streams(streams),
     }
 
 
@@ -134,13 +248,37 @@ def _copy_streams(streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]]) 
     """Return a fresh copy of a stream mapping, so no caller can share one.
 
     Both callers hand it a mapping that has already been validated (the
-    supervisor's own, or one `_validated_streams` just accepted), so the shape is
-    not re-checked here; what matters is that the value written or handed back is
-    a new container every time.
+    supervisor's own, or one `_validated_streams` just accepted and decoded), so
+    the shape is not re-checked here; what matters is that the value written or
+    handed back is a new container every time.
     """
     if streams is None:
         return None
     return {name: (None if streams[name] is None else dict(streams[name])) for name in ("stdout", "stderr")}
+
+
+def _record_streams(streams: Optional[Mapping[str, Optional[Mapping[str, Any]]]]) -> Optional[dict[str, Any]]:
+    """Return the stream facts as a record holds them: identities in text form.
+
+    This is `_copy_streams` for the *written* record: the facts are the
+    supervisor's own, so their shape is not re-checked, but a file identity is
+    put into the form `_record_identity` prescribes - a number inside the
+    canonical JSON integer profile, its decimal text beyond it.  Byte counts and
+    digests are copied as they are: a count and a hex digest are not platform
+    identities, and each has exactly one form.
+    """
+    if streams is None:
+        return None
+    recorded: dict[str, Any] = {}
+    for name in ("stdout", "stderr"):
+        fact = streams[name]
+        recorded[name] = None if fact is None else {
+            "device": _record_identity(fact["device"]),
+            "inode": _record_identity(fact["inode"]),
+            "bytes": fact["bytes"],
+            "sha256": fact["sha256"],
+        }
+    return recorded
 
 
 def _is_sha256_text(value: Any) -> bool:
@@ -161,6 +299,12 @@ def _validated_streams(value: Any, observation: Mapping[str, Any]) -> Optional[d
 
     JSON has one number type, so ``true`` is not an integer here even though
     ``True == 1`` in Python: a byte count of ``true`` would be one byte.
+
+    A file identity is read back the way it was written: a number inside the
+    canonical JSON integer profile, or the decimal text of a number beyond it,
+    and nothing else - see `_recorded_identity`.  The facts come back as a fresh
+    mapping whose identities are integers, so what a caller holds is directly
+    comparable with what ``os.lstat`` reports for the same file.
     """
     started = frozenset(observation) == _OBSERVATION_STARTED_KEYS
     if not started:
@@ -169,22 +313,33 @@ def _validated_streams(value: Any, observation: Mapping[str, Any]) -> Optional[d
         return None
     if type(value) is not dict or frozenset(value) != _STREAM_NAMES:
         raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream facts must cover both streams")
+    decoded: dict[str, Any] = {}
     for name in ("stdout", "stderr"):
         fact = value[name]
         if fact is None:
+            decoded[name] = None
             continue
         if type(fact) is not dict or frozenset(fact) != _FACT_KEYS:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream facts have an unexpected shape")
         # A device number may be negative (it is whatever the filesystem says);
-        # an inode or a byte count may not.
-        if type(fact["device"]) is not int:
-            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream device must be a number")
-        for key in ("inode", "bytes"):
-            if type(fact[key]) is not int or fact[key] < 0:
-                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"stream {key} must be a number that is not negative")
+        # an inode or a byte count may not.  Each identity is decoded into the
+        # number it stands for, so a record written as text and a record written
+        # as a number describe the same file the same way.
+        device = _recorded_identity(fact["device"])
+        if device is None:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream device must be a recorded file identity")
+        inode = _recorded_identity(fact["inode"])
+        if inode is None or inode < 0:
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE",
+                                   "stream inode must be a recorded file identity that is not negative")
+        if type(fact["bytes"]) is not int or fact["bytes"] < 0:
+            # A byte count is never written as text: it is a count, and one
+            # count has exactly one form.
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream bytes must be a number that is not negative")
         if not _is_sha256_text(fact["sha256"]):
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", "stream sha256 must be a lowercase hexadecimal digest")
-    return value
+        decoded[name] = {"device": device, "inode": inode, "bytes": fact["bytes"], "sha256": fact["sha256"]}
+    return decoded
 
 
 def _write_all(descriptor: int, raw: bytes) -> None:
@@ -389,8 +544,10 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
         # The facts are read with the same strictness as the observation itself:
         # a record whose ``streams`` does not match its ``observation`` was not
         # written by this module, and the facts are the only thing a recovery
-        # path would trust.
-        _validated_streams(parsed["streams"], observation)
+        # path would trust.  The canonical bytes were compared above, before
+        # anything was decoded, so a record is known to be byte for byte what
+        # this module wrote before an identity is turned back into a number.
+        parsed["streams"] = _validated_streams(parsed["streams"], observation)
     return parsed
 
 
@@ -510,8 +667,9 @@ def replay_decision(spec: InvocationSpec, evidence_dir: str) -> dict[str, Any]:
     replayed on that evidence.
 
     The stream facts are validated with the record and then ignored here: whether
-    the evidence files still hold what they held is a question for
-    `sentinelmesh.posix_supervisor.streams_match`, not for this decision.
+    the evidence files still hold what they held is a question for the chosen
+    platform supervisor's ``streams_match`` (see `native_supervisor`), not for
+    this decision.
     """
     handoff, observation = _records_for(spec, evidence_dir)
     if handoff is None:
@@ -539,11 +697,11 @@ def recorded_streams(spec: InvocationSpec, evidence_dir: str) -> Optional[dict[s
 
     This is the counterpart of `replay_decision` for the recovery path: it reads
     the same two records with the same strictness, but it answers what the two
-    evidence files held when the run ended, so that
-    `sentinelmesh.posix_supervisor.streams_match` can be asked whether they still
-    do.  The facts are a recovery hint, not a decision: ``None`` means there is
-    no recorded fact for this specification (no records at all, an interrupted
-    run, or records belonging to another invocation) and is never an error.
+    evidence files held when the run ended, so that the chosen platform
+    supervisor's ``streams_match`` can be asked whether they still do.  The facts
+    are a recovery hint, not a decision: ``None`` means there is no recorded fact
+    for this specification (no records at all, an interrupted run, or records
+    belonging to another invocation) and is never an error.
 
     Read-only, like every other question this module answers: nothing is created,
     modified or removed.  A record that cannot be read or does not have the exact

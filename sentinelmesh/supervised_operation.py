@@ -1,4 +1,4 @@
-"""Bridge between the native POSIX supervisor and the ``Scheduler`` ledger.
+"""Bridge between the native supervisor and the ``Scheduler`` ledger.
 
 `.agent/design/scheduler-supervisor-wiring.md` (sections 5 and 6) decides what a
 supervised run means for the single-host scheduler:
@@ -67,11 +67,11 @@ import os
 import stat
 from typing import Any, Mapping, Optional
 
-from .posix_supervisor import streams_match
 from .runtime import InvocationSpec, RuntimeErrorCode
 from .supervised_record import (
     HANDOFF_NAME,
     OBSERVATION_NAME,
+    native_supervisor,
     record_supervised_run,
     recorded_streams,
     replay_decision,
@@ -109,6 +109,19 @@ _START_UNKNOWN = "START_UNKNOWN"
 _REVIEW_PENDING = "REVIEW_PENDING"
 # The state a ``Scheduler.recover`` outcome leaves the operation in.
 _RECOVERED_STATES = {"NOT_STARTED": _NOT_STARTED, "START_UNKNOWN": _START_UNKNOWN, "FINISHED": _REVIEW_PENDING}
+
+
+def streams_match(evidence_dir: str, streams: Any) -> bool:
+    """Ask the platform's supervisor whether the two files still are ``streams``.
+
+    A delegation and nothing else: the supervisor module is the one
+    `sentinelmesh.supervised_record.native_supervisor` picks for this platform
+    (the Windows Job Object supervisor on ``nt``, the process-group one on
+    ``posix``), and both arguments reach it unchanged.  Every caller in this
+    module asks through this module-level name, so the question - and the answer
+    - is visible to whoever patches or observes it.
+    """
+    return native_supervisor().streams_match(evidence_dir, streams)
 
 
 def _record_digest(path: str) -> Optional[str]:

@@ -504,7 +504,6 @@ class RecoverAfterRestartLedger(RecoveryCase):
         self.assertEqual(scheduler.operation(first)["state"], "RESERVED")
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
 class RecoverAfterRestartRuns(RecoveryCase):
     """The recovery driver deciding from the records a real run left behind."""
 
