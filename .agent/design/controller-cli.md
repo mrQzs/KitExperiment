@@ -1,6 +1,6 @@
 # 设计说明：操作员驱动的受监督运行（controller-cli）
 
-状态：用户决定见第 5 节（2026-10-11，均选推荐项）；规划端决定见第 6 节；第 1 份合同 `run-cli-once` 待写。
+状态：用户决定见第 5 节（2026-10-11，均选推荐项）；规划端决定见第 6 节；第 1 份合同 `run-cli-once` 已集成，第 2 份 `run-cli-recover` 待写。
 前置：持久账本与 `smctl ledger`（durable-ledger、ledger-cli、ledger-events、ledger-compaction、ledger-reference）、受监督操作桥接（scheduler-supervisor-wiring）、adapter 受监督运行与流上限（adapter-supervisor-wiring、stream-ceilings）、重启恢复与请求恢复（request-resume）、Pi 原生事件翻译（pi-native-events）、两个原生监督器（posix-runtime-runner、windows-supervisor）都已集成。
 
 ## 1. 为什么做
@@ -63,4 +63,8 @@
 
 ## 9. 进度与遗留
 
-- 2026-10-11：用户决定第 5 节三项均选推荐项；下一份：`run-cli-once`（第 7 节第 1 份）。
+- 2026-10-11：用户决定第 5 节三项均选推荐项。
+- 第 1 份 `run-cli-once` 已集成（2026-10-11）：oracle `f5f1de5`（pi-base 上）、合同 `c07cce4`、a001 `0106f32`、规划端补全 `5dd47b7`；复审 `.agent/reviews/run-cli-once/attempt-001.md`（PASS，1067 s；`check --fresh` 8/8；变异 36/37 once anchored on the candidate wording (the one left is equivalent: the file ceiling by truncation) 与 11/37）；干净工作树全量 932 passed / 281 skipped。
+  - 草稿阶段的事实：一次 `too_large`（用量未结算）的运行让请求因 `USAGE_UNKNOWN` 停止，之后的领取 `E_STOPPED`——这是账本既有规则，oracle 对需要多次运行的用例用新账本；`rollover` 后请求 `RECOVERY_REQUIRED`，`smctl ledger resume` 之后才能在新代际领取（oracle 用它钉住“按账本当前代际领取”）。两条等价/不可观察的变异：文件上限靠读取长度兜底（超限文件被截断后仍以 `E_RUN_SPEC` 拒绝）；成功路径上账本未关闭从进程外看不出来。
+  - 复审 F1（中）：嵌套 3000 层的 JSON 让 `json.loads` 抛 `RecursionError`，从加载器逃出去变成退出码 2，补全并进 `except` 并加 oracle 用例；F2/F3（低）文档串与异常策略，补全已改；F4（低，记给第 2 份合同）：环境变量名不合法的作业在领取之后才被 `environment_digest` 拒绝，留下一个 RESERVED 操作——`recover` 要能处理它，或者第 2 份合同给作业文件加名字的预检。
+- 下一份：`run-cli-recover`（第 7 节第 2 份）：`smctl run recover`，oracle 在 Windows 上用 `TerminateProcess` 杀掉一个正在运行的 `smctl run once`，再 `recover` → `resolve`/`resume` → 再 `once`。
