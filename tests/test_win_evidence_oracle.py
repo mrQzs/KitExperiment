@@ -757,7 +757,9 @@ class ModuleShapeOracle(unittest.TestCase):
                                    cwd=str(Path(__file__).resolve().parent.parent))
         self.assertEqual((completed.returncode, completed.stdout.strip()), (0, "IMPORT_SAFE_OK"), completed.stderr)
         self.assertIs(windows_supervisor.SupervisedRun, posix_supervisor.SupervisedRun)
-        self.assertEqual(windows_supervisor.__all__, ["SupervisedRun", "streams_match"])
+        # The names the evidence half exports; the supervision half (the next
+        # contract) adds its own, so only these two are required here.
+        self.assertTrue({"SupervisedRun", "streams_match"} <= set(windows_supervisor.__all__))
         # The wiring is unchanged until the last contract: the operation module
         # still asks the POSIX supervisor, and the record module still starts
         # through it.
