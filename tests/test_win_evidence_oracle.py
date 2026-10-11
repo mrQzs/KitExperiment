@@ -760,11 +760,14 @@ class ModuleShapeOracle(unittest.TestCase):
         # The names the evidence half exports; the supervision half (the next
         # contract) adds its own, so only these two are required here.
         self.assertTrue({"SupervisedRun", "streams_match"} <= set(windows_supervisor.__all__))
-        # The wiring is unchanged until the last contract: the operation module
-        # still asks the POSIX supervisor, and the record module still starts
-        # through it.
-        self.assertIs(supervised_operation.streams_match, posix_supervisor.streams_match)
-        self.assertIs(supervised_record.supervise, posix_supervisor.supervise)
+        # Since the last contract the wiring chooses the supervisor by platform:
+        # the operation module and the record module each hold a delegate of
+        # their own, bound to neither supervisor's function.
+        self.assertIsNot(supervised_operation.streams_match, posix_supervisor.streams_match)
+        self.assertIsNot(supervised_operation.streams_match, windows_supervisor.streams_match)
+        self.assertIsNot(supervised_record.supervise, posix_supervisor.supervise)
+        self.assertIsNot(supervised_record.supervise, windows_supervisor.supervise)
+        self.assertIs(supervised_record.native_supervisor(), windows_supervisor if os.name == "nt" else posix_supervisor)
 
 
 if __name__ == "__main__":
