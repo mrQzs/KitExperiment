@@ -1,6 +1,6 @@
 # 设计说明：操作员驱动的受监督运行（controller-cli）
 
-状态：草案（2026-10-11）；关键语义待用户决定（第 5 节）；规划端建议见第 6 节。
+状态：用户决定见第 5 节（2026-10-11，均选推荐项）；规划端决定见第 6 节；第 1 份合同 `run-cli-once` 待写。
 前置：持久账本与 `smctl ledger`（durable-ledger、ledger-cli、ledger-events、ledger-compaction、ledger-reference）、受监督操作桥接（scheduler-supervisor-wiring）、adapter 受监督运行与流上限（adapter-supervisor-wiring、stream-ceilings）、重启恢复与请求恢复（request-resume）、Pi 原生事件翻译（pi-native-events）、两个原生监督器（posix-runtime-runner、windows-supervisor）都已集成。
 
 ## 1. 为什么做
@@ -35,13 +35,13 @@
 - 操作员的权限与裁定依据照旧只记录不核验（request-resume 第 5 节）。
 - 断电持久性照旧 NOT_RUN；这里只证明"进程被杀"这一种崩溃。
 
-## 5. 待用户决定
+## 5. 用户决定（2026-10-11，均选推荐项）
 
-1. **命令的范围**：只做 `init`/`once`/`recover` 三个一次性命令（每次调用恰好一次领取与一次运行）；还是再加一个 `serve`（循环领取直到没有可领取的操作或请求停止）。
-2. **`candidate_hash` 的来源**：`once` 与 `recover` 都接受 `--candidate <64 hex>`，缺省时用 `evidence_digest(evidence_dir)`（两份记录的摘要，让运行至少能按自己的证据复审）；还是一律必填。
-3. **作业文件的 adapter**：第一份合同只认 `offline`，`pi-session-v3` 在第二份合同里挂上但真实运行 NOT_RUN；还是第一份就把两个都挂上。
+1. **命令的范围**：只做 `init`/`once`/`recover` 三个一次性命令，每次调用恰好一次领取与一次运行；不做 `serve` 循环。
+2. **`candidate_hash` 的来源**：`once` 与 `recover` 都接受 `--candidate <64 hex>`，缺省用 `evidence_digest(evidence_dir)`。
+3. **作业文件的 adapter**：第一份合同只认 `offline`；`pi-session-v3` 第三份合同再挂上，真实 pi 仍 NOT_RUN。
 
-## 6. 规划端建议
+## 6. 规划端决定
 
 - 问题 1 选"三个一次性命令"：每个命令至多一次 `claim`、至多一次运行，与 `smctl ledger` 的"一次调用一次变更"同一口径，被杀掉时账本里至多一个未定案的操作，恢复路径可穷举；`serve` 的循环语义（并发、退避、何时停）是另一个方向。
 - 问题 2 选"可选，缺省 `evidence_digest`"：`candidate_hash` 在桥接里是"调用方知道候选是什么"，命令行上调用方是操作员；给缺省值是为了让没有候选树的运行（离线桩、恢复）也能走到复审，而不是停在 `START_UNKNOWN`。
@@ -63,4 +63,4 @@
 
 ## 9. 进度与遗留
 
-- 待用户决定第 5 节。
+- 2026-10-11：用户决定第 5 节三项均选推荐项；下一份：`run-cli-once`（第 7 节第 1 份）。
