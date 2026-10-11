@@ -433,7 +433,9 @@ class BootIdTests(RejectionAssertions):
         self.assertEqual(boot_id(), native)
 
     def test_unsupported_platform_fails_closed(self):
-        for platform in ("win32", "sunos5", "", "freebsd13"):
+        # ``win32`` has its own branch since the Windows supervisor design note;
+        # ``cygwin`` is the unsupported platform closest to it.
+        for platform in ("cygwin", "sunos5", "", "freebsd13"):
             with self.subTest(platform=platform):
                 with mock.patch.object(sys, "platform", platform):
                     self.assert_rejected(boot_id, "E_RUNTIME_IDENTITY")
