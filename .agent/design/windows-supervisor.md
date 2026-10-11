@@ -1,6 +1,6 @@
 # 设计说明：Windows 原生进程监督（windows-supervisor）
 
-状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1 份合同 `win-identity` 进行中。
+状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1 份合同 `win-identity` 已集成，第 2 份 `win-evidence` 待写合同。
 前置：POSIX 监督器三份合同（posix-runtime-runner）、监督记录（supervised_record）、受监督操作（supervised_operation）、adapter 受监督运行（adapter_run）、`read_stream` 的非 POSIX 分支（ledger-reference）、输出流上限（stream-ceilings）都已集成。
 本说明重新审视 posix-runtime-runner 第 5 节第 1 条（2026-10-04：“先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN”）：当时规划端与执行端都在 macOS 上；2026-10-08 起两端都在这台 Windows Server 2025 上，情况变了，所以再问一次。
 
@@ -97,7 +97,7 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
 - W3：`CREATE_SUSPENDED` → 入 Job → `NtResumeProcess`，照搬 Code-Kit；入 Job 或恢复失败按 `start_failed` 出口（进程先 `TerminateProcess`）。
 - W4：被杀组长的退出码固定为 `0xC000013A`；模块常量 `TERMINATED_EXIT_CODE`。
 - W5：回收窗口常量与 POSIX 相同（0.05 / 2.0）；`_TERM_GRACE_SECONDS` 在 Windows 上没有对应物，不设。
-- W6：`boot_id` 的 Windows 形状 `<uuid 小写>:<十进制>`；`_validated_boot_id` 按平台选模式；其它平台的模式不变。
+- W6：`boot_id` 的 Windows 形状 `<uuid>:<十进制>`（guid 原样，模式对十六进制不分大小写），由 Windows 分支自己的模式校验；`_validated_boot_id` 与 `_BOOT_ID_PATTERN` 不动（darwin/linux 分支在任何平台上都要能用假 libc 测，所以不能按运行平台选模式；2026-10-10 据 a001 执行器指出的分歧修订措辞，合同本来就是这样写的）。
 - W7：`resolve_executable` 的 Windows 分支自己做查找，不调 `shutil.which`（它读 `os.environ["PATHEXT"]`）。
 - W8：四处 `O_NOFOLLOW | O_NONBLOCK` 各加非 POSIX 分支，做法与 `read_stream` 相同；POSIX 分支文本不动。
 - W9：测试：平台守卫改成“posix 跑 POSIX 的、nt 跑 Windows 的”，只对平台中立的用例去掉守卫；需要真实进程树的用例用 `python -c` 起子进程与孙进程；没有 `SIGTERM` 可忽略，Windows 的“不听话的孙进程”就是一个 `time.sleep(60)` 的孙进程。
@@ -121,4 +121,7 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
 
 ## 9. 进度与遗留
 
-- 待用户决定第 5 节。
+- 第 1 份 `win-identity` 已集成（2026-10-10）：oracle `2570f59`（pi-base 上为 `0591618`）、a001 `4423c84`、规划端补全 `048bf32`；复审 `.agent/reviews/win-identity/attempt-001.md`（PASS，673 s；`check --fresh` 8/8；变异 31/33 与 23/33；独立复审 PASS）；干净工作树全量 820 passed / 289 skipped。
+  - 补全：根检查按合同措辞收紧（盘符或 UNC 之后必须紧跟分隔符，`\\server\share` 单独不算有根）；oracle 加后缀补全与 UNC 根的用例；执行器测试两处用例加严。
+  - 遗留：`BootId` 的读取只在 Administrator 账户下验证过（普通账户读 HKLM 一般允许，未实测）；pid 复用的护栏（进程创建时刻）不进身份，与 POSIX 一致。
+- 下一份：`win-evidence`（第 7 节第 2 份）。

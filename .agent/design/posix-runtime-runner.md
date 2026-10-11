@@ -65,7 +65,7 @@
 
 ## 5. 用户决定（2026-10-04）
 
-1. 范围：先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN。
+1. 范围：先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN。（2026-10-10 重新审视：两端都搬到 Windows 之后，用户决定做 Windows Job Object 监督，见 `windows-supervisor.md`；Linux 仍 NOT_RUN。）
 2. 环境：新监督器默认不继承父进程环境，只用调用方显式给出的映射，并核对摘要。
 3. 旧 `SubprocessRunner` 的两个实测缺陷作为第 0 份合同先修（`runner-posix-cleanup`）。
    - 修复范围：超时与取消时对整个进程组升级到 SIGKILL，收尾读取有时限，残留进程未清净时报 `incomplete`。
