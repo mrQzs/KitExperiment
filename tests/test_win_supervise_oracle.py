@@ -344,9 +344,14 @@ class WindowsSupervisorOracle(SupervisorCase):
             counts.append(value)
             return 1 if len(counts) <= 2 else value
 
-        with mock.patch.object(windows_supervisor._Job, "active_processes", one_member_twice):
-            with mock.patch.object(windows_supervisor.time, "sleep", interrupt_once):
-                run, wall = self.run_spec(self.spec("pass"))
+        # An interrupt that escapes would abort the whole test session instead
+        # of failing this case, so it is caught here and reported as a failure.
+        try:
+            with mock.patch.object(windows_supervisor._Job, "active_processes", one_member_twice):
+                with mock.patch.object(windows_supervisor.time, "sleep", interrupt_once):
+                    run, wall = self.run_spec(self.spec("pass"))
+        except KeyboardInterrupt:
+            self.fail("the interrupt escaped the reap poll")
         self.assertLess(wall, WALL_BOUND)
         self.assertEqual(interrupted, [posix_supervisor._REAP_POLL_SECONDS], "the poll did not sleep the bound once")
         self.assertEqual((run.stop_reason, run.stragglers_killed), ("completed", True))
@@ -354,10 +359,17 @@ class WindowsSupervisorOracle(SupervisorCase):
         self.assertEqual(run.lifecycle.state, "STOPPED")
 
     def test_every_run_gives_its_handles_back(self):
-        # One warm-up run loads ctypes and whatever the first call lazily opens.
+        # One warm-up run loads ctypes and whatever the first call lazily opens,
+        # and one failing bare ``Popen`` pays CPython's one-time cost of a failed
+        # ``CreateProcess`` (eight handles, measured by the review of
+        # attempt-001): without it the "start failed" case below would depend on
+        # whether an earlier case already failed a start in this process.
         self.run_spec(self.spec("pass"), evidence=self.evidence)
         garbage = self.cwd / "not-a-program.exe"
         garbage.write_bytes(bytes([0, 1, 2]) + b" not an executable image" + NL.encode())
+        with self.assertRaises(OSError):
+            subprocess.Popen([str(garbage)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
         cases = {
             "completed": ("pass", {}),
             "timeout": (TREE_THEN_SLEEP, {}),
