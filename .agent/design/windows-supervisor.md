@@ -1,6 +1,6 @@
 # 设计说明：Windows 原生进程监督（windows-supervisor）
 
-状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1–3 份合同 `win-identity`、`win-evidence`、`win-supervise` 已集成，第 4 份 `win-wiring` 待写合同。
+状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；四份合同 `win-identity`、`win-evidence`、`win-supervise`、`win-wiring` 已全部集成（2026-10-11）。
 前置：POSIX 监督器三份合同（posix-runtime-runner）、监督记录（supervised_record）、受监督操作（supervised_operation）、adapter 受监督运行（adapter_run）、`read_stream` 的非 POSIX 分支（ledger-reference）、输出流上限（stream-ceilings）都已集成。
 本说明重新审视 posix-runtime-runner 第 5 节第 1 条（2026-10-04：“先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN”）：当时规划端与执行端都在 macOS 上；2026-10-08 起两端都在这台 Windows Server 2025 上，情况变了，所以再问一次。
 
@@ -102,6 +102,8 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
 - W8：四处 `O_NOFOLLOW | O_NONBLOCK` 各加非 POSIX 分支，做法与 `read_stream` 相同；POSIX 分支文本不动。
 - W9：测试：平台守卫改成“posix 跑 POSIX 的、nt 跑 Windows 的”，只对平台中立的用例去掉守卫；需要真实进程树的用例用 `python -c` 起子进程与孙进程；没有 `SIGTERM` 可忽略，Windows 的“不听话的孙进程”就是一个 `time.sleep(60)` 的孙进程。
 - W10：证据边界：Windows Server 2025 原生测试结果记为 Windows 原生证据；macOS 的 POSIX 证据不受影响；Linux 仍 NOT_RUN。
+- W11（2026-10-11，第 4 份合同前实测）：Windows 的文件身份是 64 位（Python 3.12 的 `st_dev` 是卷序列号，`st_ino` 是 NTFS 文件引用号，高 16 位是序列号），这台机器临时卷上两者都大于 `2**53`，而记录用的 canonical JSON 只收 `core.MAX_SAFE_INTEGER = 2**53 - 1` 以内的整数——接线之前 `record_supervised_run` 在 Windows 上根本写不出 `observation.json`（`E_INTEGER_RANGE`）。规则：记录里 `device`/`inode` 在范围内仍是 JSON 数字（已有记录字节不变），超出范围写成最短十进制文本（可选 `-`，无前导零，ASCII 数字，64 位以内），读回时解码成整数，每个值恰好一种写法（范围内的数写成文本、带符号、前导零、全角数字、超过 64 位都是损坏证据）；`bytes` 永远是数字。内存里的事实（`SupervisedRun.streams`、`recorded_streams`、`read_stream` 的 `expected`）在任何平台都是整数。备选方案都否决了：改 canonical JSON 的整数范围（协议级公开 profile）、把身份截短（丢掉序列号就分不出复用的 MFT 项）、拆成两个键或全部改成文本（改变 POSIX 记录的字节与 schema）。
+- W12（2026-10-11）：W9 的“只给平台中立的用例去掉守卫”按实测落地：规划端在草稿上把 14 个 POSIX 守卫文件的守卫临时去掉逐个运行，只有 `test_restart_recovery.py::RecoverAfterRestartRuns` 与 `test_verified_review_gaps.py` 不改一字全过，第 4 份合同去掉这两处守卫；其余守卫类都依赖 POSIX 夹具（非 `.exe` 的坏程序让 `resolve_executable` 先以 `E_RUNTIME_IDENTITY` 拒绝、`os.killpg`/`SIGKILL` 清理、`-signal.SIGKILL` 退出码、FIFO、`fork`/`setsid` 逃逸），保留守卫，它们的 Windows 对应用例在 `tests/test_win_wiring_oracle.py` 与 `tests/test_win_wiring.py` 里；守卫的理由文本改为指向这两个文件。
 
 ## 7. 合同拆分（每份一个主要结果，可独立验证；清单 5–8 项，20 分钟计划）
 
@@ -133,4 +135,7 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
   - 给第 4 份合同的事实（复审 F3、F4）：超时/取消路径上 `stragglers_killed` 实测恒为 False（树在等完组长前就空了），与 POSIX 一致，不要给断言它为 True 的用例去掉守卫；`tests/test_supervised_record.py` 直接从 `posix_supervisor` 导入 `supervise`，它与 `test_supervised_operation.py`、`test_adapter_run.py` 用 `os.killpg`/`SIGKILL` 清理，不是平台中立用例（要么保留守卫，要么加 `kill_pid` 分支）；`sentinelmesh/` 里没有代码解读负退出码或信号号，`runtime.py` 只要求 `int`，3221225786 原样通过；替换 `Popen` 的假对象要带 `_handle`。
   - 遗留：集成后第一次在干净工作副本上跑全量出现 2 个失败，当时只保留了最后一行、没有记下是哪两个；紧接着的复跑 875 passed / 0 failed（201 s，机器较忙），四个 Windows 监督器测试文件连跑三遍全过。怀疑是计时类断言在负载下抖动（`duration_seconds < timeout + 1.5`、`pid_gone_within 3 s`），未定位；下次全量要保留完整输出。
   - 变异工具的教训：让中断冒出去的变异体会把 pytest 整个会话打断（退出码 2），kit 的 `mutate` 不算抓住；断言“中断被吸收”的用例要自己 `try/except KeyboardInterrupt` 再判失败。规划端草稿用的变异脚本原来把任何非零退出码都算抓住，已改成只认退出码 1。
-- 下一份：`win-wiring`（第 7 节第 4 份）：`supervised_record` 与 `supervised_operation` 按平台选监督器，`run_supervised_operation`/`run_adapter_operation` 在 Windows 上端到端，平台中立用例去掉守卫，状态文档的 NOT_RUN 行更新。
+- 第 4 份 `win-wiring` 已集成（2026-10-11）：oracle `17503e9`（pi-base 上；同时把 `test_win_evidence_oracle.py` 里“接线仍走 POSIX”的钉子换成委托与平台选择的钉子）、合同 `794db61`、a001 `2c5b4ae`、规划端补全 `640aa4e`；复审 `.agent/reviews/win-wiring/attempt-001.md`（PASS，1447 s；`check --fresh` 9/9；变异 20/25 plus 6/7 once re-anchored on the candidate wording (the one left was an oracle gap, closed in the completion and caught since) 与 6/20）；干净工作树全量 909 passed / 281 skipped。
+  - 本轮实测补充：W11 的来由（64 位身份）与 W12 的普查结果见第 6 节；`replay_decision` 对清理已确认的 STOPPED 运行报 `replay_allowed` True（与 POSIX 相同）；取消的运行经桥接后是 `cancelled`/3221225786/`REVIEW_PENDING`；同账户进程在 `mark_running` 里追加 `stderr.log` → `CLEANUP_UNCONFIRMED`，换成另一个文件 → `START_UNKNOWN`（Windows 上子进程不能离开 Job，“逃逸者写入”只能由同账户进程模拟）。
+  - 复审 F1–F3 都是注释与措辞（NTFS 文件引用号高 16 位是序列号不是卷序列号；长度窗口按去掉符号后的位数算；“无符号”指无 `+`），补全已改。变异第 1 轮 5 条锚在规划端草稿措辞上而跳过，按候选措辞重锚后 6/7，漏掉的 1 条是 oracle 缺口（几千位的文本让 `int()` 抛异常），补全加用例后单独重跑抓住。执行器如实记下合同引用的 W11–W12 当时尚未写入设计说明——规划端疏忽，本次一并写入。
+- 四份合同全部集成，方向收口：Windows 原生 Job Object 监督从 NOT_RUN 变成证据；Linux 仍 NOT_RUN；遗留：F2 的 `Popen` 与入 Job 之间的中断窗口、`SubprocessRunner` 的 18 个 Windows 跳过照旧、`adapter_run` 模块文档串首行仍写 POSIX（规划端补全已改）。
