@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "task_id": "win-evidence",
+  "plan_version": 1,
+  "title": "win-evidence: Windows 监督器的证据文件、pin 与流事实",
+  "repository": "KitExperiment",
+  "base_sha": "3b290acd6d17f077b4f6a14b361efb6758918247",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/supervised_operation.py"
+    ],
+    "allowed_new_files": [
+      "sentinelmesh/windows_supervisor.py",
+      "tests/test_win_evidence.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_win_evidence_oracle.py",
+      "tests/test_win_identity_oracle.py",
+      "tests/test_win_identity.py",
+      "tests/test_supervised_record.py",
+      "tests/test_supervised_record_gaps.py",
+      "tests/test_supervised_record_oracle.py",
+      "tests/test_supervised_operation.py",
+      "tests/test_supervised_operation_gaps.py",
+      "tests/test_supervised_operation_oracle.py",
+      "tests/test_supervisor_stream_facts.py",
+      "tests/test_supervisor_stream_facts_gaps.py",
+      "tests/test_supervisor_stream_facts_oracle.py",
+      "tests/test_posix_supervisor.py",
+      "tests/test_posix_supervisor_oracle.py",
+      "tests/test_adapter_run.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_win_evidence_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_win_evidence.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_supervised_record.py",
+        "tests/test_supervised_record_gaps.py",
+        "tests/test_supervised_record_oracle.py",
+        "tests/test_supervised_operation.py",
+        "tests/test_supervised_operation_gaps.py",
+        "tests/test_supervised_operation_oracle.py",
+        "tests/test_supervisor_stream_facts.py",
+        "tests/test_supervisor_stream_facts_gaps.py",
+        "tests/test_supervisor_stream_facts_oracle.py",
+        "tests/test_posix_supervisor.py",
+        "tests/test_posix_supervisor_oracle.py",
+        "tests/test_adapter_run.py",
+        "tests/test_ledger_reference_oracle.py",
+        "tests/test_stream_ceilings_oracle.py",
+        "tests/test_scheduler_supervised.py",
+        "tests/test_win_identity_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.windows_supervisor, sentinelmesh.supervised_record, sentinelmesh.supervised_operation; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "3b290acd6d17f077b4f6a14b361efb6758918247",
+        "--",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "模块、名字、导入无副作用（第 1 条）",
+      "evidence": [
+        "V01",
+        "V07"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "独占创建的 lstat 先行、pin 的三重身份、失败路径不泄漏（第 2–3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "`_open_evidence_files` 的顺序与回滚、`_abandon_evidence` 先关后删、`_remove_own_evidence` 按身份（第 4–6 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "流事实与 `streams_match`（第 7–8 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "两处记录模块的非 POSIX 分支与 partial 创建，POSIX 分支文本不变（第 9–12 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03",
+        "V04",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
