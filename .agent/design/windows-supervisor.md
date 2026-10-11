@@ -1,6 +1,6 @@
 # 设计说明：Windows 原生进程监督（windows-supervisor）
 
-状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1 份合同 `win-identity` 已集成，第 2 份 `win-evidence` 待写合同。
+状态：用户决定见第 5 节（2026-10-10）；规划端决定见第 6 节；第 1、2 份合同 `win-identity`、`win-evidence` 已集成，第 3 份 `win-supervise` 待写合同。
 前置：POSIX 监督器三份合同（posix-runtime-runner）、监督记录（supervised_record）、受监督操作（supervised_operation）、adapter 受监督运行（adapter_run）、`read_stream` 的非 POSIX 分支（ledger-reference）、输出流上限（stream-ceilings）都已集成。
 本说明重新审视 posix-runtime-runner 第 5 节第 1 条（2026-10-04：“先只做 macOS，Linux 与 Windows Job Object 保持 NOT_RUN”）：当时规划端与执行端都在 macOS 上；2026-10-08 起两端都在这台 Windows Server 2025 上，情况变了，所以再问一次。
 
@@ -124,4 +124,8 @@ posix-runtime-runner 第 2 节（监督器的保证）与第 3 节（三份合�
 - 第 1 份 `win-identity` 已集成（2026-10-10）：oracle `2570f59`（pi-base 上为 `0591618`）、a001 `4423c84`、规划端补全 `048bf32`；复审 `.agent/reviews/win-identity/attempt-001.md`（PASS，673 s；`check --fresh` 8/8；变异 31/33 与 23/33；独立复审 PASS）；干净工作树全量 820 passed / 289 skipped。
   - 补全：根检查按合同措辞收紧（盘符或 UNC 之后必须紧跟分隔符，`\\server\share` 单独不算有根）；oracle 加后缀补全与 UNC 根的用例；执行器测试两处用例加严。
   - 遗留：`BootId` 的读取只在 Administrator 账户下验证过（普通账户读 HKLM 一般允许，未实测）；pid 复用的护栏（进程创建时刻）不进身份，与 POSIX 一致。
-- 下一份：`win-evidence`（第 7 节第 2 份）。
+- 第 2 份 `win-evidence` 已集成（2026-10-11）：oracle `3c14b2a`（pi-base 上为 `3b290ac`）、a001 `bb0fecd`、规划端补全 `776f3a4`；复审 `.agent/reviews/win-evidence/attempt-001.md`（PASS，602 s；`check --fresh` 8/8；变异 30/31 与 10/31；独立复审 PASS）；干净工作树全量 846 passed / 289 skipped。
+  - 本轮实测补充的 Windows 事实：`O_CREAT|O_EXCL` 在悬空符号链接处会穿过链接建目标文件（所以独占创建前先 lstat）；本进程开着的文件删不掉、改不了名、也不能被别的文件覆盖（所以回滚先关后删）；没有 `os.pread`（事实用 `lseek(0)` 加 `os.read`）；没有 `O_BINARY` 的描述符是文本模式（写 LF 变 CR LF，读折 CR LF 且在 0x1A 停）。
+  - 给第 3 份合同的事实（复审 F4、F5）：`_abandon_evidence` 关掉的描述符号会被下一次 `os.open` 复用，`supervise` 调用它之后必须把四个变量置 None，否则 `finally` 里的二次 `_close_fd` 会关掉别的新描述符；子进程还持有继承来的写句柄时 `os.unlink` 仍是 `PermissionError`，按身份删除要在 Job 终止并确认 `ActiveProcesses == 0` 之后，否则接受残留。lstat 与 `O_EXCL` 之间被植入悬空链接的窗口：拒绝、不泄漏，但穿过链接建出的文件留在链接指向处（永不按路径删除）。
+  - 合同措辞遗漏：第 6 条该写 `(OSError, ValueError)`；执行器按“永不抛异常”读对了。
+- 下一份：`win-supervise`（第 7 节第 3 份）。

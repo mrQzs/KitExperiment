@@ -31,6 +31,7 @@ offline evidence from capabilities that require a real provider or platform.
 | Operator reads of the events (`smctl ledger events`) | `ledger_cli.py`, `durable_ledger.py` (`checkpoint_seq`) | a read-only command that prints the recorded events exactly as the Scheduler emitted them, filtered by request (an operation's events by the operation's request, request-level events by their payload, `controller.fenced` by none), by operation and by any of the sixteen event types, and paged by sequence number (`--after`, `--limit` of at most 10000, default 100, with `next`); the header reports the ledger's checkpoint, since the events are the only history left before it, and `status` keeps its shape. Decimal-digit arguments only; an unknown request, operation or type is refused before anything is read. Checked on Windows against the whole history of the 33-call scenario |
 | Stream ceilings (`read_stream`, `run_adapter_operation`, `smctl ledger reference`) | `adapter_run.py`, `ledger_cli.py` | the largest stream a caller may ask `read_stream` to read is 64 MiB (was 16 MiB; the default stays 1 MiB), and the longest line the parser accepts is a parameter, `max_line_bytes`, 1 MiB by default (the protocol's own document limit) and 8 MiB at most, checked before the file is touched and, on the run path, before the handoff; `smctl ledger reference` reads with both maxima, so the controller and the operator get the same answer for the same file. Measured on the 34 captured Step streams: a run at the kit's own 1800 s limit wrote 11.3 MB with a 719 KB `agent_end` line, about 1.5 times under both old ceilings; the translators copy counts and identifiers out of a frame, never its content, so a longer line leaves the normalized payload limit untouched. Checked on Windows with byte-exact synthetic streams |
 | Windows process identity (`boot_id`, `resolve_executable`) | `process_identity.py` | the first of the four Windows supervisor contracts (`.agent/design/windows-supervisor.md`): on `win32` the boot session id is the registry's `MachineGuid` and the prefetcher's `BootId` joined exactly as reported (`<guid>:<count>`, re-read on every call, any registry failure or wrong value kind refused), and an executable is resolved under the platform's own rules through the explicit environment alone: `;`-separated `PATH` entries each rooted on a drive or a share followed by a separator, a bare stem completed with `.exe` then `.com` only, `PATHEXT` never read, `.cmd`/`.bat` shims refused (the program that would run is `cmd.exe`), drive-relative and rootless paths refused before any join, the result a real-path `.exe`/`.com` file. The POSIX branches are textually unchanged. Native Windows evidence for the boot id, the interpreter's identity and the lookup rules; the registry rules also run on every platform through a scripted `winreg` |
+| Windows evidence files (`windows_supervisor` without a Job Object; by-hand record reads) | `windows_supervisor.py`, `supervised_record.py`, `supervised_operation.py` | the second Windows supervisor contract: the evidence half of the Windows supervisor keeps the POSIX rules where Windows has no flag for them. Every path is `lstat`-ed before it is opened and refused unless it is a regular, non-reparse file (Windows creates *through* a dangling symlink on an exclusive open, so the creation is preceded by an `lstat` too); a pin must have the identity of both the write descriptor and the `lstat`; a rollback closes every descriptor before it removes by identity (an open file cannot be unlinked, renamed or replaced on Windows); stream facts are read from offset 0 through the pins in binary mode (no `pread`), bounded by the one `MAX_STREAM_DIGEST_BYTES` in `posix_supervisor`; `streams_match` proves what was opened is what was seen. The record reads, the partial creation and the record digest gained the same `lstat`-first branch where `O_NOFOLLOW` is missing; the POSIX branches are textually unchanged and the wiring still goes through the POSIX supervisor. No `supervise` yet: the Job Object is the next contract |
 | Planning and contracts | `planner_protocol.py`, `planner.py`, `planner_projection.py` | PlanningBundle, Contract IR, same-source MD/JSON, draft CAS and publication idempotency |
 | State and evidence | `state.py`, `verification.py`, `integration_records.py` | append/replay projection, coverage denominator, evidence manifests and delivery decisions |
 | Integration gates | `integration_gates.py` | fixed contract/candidate identity, offline wiring and production fail-closed decisions |
@@ -42,7 +43,7 @@ pytest 9.1.1; the native POSIX rows are skipped there and stay NOT_RUN for
 Windows) is:
 
 ```text
-python -m pytest -q                 820 passed, 289 skipped
+python -m pytest -q                 846 passed, 289 skipped
 python -m compileall -q sentinelmesh tests
 git diff --check
 ```
@@ -331,6 +332,16 @@ W1-W10, the four contracts in section 7) and `.agent/reviews/win-identity/`:
   The remaining three contracts (evidence files, Job Object supervision,
   wiring) are what turns the native Windows Job Object row below from
   NOT_RUN into evidence.
+- `win-evidence` passed (Windows, pi 0.99.2, 602 s, no scope finding):
+  `check --fresh` 8/8, mutations 30/31 with the oracle and the executor tests
+  together (the one left is equivalent: the size check precedes the read
+  count) and 10/31 with the executor tests alone (the 21 left are rules the
+  contract left to the oracle), independent review PASS with two docstring
+  completions by the planner and two facts recorded for the Job Object
+  contract (descriptor numbers are reused after a rollback; a child still
+  holding the write handle keeps the file from being removed). Integrated as
+  `3c14b2a` (oracle), `bb0fecd` (candidate) and `776f3a4` (completion); full
+  suite 846 passed on Windows.
 
 ## Explicitly not proven by this repository
 
