@@ -244,6 +244,12 @@ class InitOracle(RunCliCase):
         with self.subTest(case="not JSON"):
             (self.work / "garbage.json").write_bytes(b"{not json")
             self.refused("E_RUN_SPEC", "run", "init", self.ledger, "--spec", str(self.work / "garbage.json"))
+        with self.subTest(case="nested deeper than the interpreter decodes"):
+            # Inside the byte ceiling, but json.loads gives up with a
+            # RecursionError: still one refusal line, never an argparse-style exit 2.
+            (self.work / "deep.json").write_bytes(b"[" * 3000 + b"]" * 3000)
+            self.refused("E_RUN_SPEC", "run", "init", self.ledger, "--spec", str(self.work / "deep.json"))
+            self.assertFalse(os.path.exists(self.ledger))
         with self.subTest(case="not UTF-8"):
             (self.work / "latin.json").write_bytes(b'{"request_id": "r\xe9"}')
             self.refused("E_RUN_SPEC", "run", "init", self.ledger, "--spec", str(self.work / "latin.json"))
@@ -417,6 +423,11 @@ class OnceOracle(RunCliCase):
                              "--evidence", str(evidence), "--worktree-id", "wt-1", "--owner", "owner-1")
                 self.assertEqual(self.digest(), before, "a refused job changed the ledger")
                 self.assertEqual(os.listdir(evidence), [])
+        with self.subTest(case="nested deeper than the interpreter decodes"):
+            (self.work / "deep.json").write_bytes(b"[" * 3000 + b"]" * 3000)
+            self.refused("E_RUN_JOB", "run", "once", self.ledger, "--job", str(self.work / "deep.json"),
+                         "--evidence", str(evidence), "--worktree-id", "wt-1", "--owner", "owner-1")
+            self.assertEqual(self.digest(), before)
         with self.subTest(case="missing file"):
             self.refused("E_RUN_JOB", "run", "once", self.ledger, "--job", str(self.work / "absent.json"),
                          "--evidence", str(evidence), "--worktree-id", "wt-1", "--owner", "owner-1")

@@ -135,7 +135,10 @@ def _read_json(path: str, code: str, label: str) -> Any:
         raise RunSpecError(code, f"the {label} is larger than {_MAX_FILE_BYTES} bytes")
     try:
         return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        # ``RecursionError`` is what ``json`` raises for nesting deeper than
+        # the interpreter allows, and a file nested that deep fits the byte
+        # ceiling with room to spare (review of attempt-001, F1).
         raise RunSpecError(code, f"the {label} is not UTF-8 JSON: {exc}") from exc
 
 
@@ -278,8 +281,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     in-memory ``Scheduler`` so a refusal the scheduler would make (a dimension
     name it does not accept, a subbudget it rejects) is reported with its own
     code *before any file exists*; only then is the ledger created (an existing
-    path is ``E_LEDGER_EXISTS``) and seeded for real.  A refusal at any step
-    leaves nothing behind, and the ledger is closed in the ``finally``.
+    path is ``E_LEDGER_EXISTS``) and seeded for real.  A refusal before the
+    ledger is created leaves nothing behind; a ledger error while the seeds are
+    appended (an I/O failure, the only error the rehearsal cannot rule out) is
+    reported the same way and the file is left as it is, for the operator to
+    inspect.  The ledger is closed in the ``finally``.
     """
     try:
         spec = load_spec(args.spec)
@@ -367,11 +373,11 @@ def cmd_once(args: argparse.Namespace) -> int:
                 usage_dimensions=tuple(job["usage_dimensions"]),
                 allowed_secret_names=frozenset(job["allowed_secret_names"]), now=args.now,
                 max_stream_bytes=job["max_stream_bytes"], max_line_bytes=job["max_line_bytes"])
+            result = {"command": "once", "operation_id": operation_id, "outcome": outcome,
+                      "operation": ledger.operation(operation_id)}
         except (AdapterError, ContractError, LedgerError, RuntimeErrorCode) as exc:
             # A refusal after the claim: the operation stays in the ledger.
             return _refuse(exc, operation_id)
-        result = {"command": "once", "operation_id": operation_id, "outcome": outcome,
-                  "operation": ledger.operation(operation_id)}
     finally:
         ledger.close()
     _emit(result)
