@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "task_id": "win-wiring",
+  "plan_version": 1,
+  "title": "win-wiring: platform-selected supervisor wiring",
+  "repository": "KitExperiment",
+  "base_sha": "17503e9afc4d4b360393e311f9d8748095f6c6e7",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/supervised_operation.py",
+      "tests/test_restart_recovery.py",
+      "tests/test_verified_review_gaps.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_win_wiring.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_win_wiring_oracle.py",
+      "tests/test_win_supervise_oracle.py",
+      "tests/test_win_supervise.py",
+      "tests/test_win_evidence_oracle.py",
+      "tests/test_win_evidence.py",
+      "tests/test_win_identity_oracle.py",
+      "tests/test_win_identity.py",
+      "tests/test_supervised_record.py",
+      "tests/test_supervised_record_gaps.py",
+      "tests/test_supervised_record_oracle.py",
+      "tests/test_supervised_operation.py",
+      "tests/test_supervised_operation_gaps.py",
+      "tests/test_supervised_operation_oracle.py",
+      "tests/test_supervisor_stream_facts.py",
+      "tests/test_supervisor_stream_facts_gaps.py",
+      "tests/test_supervisor_stream_facts_oracle.py",
+      "tests/test_adapter_run.py",
+      "tests/test_adapter_run_oracle.py",
+      "tests/test_verified_review.py",
+      "tests/test_verified_review_oracle.py",
+      "tests/test_restart_recovery_oracle.py",
+      "tests/test_request_resume_oracle.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_win_wiring_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_win_wiring.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_win_supervise_oracle.py",
+        "tests/test_win_supervise.py",
+        "tests/test_win_evidence_oracle.py",
+        "tests/test_win_evidence.py",
+        "tests/test_win_identity.py",
+        "tests/test_restart_recovery.py",
+        "tests/test_verified_review_gaps.py",
+        "tests/test_supervised_record_oracle.py",
+        "tests/test_supervised_operation_oracle.py",
+        "tests/test_adapter_run.py",
+        "tests/test_scheduler_supervised.py",
+        "tests/test_ledger_reference.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "import sys, sentinelmesh.supervised_record, sentinelmesh.supervised_operation, sentinelmesh.adapter_run, sentinelmesh.restart_recovery; assert 'ctypes' not in sys.modules; print('IMPORT_SAFE_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "IMPORT_SAFE_OK"
+      ]
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "17503e9afc4d4b360393e311f9d8748095f6c6e7",
+        "--",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/restart_recovery.py",
+        "sentinelmesh/core.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V09",
+      "argv": [
+        "python",
+        "-c",
+        "import subprocess; rows = [line.split()[:2] for line in subprocess.run(['git', 'diff', '--numstat', '17503e9afc4d4b360393e311f9d8748095f6c6e7', '--', 'tests/test_restart_recovery.py', 'tests/test_verified_review_gaps.py'], capture_output=True, text=True, check=True).stdout.splitlines()]; assert rows == [['0', '1'], ['0', '1']], rows; print('GUARDS_ONLY_OK')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "GUARDS_ONLY_OK"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "`native_supervisor` 与模块级 `supervise` 的平台选择、原样委托、不缓存（第 1 条）",
+      "evidence": [
+        "V01",
+        "V07"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`supervised_operation.streams_match` 的委托与按名字调用（第 2 条）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "文件身份的编码与解码——范围内是数字、范围外是最短十进制文本、每个值恰好一种写法、读回是整数（第 3–4 条）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "Windows 原生端到端——记录、桥接、adapter 路径、流上限、恢复（oracle 的 `WindowsWiringOracle` 与 Step 5 的测试）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "两行守卫去掉后两个文件在 Windows 上通过且只改这两行（第 5 条）",
+      "evidence": [
+        "V03",
+        "V09"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "文档串不再把 Windows Job Object 说成 NOT_RUN，八个文件不变，既有测试不变（第 6–7 条）",
+      "evidence": [
+        "V04",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D07",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
