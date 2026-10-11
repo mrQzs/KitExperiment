@@ -242,7 +242,7 @@ class Base(unittest.TestCase):
                                             spec=spec, evidence_dir=str(evidence), candidate_hash=self.candidate_hash)
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class BridgeHookTests(Base):
     def test_before_finish_runs_exactly_once_on_the_review_path(self):
         with self.subTest(case="a clean run"):
@@ -306,7 +306,7 @@ class BridgeHookTests(Base):
         self.assertEqual(self.calls, [], "the review ran after the hook refused")
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class BridgeStreamTests(Base):
     def test_one_stderr_stream_that_moved_stops_the_review(self):
         with self.subTest(case="legal baseline"):
@@ -339,7 +339,7 @@ class BridgeStreamTests(Base):
                 self.assertEqual(outcome["decision"]["replay_allowed"], True)
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class RecoveryStreamTests(Base):
     def test_streams_that_cannot_be_read_from_the_record_stop_the_review(self):
         with self.subTest(case="legal baseline"):
@@ -380,7 +380,7 @@ class RecoveryStreamTests(Base):
             self.assertEqual(self.calls, [], "the candidate hash was computed")
 
 
-@unittest.skipIf(os.name != "posix", "read_stream opens with O_NOFOLLOW; Windows stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "read_stream's POSIX branch (O_NOFOLLOW); the Windows branch has its own cases")
 class ReadStreamTests(Base):
     def setUp(self):
         super().setUp()
@@ -409,7 +409,7 @@ class ReadStreamTests(Base):
         self.assertIn("max_stream_bytes", str(raised.exception))
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class AdapterTests(Base):
     def invocation(self, op, code, *args):
         return Invocation("req-1", op, "executor", "stub-profile", (PY, "-c", code, *args), (),

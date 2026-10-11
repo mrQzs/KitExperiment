@@ -65,7 +65,7 @@ def handoff_of(spec: InvocationSpec) -> dict:
             "environment_sha256": spec.environment_sha256, "spec_sha256": spec.digest()}
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class SupervisedRecordGaps(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="supervised-gaps-")).resolve()

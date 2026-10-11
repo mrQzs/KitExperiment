@@ -44,7 +44,7 @@ DELETE_HANDOFF_AND_LOCK = ("import os, sys\n"
                            "os.chmod(sys.argv[1], 0o500)\n")
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class SupervisedOperationGaps(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="supervised-bridge-gaps-")).resolve()

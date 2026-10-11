@@ -94,7 +94,7 @@ def facts_of(path: Path) -> dict:
     return {"device": info.st_dev, "inode": info.st_ino, "bytes": len(data), "sha256": sha(data)}
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class StreamFactsGaps(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="stream-facts-gaps-")).resolve()

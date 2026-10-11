@@ -79,7 +79,7 @@ def recanonical(value: dict) -> bytes:
     return canonical_json(value)
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class SupervisedRecordTests(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="supervised-record-")).resolve()

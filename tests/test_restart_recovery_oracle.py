@@ -191,7 +191,7 @@ class RecoveryCase(unittest.TestCase):
         return op, str(evidence)
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class RunDescriptorOracle(RecoveryCase):
     def test_handoff_records_a_run_descriptor_and_reads_it_back(self):
         scheduler = self.scheduler()
@@ -304,7 +304,7 @@ class RunDescriptorOracle(RecoveryCase):
         reopened.close()
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class RecoverAfterRestartOracle(RecoveryCase):
     def test_every_older_operation_is_settled_and_reported(self):
         scheduler = self.scheduler()

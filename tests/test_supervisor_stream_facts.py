@@ -118,7 +118,7 @@ class LyingSize:
         self.st_size = size
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class StreamFactsExecutor(unittest.TestCase):
     def setUp(self):
         self.work = Path(tempfile.mkdtemp(prefix="stream-facts-")).resolve()

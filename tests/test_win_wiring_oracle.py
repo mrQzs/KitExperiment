@@ -413,7 +413,8 @@ class RecordIdentityOracle(WiringCase):
                    "+" + str(MAX_SAFE_INTEGER + 1), "0" + str(MAX_SAFE_INTEGER + 1),
                    " " + str(MAX_SAFE_INTEGER + 1), str(MAX_SAFE_INTEGER + 1) + " ",
                    str(MAX_SAFE_INTEGER + 1) + ".0", "1e16", "0x20000000000000", str(2**64), str(-(2**64)),
-                   "9" * 25, True, False, 1.0, float(MAX_SAFE_INTEGER + 1), None, [MAX_SAFE_INTEGER + 1],
+                   "9" * 25, "1" * 5000, "-" + "1" * 5000, True, False, 1.0, float(MAX_SAFE_INTEGER + 1),
+                   None, [MAX_SAFE_INTEGER + 1],
                    # fullwidth digits are digits to str.isdigit, not to a record
                    "".join(chr(0xFF10 + int(d)) for d in str(MAX_SAFE_INTEGER + 1)))
         for value in refused:
@@ -464,6 +465,8 @@ class RecordIdentityOracle(WiringCase):
                              ("a signed inode", dict(fact, inode="+" + str(MAX_SAFE_INTEGER + 1))),
                              ("a leading zero", dict(fact, inode="0" + str(MAX_SAFE_INTEGER + 1))),
                              ("beyond 64 bits", dict(fact, inode=str(2**64))),
+                             # long enough for int() to refuse: a record can hold it (64 KiB ceiling)
+                             ("thousands of digits", dict(fact, inode="1" * 5000)),
                              ("a byte count as text", dict(fact, bytes=str(MAX_SAFE_INTEGER + 1)))):
             with self.subTest(case=case):
                 evidence = self.evidence_dir()

@@ -239,7 +239,7 @@ class Base(unittest.TestCase):
         self.assertEqual(self.scheduler._requests["req-1"].stopped, "START_UNKNOWN")
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class BridgeOracle(Base):
     def run_op(self, op, spec, evidence, **kwargs):
         kwargs.setdefault("before_finish", self.before_finish)
@@ -434,7 +434,7 @@ class _null:
         return False
 
 
-@unittest.skipIf(os.name != "posix", "native POSIX supervisor; Windows Job Object stays NOT_RUN")
+@unittest.skipIf(os.name != "posix", "native POSIX supervisor (process groups and signals); the Windows wiring has its own cases in tests/test_win_wiring*.py")
 class AdapterOracle(Base):
     def invocation(self, op, code, *args, request_id="req-1"):
         return Invocation(request_id, op, "executor", "stub-profile", (PY, "-c", code, *args), (),

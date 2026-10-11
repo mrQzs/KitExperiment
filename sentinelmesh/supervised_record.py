@@ -113,18 +113,20 @@ _FACT_KEYS = frozenset({"device", "inode", "bytes", "sha256"})
 _SHA256_ALPHABET = frozenset("0123456789abcdef")
 
 # A file identity is whatever the platform says it is, and Windows reports one
-# 64 bits wide (``st_ino`` is the file reference number, whose high 16 bits are
-# the volume serial, and ``st_dev`` the 64-bit volume serial), which is past the
-# canonical JSON integer profile.  A number outside the profile is written as its
+# 64 bits wide (``st_ino`` is the NTFS file reference number, whose high 16 bits
+# are a sequence number, and ``st_dev`` the 64-bit volume serial), which is past
+# the canonical JSON integer profile.  A number outside the profile is written as its
 # decimal text instead: the record stays canonical JSON, the value is neither
 # rounded nor hashed into something it is not, and it is read back as the number
 # it was, so a recorded fact stays directly comparable with an ``os.lstat``.
 _DECIMAL_DIGITS = frozenset("0123456789")
-# The widest identity either platform can report: 64 bits, sign included.
+# The widest identity either platform can report: an unsigned 64-bit number,
+# accepted with either sign.
 _IDENTITY_LIMIT = 2**64 - 1
-# The shortest text form of a number beyond the profile (``2**53``) and the
-# longest one a 64-bit identity can have (``2**64 - 1``, sign included), so a
-# text identity is recognisable by its length alone.
+# The digit count (sign stripped) of the shortest text beyond the profile
+# (``2**53``, 16 digits) and a bound above the longest 64-bit identity
+# (``2**64 - 1``, 20 digits): the window keeps ``int()`` away from text that
+# could never be an identity, and the range check decides the rest.
 _IDENTITY_MIN_DIGITS = 16
 _IDENTITY_MAX_DIGITS = 21
 
@@ -191,7 +193,7 @@ def _recorded_identity(value: Any) -> Optional[int]:
 
     A number is accepted as it is.  Text is accepted only in the one form
     `_record_identity` writes: the decimal text of a number beyond the profile,
-    with at most one leading ``-``, no leading zero, no sign, no space, no
+    with at most one leading ``-``, no ``+``, no leading zero, no space, no
     exponent and no radix prefix, and no wider than a 64-bit identity.  Every
     other value - a boolean, a float, ``None``, the text of a number the profile
     already covers, a text beyond 64 bits - is damaged evidence, because it

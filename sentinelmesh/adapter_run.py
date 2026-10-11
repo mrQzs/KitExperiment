@@ -1,4 +1,4 @@
-"""Run an adapter invocation under the native POSIX supervisor and reduce its stream.
+"""Run an adapter invocation under the native supervisor and reduce its stream.
 
 `.agent/design/adapter-supervisor-wiring.md` (sections 3 and 6) decides how an
 adapter-generated invocation reaches the ``Scheduler``:
