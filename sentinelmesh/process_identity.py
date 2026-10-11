@@ -12,6 +12,12 @@ and "身份"):
 * native identity facts: the boot session id, the realpath-resolved executable
   and its SHA-256, assembled into the canonical `ProcessIdentity`.
 
+On Windows the two native facts follow the platform's own rules
+(`.agent/design/windows-supervisor.md`, sections 3.2 and 3.3): the boot id is
+composed from the registry's ``MachineGuid`` and ``BootId`` values, and a bare
+executable name is completed with ``.exe``/``.com`` over a ``;``-separated,
+drive- or share-rooted ``PATH`` without ever reading ``PATHEXT``.
+
 Everything here is fail-closed: every rejection raises
 `sentinelmesh.runtime.RuntimeErrorCode` with a stable code, and nothing is
 inferred from `os.environ`, from process output, or from a partially readable
@@ -47,6 +53,21 @@ _BOOT_ID_PATTERN = re.compile(
 # with pure Python, so it is the only reason `ctypes` exists in this module.
 _DARWIN_BOOT_ID_SYSCTL = b"kern.bootsessionuuid"
 _LINUX_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+# Windows composes the boot id from two native registry values (design
+# `.agent/design/windows-supervisor.md`, section 3.2): the machine
+# ``MachineGuid`` (a ``REG_SZ`` UUID) and the ``PrefetchParameters\BootId``
+# ``REG_DWORD`` boot counter, joined exactly as reported into ``<guid>:<count>``.
+_WINDOWS_MACHINE_GUID_KEY = r"SOFTWARE\Microsoft\Cryptography"
+_WINDOWS_BOOT_COUNT_KEY = (
+    r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
+)
+# The composed Windows boot id keeps the platform UUID text verbatim and
+# appends the decimal boot counter; the counter comes from an integer, so the
+# pattern forbids leading zeros (a bare ``0`` is the only zero-valued form).
+_WINDOWS_BOOT_ID_PATTERN = re.compile(
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}:(?:0|[1-9][0-9]*)"
+)
 
 # Chunked hashing keeps `file_sha256` bounded in memory for large binaries.
 _SHA256_CHUNK_BYTES = 1 << 20
@@ -215,6 +236,43 @@ def _linux_boot_id() -> str:
     return _validated_boot_id(text.strip(), _LINUX_BOOT_ID_PATH)
 
 
+def _windows_boot_id() -> str:
+    r"""Compose the boot id from the registry's ``MachineGuid`` and ``BootId``.
+
+    The two values are platform-native evidence, not hashes: ``MachineGuid`` is
+    a ``REG_SZ`` UUID text and ``PrefetchParameters\BootId`` is a ``REG_DWORD``
+    boot counter that increments once per boot.  They are joined exactly as the
+    registry reports them into ``<guid>:<count>`` (the guid is never re-cased,
+    stripped or de-braced), so a reboot always changes the id.  Both keys are
+    read on every call -- nothing is cached -- and either value being
+    unreadable, mistyped or mis-kinded fails closed as ``E_RUNTIME_IDENTITY``.
+    A failure on the first value stops before the second key is opened.
+    """
+    try:
+        import winreg
+    except ImportError as exc:  # pragma: no cover - platform failure
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"winreg is unavailable: {exc}") from exc
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WINDOWS_MACHINE_GUID_KEY) as key:
+            guid, guid_kind = winreg.QueryValueEx(key, "MachineGuid")
+            if type(guid) is not str or guid_kind != winreg.REG_SZ:
+                raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "MachineGuid is not REG_SZ text")
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WINDOWS_BOOT_COUNT_KEY) as key:
+            count, count_kind = winreg.QueryValueEx(key, "BootId")
+            if type(count) is not int or count_kind != winreg.REG_DWORD:
+                raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "BootId is not a REG_DWORD integer")
+    except RuntimeErrorCode:
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        # A missing key, a denied read, an unpack that is not a pair and any
+        # other registry failure all fail closed rather than guessing an id.
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "the Windows boot id registry values could not be read") from exc
+    text = f"{guid}:{count}"
+    if not _WINDOWS_BOOT_ID_PATTERN.fullmatch(text):
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "the Windows boot id is not a valid <guid>:<count>")
+    return text
+
+
 def boot_id() -> str:
     """Return this machine's boot session id, re-read on every call.
 
@@ -226,6 +284,8 @@ def boot_id() -> str:
         return _darwin_boot_id()
     if sys.platform.startswith("linux"):
         return _linux_boot_id()
+    if sys.platform == "win32":
+        return _windows_boot_id()
     raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "boot id is not available on this platform")
 
 
@@ -255,6 +315,85 @@ def _path_lookup_value(environment: dict[str, str]) -> str:
     return path_value
 
 
+def _nt_is_rooted(path: str) -> bool:
+    r"""Return whether ``path`` carries a drive or UNC root and an absolute tail.
+
+    On Windows a usable ``PATH`` entry (or an explicit path used as given) must
+    name a rooted location: ``os.path.splitdrive`` must return a non-empty drive
+    (``C:`` or a ``\\server\share`` UNC root) *and* the remainder must be
+    absolute.  A rootless ``\tool.exe`` or a drive-relative ``C:sub\tool.exe``
+    would resolve against an unspecified working directory, so both are refused.
+    """
+    drive, _rest = os.path.splitdrive(path)
+    return bool(drive) and os.path.isabs(path)
+
+
+def _nt_path_lookup(name: str, snapshot: dict[str, str]) -> str:
+    """Find a bare ``name`` on the snapshot ``PATH`` using only ``.exe``/``.com``.
+
+    Every entry is checked to be drive- or share-rooted *before* any file is
+    looked up, so one malformed entry rejects the whole lookup even when an
+    earlier entry already holds the file.  A name that already has an extension
+    is only tried as-is; a bare stem is completed ``.exe`` first, then ``.com``,
+    within each entry in ``PATH`` order.  ``PATHEXT`` and ``os.environ`` are
+    never read and `shutil.which` is never called.
+    """
+    if "PATH" not in snapshot or not snapshot["PATH"]:
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", "environment PATH is required to resolve a bare argv0")
+    entries = snapshot["PATH"].split(";")
+    for entry in entries:
+        if not entry or not _nt_is_rooted(entry):
+            raise RuntimeErrorCode(
+                "E_RUNTIME_IDENTITY",
+                f"environment PATH entry {entry!r} is not a drive- or share-rooted path",
+            )
+    # An explicit extension means the caller named the file; otherwise the two
+    # program suffixes are the only completions tried (``.cmd``/``.bat`` shims
+    # are interpreted by ``cmd.exe`` and are never the executed program).
+    stem = os.path.splitext(name)[1]
+    names = (name,) if stem else (name + ".exe", name + ".com")
+    for entry in entries:
+        for candidate_name in names:
+            candidate = os.path.join(entry, candidate_name)
+            if os.path.isfile(candidate):
+                return candidate
+    raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {name!r} was not found on environment PATH")
+
+
+def _resolve_executable_nt(argv0: str, cwd: str, snapshot: dict[str, str]) -> str:
+    r"""Resolve ``argv0`` under the Windows rules; see `resolve_executable`.
+
+    A path argv0 (one containing ``\\`` or ``/``) must be rooted (drive/UNC plus
+    an absolute tail) to be used as given; a rootless ``\x`` or a drive-relative
+    ``C:x`` is refused and any other relative path is joined with ``cwd``.  A
+    bare name with a drive (``C:tool.exe``) is refused; a plain bare name is
+    looked up on ``PATH``.  The result is the real path of a ``.exe``/``.com``
+    regular file -- ``os.access`` is not consulted -- or ``E_RUNTIME_IDENTITY``.
+    """
+    try:
+        if "\\" in argv0 or "/" in argv0:
+            drive, _rest = os.path.splitdrive(argv0)
+            if drive and os.path.isabs(argv0):
+                candidate = argv0
+            elif (not drive and argv0.startswith(("\\", "/"))) or (drive and not os.path.isabs(argv0)):
+                raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} is not a rooted path")
+            else:
+                candidate = os.path.join(cwd, argv0)
+        else:
+            drive, _rest = os.path.splitdrive(argv0)
+            if drive:
+                raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} names a drive without a directory")
+            candidate = _nt_path_lookup(argv0, snapshot)
+        resolved = os.path.realpath(candidate)
+        if not os.path.isfile(resolved) or os.path.splitext(resolved)[1].lower() not in (".exe", ".com"):
+            raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} does not resolve to a .exe or .com regular file")
+    except RuntimeErrorCode:
+        raise
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise RuntimeErrorCode("E_RUNTIME_IDENTITY", f"argv0 {argv0!r} could not be resolved") from exc
+    return resolved
+
+
 def resolve_executable(argv0: str, *, cwd: str, environment: Mapping[str, str]) -> str:
     """Resolve ``argv0`` against an explicit ``environment`` and ``cwd``.
 
@@ -264,10 +403,20 @@ def resolve_executable(argv0: str, *, cwd: str, environment: Mapping[str, str]) 
     so a supervisor that refuses to inherit the parent environment cannot
     resolve to a binary the caller did not name.  The result is the real path of
     an executable regular file, or ``E_RUNTIME_IDENTITY``.
+
+    On Windows (``os.name == "nt"``) the rules are the platform's own: ``PATH``
+    is ``;``-separated and every entry must be drive- or share-rooted; a path
+    argv0 must be rooted or is joined with ``cwd`` (a rootless ``\\x`` or a
+    drive-relative ``C:x`` is refused); a bare name is completed only with
+    ``.exe`` then ``.com`` (``PATHEXT`` is never read, so ``.cmd``/``.bat``
+    shims are never programs); and the resolved file must be a ``.exe``/``.com``
+    regular file (``os.access`` is not consulted).
     """
     _validated_identity_text(argv0, "argv0")
     _validated_identity_text(cwd, "cwd")
     snapshot = _validated_environment(environment)
+    if os.name == "nt":
+        return _resolve_executable_nt(argv0, cwd, snapshot)
     try:
         if "/" in argv0:
             candidate = argv0 if os.path.isabs(argv0) else os.path.join(cwd, argv0)
