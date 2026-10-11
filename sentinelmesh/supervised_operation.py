@@ -84,6 +84,17 @@ _STOPPED_OR_FAILED = frozenset({"STOPPED", "FAILED"})
 # The two evidence streams the supervisor pins, in the order it digsests them.
 _STREAM_NAMES = ("stdout", "stderr")
 
+# ``O_NOFOLLOW`` is POSIX-only: where the platform has no such flag (Windows) the
+# link refusal is done by hand instead -- ``lstat`` the path, refuse anything that
+# is not a plain regular file, open it in binary mode, and compare the identity of
+# what was really opened with the ``lstat`` one.  Whether the flag exists is a fact
+# about the platform, so it is settled once at import time, which still reads no
+# file and starts nothing.
+_HAS_NOFOLLOW = hasattr(os, "O_NOFOLLOW")
+# ``O_BINARY`` is what keeps the C runtime from reading a record as text, which
+# would fold CR LF and stop at 0x1A; it is 0 where the platform has no such flag.
+_O_BINARY = getattr(os, "O_BINARY", 0)
+
 # The three scheduler states this module can leave an operation in.
 _NOT_STARTED = "NOT_STARTED"
 _START_UNKNOWN = "START_UNKNOWN"
@@ -104,12 +115,37 @@ def _record_digest(path: str) -> Optional[str]:
     whatever is on disk, and the caller's decision comes from
     ``replay_decision``, which fails closed on its own.
     """
+    # What the ``lstat`` of the path saw, on a platform where the link refusal is
+    # made by hand; ``None`` where ``O_NOFOLLOW`` already refuses the link.
+    seen: Optional[os.stat_result] = None
     try:
-        # ``O_NOFOLLOW``: a record reached through a link is refused rather than
-        # followed.  ``O_NONBLOCK``: opening a fifo for reading would otherwise
-        # wait for a writer forever, before the regular-file check could refuse
-        # it; it changes nothing for a regular file.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        if _HAS_NOFOLLOW:
+            # ``O_NOFOLLOW``: a record reached through a link is refused rather than
+            # followed.  ``O_NONBLOCK``: opening a fifo for reading would otherwise
+            # wait for a writer forever, before the regular-file check could refuse
+            # it; it changes nothing for a regular file.
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        else:
+            # No ``O_NOFOLLOW`` here, so the path is examined before it is opened: a
+            # missing path, a path that is not a plain regular file and a reparse
+            # point (a link, a mount point) are all refused without opening
+            # anything.  ``O_BINARY`` keeps the C runtime from reading the file as
+            # text, which would fold CR LF and stop at 0x1A.
+            try:
+                seen = os.lstat(path)
+            except FileNotFoundError:
+                return None
+            except OSError:
+                return "unreadable"
+            if (not stat.S_ISREG(seen.st_mode)
+                    or getattr(seen, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                return "unreadable"
+            try:
+                descriptor = os.open(path, os.O_RDONLY | _O_BINARY)
+            except FileNotFoundError:
+                return None
+            except OSError:
+                return "unreadable"
     except FileNotFoundError:
         return None
     except OSError:
@@ -120,6 +156,11 @@ def _record_digest(path: str) -> Optional[str]:
         # the descriptor is used because a second ``stat`` on the path could
         # race with what was really opened.
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_RECORD_BYTES:
+            return "unreadable"
+        if seen is not None and (info.st_dev, info.st_ino) != (seen.st_dev, seen.st_ino):
+            # What was opened is not the file the ``lstat`` saw: a link planted at
+            # the path after it, or the path swapped between the two calls.  The
+            # identity is the only thing that settles which file was read.
             return "unreadable"
         raw = _read_at_most(descriptor, _MAX_RECORD_BYTES + 1)
         if len(raw) > _MAX_RECORD_BYTES:

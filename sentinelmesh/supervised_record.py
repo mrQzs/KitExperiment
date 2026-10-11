@@ -26,6 +26,16 @@ What a record is:
   regular file only, at most `_MAX_RECORD_BYTES`, canonical bytes only, and the
   exact key set.  Anything else fails closed with ``E_RUNTIME_EVIDENCE``.
 
+On a platform without ``O_NOFOLLOW`` (Windows) every one of those refusals is
+made by hand: the path is examined with ``lstat`` before it is opened and
+anything that is not a plain regular file - a link, a reparse point, a directory
+- is refused without opening it, the file is opened in binary mode so the C
+runtime cannot fold CR LF or stop at 0x1A, and the identity of what was really
+opened is proved equal to what that ``lstat`` saw, so a link planted at the path
+afterwards cannot be followed.  The ``.partial`` file is examined the same way
+before it is created, because an exclusive open there creates *through* a
+dangling link instead of failing.
+
 `replay_decision` never re-derives a status from anything but the two records
 and the expected `InvocationSpec`, and it is read-only: it creates, modifies and
 deletes nothing.  ``streams`` takes no part in that decision; it is there so
@@ -64,6 +74,18 @@ _OBSERVATION_SCHEMA = "sentinelmesh-observation-v2"
 # never be decided), and no more than this many bytes are ever read.
 _MAX_RECORD_BYTES = 65536
 _RECORD_MODE = 0o600
+
+# ``O_NOFOLLOW`` is POSIX-only: where the platform has no such flag (Windows) the
+# link refusal is done by hand instead -- ``lstat`` the path, refuse anything that
+# is not a plain regular file, open it in binary mode, and compare the identity of
+# what was really opened with the ``lstat`` one.  Windows also creates *through* a
+# dangling link on an exclusive open, which is why the partial path is examined
+# before it is created.  Whether the flag exists is a fact about the platform, so
+# it is settled once at import time, which still reads no file and starts nothing.
+_HAS_NOFOLLOW = hasattr(os, "O_NOFOLLOW")
+# ``O_BINARY`` is what keeps the C runtime from reading a record as text, which
+# would fold CR LF and stop at 0x1A; it is 0 where the platform has no such flag.
+_O_BINARY = getattr(os, "O_BINARY", 0)
 
 # Closed key sets.  A record that carries more or fewer keys was not written by
 # this module, and `reconcile` would happily ignore the extras, so it is refused
@@ -204,7 +226,18 @@ def _write_record(evidence_dir: str, name: str, content: Mapping[str, Any]) -> N
     created = False
     try:
         try:
-            descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, _RECORD_MODE)
+            if _HAS_NOFOLLOW:
+                descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, _RECORD_MODE)
+            else:
+                # No ``O_NOFOLLOW`` here, and an exclusive open on Windows creates
+                # *through* a dangling link instead of failing, so the partial path
+                # is examined first: any entry there - a leftover partial, a
+                # directory, a link - is refused without creating anything, and
+                # nothing that is already there is read or removed.
+                if _entry_exists(partial):
+                    raise RuntimeErrorCode("E_RUNTIME_EVIDENCE",
+                                           f"{name} could not be recorded: {os.path.basename(partial)} is taken")
+                descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_BINARY, _RECORD_MODE)
             created = True
             _write_all(descriptor, raw)
             os.fsync(descriptor)
@@ -265,13 +298,38 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
     module never wrote is damaged evidence and fails closed.
     """
     path = os.path.join(evidence_dir, name)
+    # What the ``lstat`` of the path saw, on a platform where the link refusal is
+    # made by hand; ``None`` where ``O_NOFOLLOW`` already refuses the link.
+    seen: Optional[os.stat_result] = None
     try:
-        # ``O_NOFOLLOW``: a record that arrives through a link can be swapped
-        # between the check and the read, so it is refused rather than followed.
-        # ``O_NONBLOCK``: opening a FIFO for reading would otherwise wait for a
-        # writer forever, before the regular-file check below could refuse it;
-        # it changes nothing for a regular file.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        if _HAS_NOFOLLOW:
+            # ``O_NOFOLLOW``: a record that arrives through a link can be swapped
+            # between the check and the read, so it is refused rather than followed.
+            # ``O_NONBLOCK``: opening a FIFO for reading would otherwise wait for a
+            # writer forever, before the regular-file check below could refuse it;
+            # it changes nothing for a regular file.
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        else:
+            # No ``O_NOFOLLOW`` here, so the path is examined before it is opened:
+            # a missing path, a path that is not a plain regular file and a reparse
+            # point (a link, a mount point) are all refused without opening
+            # anything.  ``O_BINARY`` keeps the C runtime from reading the file as
+            # text, which would fold CR LF and stop at 0x1A.
+            try:
+                seen = os.lstat(path)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be opened: {exc}") from exc
+            if (not stat.S_ISREG(seen.st_mode)
+                    or getattr(seen, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not a regular file")
+            try:
+                descriptor = os.open(path, os.O_RDONLY | _O_BINARY)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} could not be opened: {exc}") from exc
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -282,6 +340,11 @@ def _read_record(evidence_dir: str, name: str) -> Optional[dict[str, Any]]:
         # path again could race with what was really opened.
         if not stat.S_ISREG(info.st_mode):
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not a regular file")
+        if seen is not None and (info.st_dev, info.st_ino) != (seen.st_dev, seen.st_ino):
+            # What was opened is not the file the ``lstat`` saw: a link planted at
+            # the path after it, or the path swapped between the two calls.  The
+            # identity is the only thing that settles which file was read.
+            raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} is not the file that was seen at its path")
         if info.st_size > _MAX_RECORD_BYTES:
             raise RuntimeErrorCode("E_RUNTIME_EVIDENCE", f"{name} exceeds {_MAX_RECORD_BYTES} bytes")
         # The size above is only an early refusal: a file that grows after the
