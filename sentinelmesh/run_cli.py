@@ -3,15 +3,21 @@
 `.agent/design/controller-cli.md` (sections 3, 5 and 6) turns the whole
 ``claim`` -> ``handoff`` -> ``supervise`` -> record -> ``_reduce`` -> ``settle``
 -> ``finish`` chain into commands an operator can start from the command line,
-one invocation at a time.  This module is the first of the three one-shot
-commands that design names:
+one invocation at a time.  This module holds the three one-shot commands that
+design names:
 
 * ``smctl run init`` creates a ledger and seeds one request and its tasks from a
   strictly checked specification file;
 * ``smctl run once`` claims exactly one operation and runs exactly one adapter
   invocation under the platform's own supervisor, reporting the outcome exactly
   as the bridge returned it;
-* ``smctl run recover`` is the next contract and is deliberately not here yet.
+* ``smctl run recover`` takes over what a controller that died left in the ledger:
+  it rolls the ledger over exactly once (every request stops with
+  ``RECOVERY_REQUIRED``), cancels every claim that never reached a handoff,
+  settles every handoff never decided from its own records, and writes the
+  driver's report exactly as it is -- it claims nothing, runs nothing, settles
+  nothing and reopens nothing, so what the recovery could not decide is the
+  operator's, through ``smctl ledger settle``/``resolve``/``resume``.
 
 Every command claims at most once and runs at most once: there is no loop, no
 retry and no daemon, so a command that is killed leaves at most one undecided
@@ -48,6 +54,7 @@ from .durable_ledger import LedgerError, create_ledger, open_ledger
 from .ledger_cli import _write_line
 from .process_identity import environment_digest
 from .runtime import RuntimeErrorCode
+from .restart_recovery import recover_after_restart
 from .scheduler import ContractError, Scheduler
 from .supervised_operation import evidence_digest
 
@@ -198,7 +205,8 @@ def load_job(path: str) -> dict[str, Any]:
     ``reservation`` is a non-empty object of non-negative integers; ``resources``,
     ``capabilities``, ``allowed_secret_names`` and ``usage_dimensions`` are arrays
     of distinct strings; ``command`` is a non-empty array of strings (repeats
-    allowed); ``environment`` is a string-to-string object (possibly empty);
+    allowed); ``environment`` is a string-to-string object (possibly empty)
+    whose names and values the invocation's own ``environment_digest`` accepts;
     ``adapter_id`` is one this contract accepts; and the two ceilings are integers
     within their own bounds.  Every violation is an ``E_RUN_JOB`` whose detail
     names the item.  The returned mapping is the file's own content with the two
@@ -230,6 +238,14 @@ def load_job(path: str) -> dict[str, Any]:
     if type(environment) is not dict or any(type(key) is not str or type(item) is not str
                                             for key, item in environment.items()):
         raise RunSpecError("E_RUN_JOB", "environment must be an object of strings")
+    try:
+        # The environment the child will run with, checked here rather than when
+        # the invocation is built after the claim: a name or value the digest
+        # refuses would otherwise strand a RESERVED operation (review of
+        # run-cli-once attempt-001, F4).
+        environment_digest(environment)
+    except RuntimeErrorCode as exc:
+        raise RunSpecError("E_RUN_JOB", "environment: " + str(exc)) from exc
     if value["adapter_id"] not in _ADAPTERS:
         raise RunSpecError("E_RUN_JOB", "adapter_id must be one of %s" % ", ".join(sorted(_ADAPTERS)))
     max_stream_bytes = value.get("max_stream_bytes", DEFAULT_MAX_STREAM_BYTES)
@@ -384,6 +400,51 @@ def cmd_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_recover(args: argparse.Namespace) -> int:
+    """Take over what a controller that died left in the ledger, reporting it.
+
+    The ledger is opened first (a path that cannot be opened is the ledger's own
+    code, e.g. ``E_LEDGER_MISSING``); the candidate is the operator's
+    ``--candidate``, or the evidence records' own digest exactly as ``once``
+    uses; then :func:`~sentinelmesh.restart_recovery.recover_after_restart` is
+    called on the ledger exactly once.  It rolls the ledger over exactly once,
+    cancels every claim that never reached a handoff, settles every handoff never
+    decided from its records and reports every operation it acted on, in claim
+    order.  Its report is written exactly as it came back -- no entry is added,
+    dropped, reordered or re-decided here -- and the ledger is not read or
+    written again afterwards.
+
+    A ``ContractError`` or ``LedgerError`` the driver raises is a refusal with
+    its own code and detail, and ``E_RECOVERY_INPUT`` happens before the
+    rollover, so a refused call leaves the ledger byte for byte as it was.  This
+    command claims nothing, runs nothing, settles no usage and reopens no
+    request: every request stays stopped with ``RECOVERY_REQUIRED``, a
+    ``failed`` or ``skipped`` entry is left for the next call or for the
+    operator, and what a recovered review still needs -- usage, resolution, the
+    resume -- is the operator's, through ``smctl ledger settle``/``resolve``/
+    ``resume``.  ``KeyboardInterrupt`` is not caught, and the ledger is closed in
+    the ``finally`` whatever happens.
+    """
+    try:
+        ledger = open_ledger(args.ledger)
+    except (ContractError, LedgerError) as exc:
+        return _refuse(exc, None)
+    try:
+        try:
+            candidate_hash = evidence_digest if args.candidate is None else _constant(args.candidate)
+            report = recover_after_restart(ledger, owner=args.owner, candidate_hash=candidate_hash)
+            result = {"command": "recover", "generation": report["generation"],
+                      "operations": report["operations"]}
+        except (ContractError, LedgerError) as exc:
+            # Nothing was claimed by this command, so there is no operation to
+            # name; a refusal before the rollover left the ledger untouched.
+            return _refuse(exc, None)
+    finally:
+        ledger.close()
+    _emit(result)
+    return 0
+
+
 def _constant(value: str) -> Any:
     """A ``candidate_hash`` that returns the operator's value, ignoring the dir."""
     return lambda _evidence_dir: value
@@ -411,9 +472,9 @@ def _candidate(text: str) -> str:
 def register(subparsers: Any) -> None:
     """Add the ``run`` command group to ``smctl``'s subparsers.
 
-    ``init`` and ``once`` each take the ledger path as their first positional
-    argument; an unknown combination is a usage error (exit 2), so the ledger is
-    not even opened for one.
+    ``init``, ``once`` and ``recover`` each take the ledger path as their first
+    positional argument; an unknown combination is a usage error (exit 2), so the
+    ledger is not even opened for one.
     """
     group = subparsers.add_parser("run", help="one-shot adapter runs: create a ledger and run once under the supervisor")
     commands = group.add_subparsers(dest="run_command", required=True)
@@ -433,3 +494,10 @@ def register(subparsers: Any) -> None:
                    help="sha256 of the candidate (default: the evidence records' own digest)")
     p.add_argument("--now", type=_digits, default=0, help="logical clock for the claim and the run (default 0)")
     p.set_defaults(func=cmd_once)
+
+    p = commands.add_parser("recover", help="take over what a crashed controller left in the ledger, reporting it as it is")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.add_argument("--owner", required=True, help="owner the recovered operations are handed to")
+    p.add_argument("--candidate", type=_candidate,
+                   help="sha256 of the candidate (default: the evidence records' own digest)")
+    p.set_defaults(func=cmd_recover)
