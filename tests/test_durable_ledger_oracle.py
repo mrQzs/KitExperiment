@@ -167,7 +167,7 @@ class DurableLedgerOracle(LedgerCase):
     def test_the_public_surface_matches_the_scheduler(self):
         self.assertEqual(LEDGER_FORMAT, "sentinelmesh-ledger-v2")
         self.assertEqual(MUTATING_METHODS, ("seed_request", "seed_task", "claim", "handoff", "mark_running", "renew",
-                                            "observe", "settle", "finish", "fixture_verdict", "unknown",
+                                            "observe", "settle", "finish", "fixture_verdict", "verdict", "unknown",
                                             "release_proven_unstarted", "recover", "cancel_unstarted", "stop",
                                             "rollover", "resolve_unknown", "resume"))
         for name in MUTATING_METHODS + ("snapshot", "operation"):
