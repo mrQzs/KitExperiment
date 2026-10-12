@@ -1,6 +1,6 @@
 # 设计说明：操作员驱动的受监督运行（controller-cli）
 
-状态：用户决定见第 5 节（2026-10-11，均选推荐项）；规划端决定见第 6 节；第 1 份 `run-cli-once` 与第 2 份 `run-cli-recover` 已集成，第 3 份 `run-cli-pi` 待写。
+状态：用户决定见第 5 节（2026-10-11，均选推荐项）；规划端决定见第 6 节；三份合同 `run-cli-once`、`run-cli-recover`、`run-cli-pi` 均已集成（2026-10-11），方向完成；1b 真实 pi 待用户批准凭据与联网。
 前置：持久账本与 `smctl ledger`（durable-ledger、ledger-cli、ledger-events、ledger-compaction、ledger-reference）、受监督操作桥接（scheduler-supervisor-wiring）、adapter 受监督运行与流上限（adapter-supervisor-wiring、stream-ceilings）、重启恢复与请求恢复（request-resume）、Pi 原生事件翻译（pi-native-events）、两个原生监督器（posix-runtime-runner、windows-supervisor）都已集成。
 
 ## 1. 为什么做
@@ -70,4 +70,7 @@
 - 第 2 份 `run-cli-recover` 已集成（2026-10-11）：oracle `4d5f484`（pi-base 上 `7f4c00f`）、合同 `68e1592`、a001 `25c3cd8`、规划端补全 `43f4f5a`；复审 `.agent/reviews/run-cli-recover/attempt-001.md`（PASS，605 s；`check --fresh` 8/8；变异 27/28 与 24/28，漏掉的 1 条等价：`RuntimeErrorCode` 是 `ValueError` 的子类）；干净工作树全量 943 passed / 281 skipped。上一份的 F4 由 `load_job` 的环境预检关闭。
   - 实测的事实（Windows，真实 `smctl` 进程）：控制器被 `TerminateProcess` 杀掉后子进程随 Job Object 在 0.02 s 内结束，证据目录只有交接记录与两个流文件，`recover` 报告 `recovered`/`START_UNKNOWN`；`smctl ledger settle` 一次一个维度，第一个维度结算后账本追加 `USAGE_UNKNOWN` 停止理由，`resume` 必须两个理由都点名（库里一次 `settle` 多个维度看不到这条）；按记录恢复到 `REVIEW_PENDING` 的运行用量未结算，`resume` 先 `E_RESUME_USAGE_UNKNOWN`；`recover` 的候选写在 `scheduler.recovered` 事件的 payload 里，不是 `run.finished_for_review`。
   - 复审五个低级发现：F1 `cmd_recover` 文档串把“账本原样”说成了所有拒绝（rollover 之后的 `LedgerError` 会留下已推进的代际），F2 模块文档串的“settles nothing”指用量，F3 执行器测试只比较缺省候选的一个值——补全已改；F4 执行器拒绝用例没有自己的合法基线、F5 报告 JSON 的 `changed_files` 漏列测试文件——记录不改。
-- 下一份：`run-cli-pi`（第 7 节第 3 份）：`pi-session-v3` 挂进注册表，作业文件里 pi 的可执行文件按平台规则解析（Windows 上是 `node.exe` + `cli.js`），用 `tests/fixtures/pi_native/` 的捕获流当桩验证从作业文件到用量结算；真实 pi 仍 NOT_RUN。
+- 第 3 份 `run-cli-pi` 已集成（2026-10-11）：oracle `757a7b4`（pi-base 上 `5527374`）、合同 `5732f63`、a001 `c72ee3f`、规划端补全 `5786d0b`；复审 `.agent/reviews/run-cli-pi/attempt-001.md`（PASS，484 s；`check --fresh` 8/8；变异两轮都是 13/15：1 条只插入死代码，1 条是 oracle 盲点——pi 作业背后被加上 `total_tokens` 维度——补全改子集用例后单独验证抓住）；干净工作树全量 953 passed / 281 skipped。
+  - 规划端决定（第 6 节的延伸）：注册表按 adapter 自己的 `adapter_id` 键入，所以作业里写 `"pi"`（`pi-session-v3` 是方言/协议版本，不是 id）；命令不解析 pi 的可执行文件——argv0 由监督器按平台规则解析，作业要把真实 pi 写成 `["C:\\Program Files\\nodejs\\node.exe", "<cli.js>", "--mode", "json", …]`，oracle 钉住 `pi.cmd`（按路径或裸名）是 `NOT_STARTED`/`E_RUNTIME_IDENTITY`。
+  - 实测的事实：捕获流经 `smctl run once` 结算的五个维度与 `.meta.json` 里 dispatcher 的数字完全一致（Windows 与 macOS 夹具都是），并与 `smctl ledger reference --dialect pi-session-v3` 一致；截断流 `result.status == "UNKNOWN"`、全部维度 skipped、请求 `USAGE_UNKNOWN`；离线事件喂给 pi 是 `E_ADAPTER_SETTLEMENT`，pi 帧喂给 offline 是 `E_ADAPTER_EVENT`；作业只列部分维度就只结算那些。
+- 三份合同都已集成：方向完成。1b（真实 pi 在监督器下运行）现在只差批准：一个把 pi 写成 `node.exe` + `cli.js`、`adapter_id: "pi"`、五个 token 维度、`allowed_secret_names` 列出 provider 凭据名的作业文件，经 `smctl run init` → `once` 即可；凭据与联网仍需用户另批。
