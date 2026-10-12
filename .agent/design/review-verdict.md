@@ -1,6 +1,6 @@
 # 设计说明：复审裁决的操作员入口（review-verdict）
 
-状态：待用户决定（第 5 节）；规划端决定见第 6 节。
+状态：用户 2026-10-11 决定第 5 节四项均选推荐项；规划端决定见第 6 节；第 1 份合同 `review-verdict` 待派发。
 前置：durable-ledger、ledger-cli、request-resume、controller-cli（`smctl run init/once/recover`）、live-pi-run 均已集成（2026-10-11）。
 
 ## 1. 为什么做
@@ -31,7 +31,7 @@
 - 不读凭据、不联网、不启动真实 pi；子进程只有 `python -c` 与 `python -m sentinelmesh.cli`。
 - 操作员的权限与证据哈希照旧只记录不核验（request-resume 第 5 节）。
 
-## 5. 用户决定（待定）
+## 5. 用户决定（2026-10-11，均选推荐项）
 
 1. **命令放哪**：`smctl ledger verdict`（推荐；它是操作员对账本的决定，与 `resolve`/`resume` 同组）还是 `smctl run verdict`。
 2. **记录方式**：新加 `Scheduler.verdict`（当前代际、操作员、说明都进事件；`fixture_verdict` 保留给测试）（推荐）还是直接包一层现有的 `fixture_verdict`（事件里没有操作员与说明）。
@@ -56,4 +56,4 @@
 
 ## 9. 进度与遗留
 
-- 2026-10-11：实测核对第 2 节；等待用户决定第 5 节。
+- 2026-10-11：实测核对第 2 节；用户决定第 5 节四项均选推荐项。
