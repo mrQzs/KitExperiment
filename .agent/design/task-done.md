@@ -1,6 +1,6 @@
 # 设计说明：任务接受后不再领取（task-done）
 
-状态：草案，待用户决定第 5 节。
+状态：用户 2026-10-12 决定第 5 节四项均选推荐项；规划端决定见第 6 节；合同 `task-done` 待派发。
 前置：review-verdict（`Scheduler.verdict`、`smctl ledger verdict`、`status.reviews`）已集成（2026-10-11，`c2215ee`）。
 
 ## 1. 为什么做
@@ -31,7 +31,7 @@
 - 不读凭据、不联网、不启动真实 pi；子进程只有 `python -m sentinelmesh.cli`。
 - 不核验证据内容；"接受"只认状态。
 
-## 5. 用户决定（待定）
+## 5. 用户决定（2026-10-12，均选推荐项）
 
 1. **新码的位置**：`E_TASK_DONE` 在 `E_ACTIVE_TASK`/`E_ATTEMPTS` 之前（推荐；"已接受"是关于任务的最终事实，比次数更具体，次数用尽且已接受时报 `E_TASK_DONE`）还是放在 `E_ATTEMPTS` 之后（次数用尽时照旧报 `E_ATTEMPTS`，只有次数未尽的已接受任务才报新码）。
 2. **什么算"已接受"**：任何 `ACCEPTED` 状态的操作，不论由 `verdict` 还是 `fixture_verdict` 写入（推荐；状态是唯一口径，重放与检查点天然保持）还是只认 `run.verdict` 事件里带操作员的那种（要扫事件，检查点后不可得）。
@@ -56,4 +56,4 @@
 
 ## 9. 进度与遗留
 
-- 2026-10-12：实测核对第 2 节（探针：规则加在 `E_ACTIVE_TASK` 之前，全量只有 1 条 review-verdict oracle 测试失败）；待用户决定第 5 节。
+- 2026-10-12：实测核对第 2 节（探针：规则加在 `E_ACTIVE_TASK` 之前，全量只有 1 条 review-verdict oracle 测试失败）；用户决定第 5 节四项均选推荐项。
