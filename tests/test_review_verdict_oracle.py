@@ -173,7 +173,8 @@ class VerdictOracle(VerdictCase):
         self.init()
         op = self.run_once()
         request = self.request()
-        self.assertEqual(set(request), {"request_id", "stopped", "stop_reasons", "snapshot", "attention", "reviews"})
+        self.assertEqual(set(request), {"request_id", "stopped", "stop_reasons", "snapshot", "attention", "reviews",
+                                        "tasks"})
         self.assertEqual(request["attention"], [])
         self.assertEqual(request["reviews"], [{"operation_id": op, "task_id": "task-1", "generation": 1,
                                                "candidate": CANDIDATE}])
@@ -347,12 +348,13 @@ class VerdictOracle(VerdictCase):
         self.assertEqual(MUTATING_METHODS[MUTATING_METHODS.index("fixture_verdict") + 1], "verdict")
         self.assertEqual(MUTATING_METHODS[-2:], ("resolve_unknown", "resume"))
 
-    def test_a_decided_task_may_be_claimed_again_until_its_attempts_run_out(self):
+    def test_a_rejected_task_takes_a_new_attempt_and_an_accepted_one_is_closed(self):
         self.init(max_attempts=2)
         first = self.run_once("task-1")
         self.verdict(first, "--reject")
-        # The claim rules are unchanged by a verdict: the task takes a new
-        # attempt, and the attempts are counted whatever the verdicts were.
+        # A rejection leaves the task open: it takes a new attempt, and the
+        # attempts are counted whatever the verdicts were.  An acceptance closes
+        # it (task-done), which is what the next claim reports.
         second = self.run_once("task-1")
         self.assertNotEqual(second, first)
         self.verdict(second, "--accept")
@@ -360,7 +362,7 @@ class VerdictOracle(VerdictCase):
         try:
             with self.assertRaises(ContractError) as ctx:
                 ledger.claim("req-1", "task-1", 1, "idem-third", "owner-1", 1, 1, RESERVATION, ["src/task-1.py"])
-            self.assertEqual(ctx.exception.code, "E_ATTEMPTS")
+            self.assertEqual(ctx.exception.code, "E_TASK_DONE")
             self.assertEqual([ledger.operation(o)["state"] for o in (first, second)], ["REJECTED", "ACCEPTED"])
         finally:
             ledger.close()
