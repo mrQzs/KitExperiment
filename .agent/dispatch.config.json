@@ -16,5 +16,10 @@
     "AGENTS.md",
     "code-kit-v2/**",
     "pyproject.toml"
-  ]
+  ],
+  "release_check": {
+    "allow": [
+      "tests/fixtures/pi_native/**:home path"
+    ]
+  }
 }
