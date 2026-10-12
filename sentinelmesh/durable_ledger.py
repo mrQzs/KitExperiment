@@ -838,6 +838,34 @@ class DurableScheduler:
             self._require_available()
             return self._scheduler.request_ids()
 
+    def task_ids(self, request: str) -> tuple[str, ...]:
+        """Every task id of one request the replayed ledger knows, in seeding order.
+
+        Served from the in-memory ``Scheduler`` exactly as :meth:`operation` is:
+        an unavailable instance refuses it with ``E_LEDGER_UNAVAILABLE`` and the
+        log is never touched.  A command that has to name a task -- a claim, a
+        budget snapshot, the status view -- needs the ids of the request, in the
+        order the controller seeded them, and they were only derivable from the
+        events before.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.task_ids(request)
+
+    def task(self, request: str, task: str) -> dict[str, Any]:
+        """One task of one request: its attempts, and whether it is done.
+
+        Served from the in-memory ``Scheduler`` exactly as :meth:`operation` is:
+        an unavailable instance refuses it with ``E_LEDGER_UNAVAILABLE`` and the
+        log is never touched.  It is the per-task summary ``smctl ledger status``
+        lists under ``tasks``, and it reads the same after a reopen as it did
+        before, because the attempts and the accepted state travel with the
+        commands that recorded them.
+        """
+        with self._lock:
+            self._require_available()
+            return self._scheduler.task(request, task)
+
     def operation_usage(self, operation: str) -> dict[str, dict[str, Any]]:
         """The usage one operation has recorded, dimension by dimension.
 

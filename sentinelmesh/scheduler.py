@@ -574,6 +574,48 @@ class Scheduler:
         with self._lock:
             return tuple(self._requests)
 
+    def task_ids(self, request: str) -> tuple[str, ...]:
+        """Every task id of one request, in the order they were seeded.
+
+        The order is the seeding order -- the one :meth:`seed_task` recorded and
+        the durable command log replays in -- and deliberately not a sorted one,
+        so a caller walking the tasks of a request sees them the way the
+        controller that is gone created them and the way a reopened ledger
+        reproduces them.  A request that was never seeded is
+        ``E_REQUEST_UNKNOWN``, as it is for :meth:`snapshot` and
+        :meth:`stop_reasons`.  Reading is never fenced, records no event and
+        mutates nothing.
+        """
+        with self._lock:
+            if type(request) is not str or request not in self._requests:
+                raise ContractError("E_REQUEST_UNKNOWN")
+            return tuple(task for name, task in self._tasks if name == request)
+
+    def task(self, request: str, task: str) -> dict[str, Any]:
+        """One task of one request: its attempts, and whether it is done.
+
+        The view answers "has this task been accepted, and how many attempts has
+        it used" with four keys: ``task_id``, the ``max_attempts`` it was seeded
+        with, ``attempts`` -- the number of operations of that request and task,
+        the same count :meth:`claim` measures ``E_ATTEMPTS`` against, cancelled
+        and never-started claims included -- and ``done``, the fact that one
+        of those operations is ``ACCEPTED``, whichever verdict
+        (:meth:`verdict` or :meth:`fixture_verdict`) wrote the state.  A request
+        or task that was never seeded is ``E_SCOPE_UNKNOWN``, as it is for
+        :meth:`claim`.  Reading is never fenced, records no event and mutates
+        nothing.
+        """
+        with self._lock:
+            if type(request) is not str or type(task) is not str:
+                raise ContractError("E_SCOPE_UNKNOWN")
+            item = self._tasks.get((request, task))
+            if item is None:
+                raise ContractError("E_SCOPE_UNKNOWN")
+            ops = [op for op in self._operations.values()
+                   if op.request_id == request and op.task_id == task]
+            return {"task_id": task, "max_attempts": item.max_attempts,
+                    "attempts": len(ops), "done": any(op.state == "ACCEPTED" for op in ops)}
+
     def operation_usage(self, operation: str) -> dict[str, dict[str, Any]]:
         """Every usage dimension recorded for one operation, as a fresh copy.
 
@@ -770,6 +812,12 @@ class Scheduler:
             if root is None or item is None: raise ContractError("E_SCOPE_UNKNOWN")
             if root.stopped: raise ContractError("E_STOPPED")
             if item.guard_version != guard_version or not item.fixture_eligible: raise ContractError("E_GUARD_STALE")
+            # An accepted run closes its task: once one of a task's operations
+            # is ACCEPTED the task is done, whichever verdict wrote the state,
+            # and a further claim is refused before the active-task and the
+            # attempts rules get a say.
+            if any(op.request_id == request and op.task_id == task and op.state == "ACCEPTED"
+                   for op in self._operations.values()): raise ContractError("E_TASK_DONE")
             if any(op.request_id == request and op.task_id == task and op.state in LIVE | {"REVIEW_PENDING"}
                    for op in self._operations.values()): raise ContractError("E_ACTIVE_TASK")
             if sum(op.request_id == request and op.task_id == task for op in self._operations.values()) >= item.max_attempts:

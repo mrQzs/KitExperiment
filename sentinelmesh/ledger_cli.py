@@ -319,6 +319,20 @@ def _reviews(ledger: Any, request_id: str) -> list[dict[str, Any]]:
     return entries
 
 
+def _tasks(ledger: Any, request_id: str) -> list[dict[str, Any]]:
+    """The tasks of one request, in seeding order, each as the ledger views it.
+
+    Every task the request seeded is listed -- including one that has never been
+    claimed -- as ``Scheduler.task`` reports it: ``task_id``, ``max_attempts``,
+    ``attempts`` and ``done``.  That is what an operator needs to see which
+    tasks are already accepted (closed to further claims with ``E_TASK_DONE``),
+    which are still open, and which have used up their attempts, without
+    deriving any of it from the event log.  ``attention`` and ``reviews`` are
+    untouched: a closed task is not something to attend to.
+    """
+    return [ledger.task(request_id, task_id) for task_id in ledger.task_ids(request_id)]
+
+
 def _status(ledger: Any, path: str) -> dict[str, Any]:
     """The read-only view: what the ledger holds, and what needs an operator."""
     requests = []
@@ -329,7 +343,8 @@ def _status(ledger: Any, path: str) -> dict[str, Any]:
         requests.append({"request_id": request_id, "stopped": bool(reasons),
                          "stop_reasons": list(reasons), "snapshot": ledger.snapshot(request_id),
                          "attention": _attention(ledger, request_id),
-                         "reviews": _reviews(ledger, request_id)})
+                         "reviews": _reviews(ledger, request_id),
+                         "tasks": _tasks(ledger, request_id)})
     return {"ledger": path, "generation": ledger.generation, "seq": ledger.seq, "requests": requests}
 
 
