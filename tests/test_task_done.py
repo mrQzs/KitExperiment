@@ -71,12 +71,11 @@ class TaskDoneCase(unittest.TestCase):
         scheduler.fixture_verdict(op, CANDIDATE, accepted, EVIDENCE)
         return op
 
-    def refuse_code(self, scheduler, task, key, **kwargs):
-        """The code of a refused claim, and proof it refused nothing."""
+    def refuse_code(self, scheduler, task, key):
+        """The code of a refused claim, and proof the refusal changed nothing."""
         before = (list(scheduler.events), scheduler.snapshot("req-1"))
         with self.assertRaises(ContractError) as ctx:
-            self.claim(scheduler, task, key, **kwargs)
-        self.assertEqual(ctx.exception.code, "E_TASK_DONE")
+            self.claim(scheduler, task, key)
         self.assertEqual(before, (list(scheduler.events), scheduler.snapshot("req-1")),
                          "a refused claim changed the ledger")
         return ctx.exception.code

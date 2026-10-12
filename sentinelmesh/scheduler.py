@@ -812,10 +812,8 @@ class Scheduler:
             if root is None or item is None: raise ContractError("E_SCOPE_UNKNOWN")
             if root.stopped: raise ContractError("E_STOPPED")
             if item.guard_version != guard_version or not item.fixture_eligible: raise ContractError("E_GUARD_STALE")
-            # An accepted run closes its task: once one of a task's operations
-            # is ACCEPTED the task is done, whichever verdict wrote the state,
-            # and a further claim is refused before the active-task and the
-            # attempts rules get a say.
+            # An accepted run closes its task, whichever verdict wrote the state:
+            # the refusal comes before the active-task and the attempts rules.
             if any(op.request_id == request and op.task_id == task and op.state == "ACCEPTED"
                    for op in self._operations.values()): raise ContractError("E_TASK_DONE")
             if any(op.request_id == request and op.task_id == task and op.state in LIVE | {"REVIEW_PENDING"}
