@@ -1,6 +1,6 @@
 # 设计说明：复审裁决的操作员入口（review-verdict）
 
-状态：用户 2026-10-11 决定第 5 节四项均选推荐项；规划端决定见第 6 节；第 1 份合同 `review-verdict` 待派发。
+状态：用户 2026-10-11 决定第 5 节四项均选推荐项；规划端决定见第 6 节；合同 `review-verdict` 已集成（2026-10-11），方向完成。
 前置：durable-ledger、ledger-cli、request-resume、controller-cli（`smctl run init/once/recover`）、live-pi-run 均已集成（2026-10-11）。
 
 ## 1. 为什么做
@@ -57,3 +57,7 @@
 ## 9. 进度与遗留
 
 - 2026-10-11：实测核对第 2 节；用户决定第 5 节四项均选推荐项。
+- 合同 `review-verdict` 已集成（2026-10-11）：oracle `75c410c`（pi-base 上 `717e0f3`；另把 durable-ledger oracle 的方法表期望加上 `verdict`）、合同 `fa60b11`、a001 `f8a6290`、规划端补全 `4f967b3`；复审 `.agent/reviews/review-verdict/attempt-001.md`（PASS，838 s；`check --fresh` 8/8；变异 30/31 与 14/31，漏掉的 1 条等价：`finish` 之后再释放一次资源是空操作）；干净工作树全量 971 passed / 281 skipped。
+  - 规划端修正：`"verdict"` 放在方法表的 `"fixture_verdict"` 之后而不是末尾——`tests/test_request_resume*.py` 钉住了末尾两项 `resolve_unknown`、`resume`；草稿阶段全量先因此 4 个失败。
+  - 候选与草稿的措辞差异：候选把操作与候选的 `type is str` 检查拆成单独一句（防 unhashable id 进字典查找），草稿变异里 4 条因此要重锚；`_candidate_of` 取“最后一个带候选的事件”与取第一个等价（一个操作最多只有一个把候选交付复审的事件）。
+  - 复审四个低级发现：`_candidate_of` 文档串少算了 `run.verdict` 这第四种带候选的事件、`_reviews` 文档串的悬空交叉引用、一处测试注释描述了不存在的断言（补全已改）、报告把一处解读放在 `limitations` 而不是 `unresolved_questions`（记录）。
