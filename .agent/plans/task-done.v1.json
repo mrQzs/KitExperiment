@@ -1,0 +1,303 @@
+{
+  "schema_version": 1,
+  "task_id": "task-done",
+  "plan_version": 1,
+  "title": "task-done: an accepted run closes its task; task_ids/task views; status.tasks",
+  "repository": "KitExperiment",
+  "base_sha": "7256c8b0934bcf5f87365f1f1cf341f624d5239a",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/ledger_cli.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_task_done.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_task_done_oracle.py",
+      "tests/test_review_verdict_oracle.py",
+      "tests/test_review_verdict.py",
+      "tests/test_durable_ledger_oracle.py",
+      "tests/test_ledger_cli_oracle.py",
+      "tests/test_ledger_cli.py",
+      "tests/test_scheduler_exact_inputs_oracle.py",
+      "tests/test_request_resume_oracle.py",
+      "tests/test_request_resume.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/run_cli.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_task_done_oracle.py",
+        "tests/test_review_verdict_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_task_done.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_ledger_cli.py",
+        "tests/test_durable_ledger_oracle.py",
+        "tests/test_durable_ledger.py",
+        "tests/test_scheduler_exact_inputs_oracle.py",
+        "tests/test_scheduler_exact_inputs.py",
+        "tests/test_request_resume_oracle.py",
+        "tests/test_request_resume.py",
+        "tests/test_ledger_compaction_oracle.py",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/test_scheduler_supervised_oracle.py",
+        "tests/test_review_verdict.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh.scheduler import Scheduler; from sentinelmesh.durable_ledger import DurableScheduler, MUTATING_METHODS; assert callable(Scheduler.task_ids) and callable(Scheduler.task) and callable(DurableScheduler.task_ids) and callable(DurableScheduler.task); assert 'task' not in MUTATING_METHODS and 'task_ids' not in MUTATING_METHODS; print('views ok')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "views ok"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "7256c8b0934bcf5f87365f1f1cf341f624d5239a",
+        "--",
+        "sentinelmesh/cli.py",
+        "sentinelmesh/run_cli.py",
+        "sentinelmesh/supervised_operation.py",
+        "sentinelmesh/supervised_record.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/adapter_protocol.py",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/restart_recovery.py",
+        "sentinelmesh/pi_events.py",
+        "tests/test_task_done_oracle.py",
+        "tests/test_review_verdict_oracle.py",
+        "tests/test_review_verdict.py",
+        "tests/test_durable_ledger_oracle.py",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_ledger_cli.py",
+        "tests/test_scheduler_exact_inputs_oracle.py",
+        "tests/test_request_resume_oracle.py",
+        "tests/test_request_resume.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "领取规则的位置、码与\"被拒不改\"（第 1 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`task_ids`/`task` 的键、顺序、口径与未知范围的码（第 2–3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "账本代理的签名与可用性检查，方法表与格式不变（第 4 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03",
+        "V07"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "`status.tasks` 的内容与顺序，其它键不变（第 5 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "其它命令与模块不受影响，三个文件的 diff 只在合同指定的位置，文档串按第 6 条，导入无副作用",
+      "evidence": [
+        "V03",
+        "V04",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
