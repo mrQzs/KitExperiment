@@ -22,7 +22,7 @@
 
 - **作业来源**：`--jobs <dir>` 下每个任务一份作业文件 `<task_id>.json`，用 `load_job` 原样读（不改键集合）。打开账本之前先读完目录里的全部作业：任何一份 `E_RUN_JOB`、`request_id` 不等于 `--request`、`task_id` 不等于文件名，都是 `E_RUN_JOBS`，什么也不跑。账本里有任务而目录里没有作业的，跳过并报告（`no_job`）；目录里有作业而账本里没有任务的，开跑前就拒绝（`E_SCOPE_UNKNOWN` 由第一次 `claim` 报出来会太晚：这时别的任务可能已经跑过了）。
 - **幂等键**：作业文件里的 `idempotency_key` 是基键；第 n 次尝试的键是 `"<基键>#<n>"`，n 取自 `task()` 的 `attempts + 1`。这样同一目录的作业文件可以重复用于整个请求的生命周期，而 `once` 的语义不变（`once` 仍按作业文件里的键原样领取）。被重放的领取（`replayed`）在 serve 里是 `E_RUN_CLAIM_REPLAYED`，停止循环——它说明有人用同一个键跑过了本应由 serve 跑的尝试。
-- **循环**：按 `task_ids(request)` 的顺序走一遍任务：`task()` 说 `done` 或 `attempts >= max_attempts` 的跳过并记原因；否则 `claim`。`E_ACTIVE_TASK`（等复审裁决，或上一个控制器留下的未决操作）跳过并记原因；`E_STOPPED`、`E_GUARD_STALE`、`E_GENERATION`/账本的任何拒绝、`E_IDEMPOTENCY_CONFLICT` 停止循环（它们不是“这个任务现在不能领”，而是“这个账本现在不该再动”）。领到之后与 `once` 逐字相同地运行一次；结果记入报告，继续下一个任务。一整遍没有领到任何任务时结束（`drained`）；`--max-runs` 到数、或下一次领取前墙钟已超过 `--max-seconds` 时结束（上限只在领取之前检查，不在运行中途杀进程：杀进程是 supervise 的事，有它自己的 `timeout_seconds`）。
+- **循环**：按 `task_ids(request)` 的顺序走一遍任务：`task()` 说 `done` 或 `attempts >= max_attempts` 的跳过并记原因；否则 `claim`。`E_ACTIVE_TASK`（等复审裁决，或上一个控制器留下的未决操作）跳过并记原因；`E_STOPPED`、`E_GUARD_STALE`、`E_GENERATION`/账本的任何拒绝、`E_IDEMPOTENCY_CONFLICT` 停止循环（它们不是“这个任务现在不能领”，而是“这个账本现在不该再动”）。领到之后与 `once` 逐字相同地运行一次；结果记入报告，继续下一个任务。循环就是走一遍任务，每个任务最多考虑一次、最多运行一次（运行以什么状态结束都不在本次调用里再领：不重试，第 8 节）；走完就是 `drained`；`--max-runs` 到数、或下一次领取前墙钟已超过 `--max-seconds` 时结束（上限只在领取之前检查，不在运行中途杀进程：杀进程是 supervise 的事，有它自己的 `timeout_seconds`）。
 - **顺序执行**：一次只有一个 LIVE 操作；请求的 `concurrency` 不用。它不是“并发度 1”的一个特例实现，而是第一版明确不做并发：并发要解决证据目录、worktree 与 `KeyboardInterrupt` 的归属，另起设计。
 - **证据与 worktree**：`--evidence <root>`，每次运行用 `<root>/<task_id>/<n>`（serve 创建，已存在则在开跑前拒绝 `E_RUN_EVIDENCE`，因为证据目录是一次性的）；`--worktree-id` 原样记在每次运行上（作业的 `cwd` 才是真正的工作目录；一个请求的任务各有 worktree 时，操作员给每个作业不同的 `cwd`，id 只是记录）。`--now` 是基准逻辑时钟，第 i 次领取用 `now + i`。
 - **输出与退出码**：stdout 永远一行 JSON：`{"command": "serve", "request", "runs": [{"task_id", "attempt", "operation_id", "state", "evidence_dir"}…], "skipped": [{"task_id", "reason"}…], "stopped": "drained | max_runs | max_seconds | interrupted | refused", "refusal": null | {"error", "detail", "operation_id"}}`。`drained` / `max_*` / `interrupted` 退出 0；`refused` 退出 3，stderr 另有 `once` 式的一行拒绝（带已领取的 `operation_id`）。领取之间的 `KeyboardInterrupt` 捕获为 `interrupted`（已完成的运行在账本里，报告里也有）；运行当中的 `KeyboardInterrupt` 与 `once` 一样不捕获。
@@ -45,7 +45,9 @@
 ## 6. 规划端决定
 
 - 逻辑时钟按领取递增（`now + i`），不按运行结束时间：账本的 `now` 是逻辑的，serve 不读墙钟给它。
-- 一整遍没有领到任何任务就结束，不等复审裁决：等待是守护进程的事，本命令不是。
+- 走一遍就结束，不等复审裁决：等待是守护进程的事，本命令不是。草稿阶段发现“一遍领到了就再走一遍”会让起不来的运行（`NOT_STARTED`）在一次调用里烧光次数，所以改成每个任务最多运行一次。
+- `--now` 的递增外部观察不到（逻辑时钟只影响租约），草稿变异 M07 预期等价，不算缺口。
+- 重放的领取经产品命令构造不出来（任务的每个操作都把派生的序号推后），oracle 用替身账本在进程内钉住它。
 - `--max-seconds` 只在领取之前检查。
 
 ## 7. 合同拆分
