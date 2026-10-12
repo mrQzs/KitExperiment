@@ -193,7 +193,8 @@ class ReferenceCase(unittest.TestCase):
 class FixtureOracle(ReferenceCase):
     def test_each_fixture_gives_the_dispatcher_numbers(self):
         found = fixtures()
-        self.assertEqual(len(found), 5)
+        # Five dispatcher captures and the one live run of 2026-10-11 (live-pi-run).
+        self.assertEqual(len(found), 6)
         for meta, stream in found:
             with self.subTest(fixture=meta["fixture"]):
                 self.setUp()

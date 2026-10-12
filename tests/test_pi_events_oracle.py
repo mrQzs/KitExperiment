@@ -144,12 +144,14 @@ def frames_of(path: Path):
 
 
 class CapturedFixtures(unittest.TestCase):
-    def test_five_fixtures_three_complete_two_truncated(self):
+    def test_six_fixtures_four_complete_two_truncated(self):
+        # Five dispatcher captures (pi 1.0.x) and the one live run through smctl
+        # (pi 1.1.0, `.agent/design/live-pi-run.md`).
         found = fixtures()
-        self.assertEqual(len(found), 5)
+        self.assertEqual(len(found), 6)
         complete = [meta for meta, _stream in found if meta["dispatcher_summary"]["complete"] is True]
-        self.assertEqual(len(complete), 3)
-        self.assertEqual(sorted({meta["source"]["pi_version"] for meta in complete}), ["1.0.1", "1.0.2", "1.0.4"])
+        self.assertEqual(len(complete), 4)
+        self.assertEqual(sorted({meta["source"]["pi_version"] for meta in complete}), ["1.0.1", "1.0.2", "1.0.4", "1.1.0"])
         self.assertEqual(sorted({meta["source"]["platform"][:5] for meta in complete}), ["Windo", "macOS"])
         for meta, stream in found:
             with self.subTest(fixture=meta["fixture"]):
