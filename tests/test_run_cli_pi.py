@@ -191,7 +191,8 @@ class RunCliPiCase(unittest.TestCase):
             with self.subTest(adapter_id=adapter_id):
                 with self.assertRaises(RunSpecError) as caught:
                     load_job(self.write_json("case.json", self.stream_job(adapter_id=adapter_id)))
-                self.assertEqual(caught.exception.detail, "adapter_id must be one of offline, pi")
+                self.assertEqual((caught.exception.code, caught.exception.detail),
+                                 ("E_RUN_JOB", "adapter_id must be one of offline, pi"))
 
     def test_a_captured_macos_stream_settles_the_dispatchers_usage(self):
         result = self.once(self.stream_job())
@@ -205,7 +206,6 @@ class RunCliPiCase(unittest.TestCase):
         snapshot = self.ok("ledger", "status", self.ledger)["requests"][0]["snapshot"]
         for dimension in DIMENSIONS:
             self.assertEqual(snapshot[dimension]["known"], expected[dimension])
-        self.assertEqual(snapshot["total_tokens"]["known"], expected["total_tokens"])
 
     def test_the_run_is_recorded_as_one_review_and_five_usage_observations(self):
         result = self.once(self.stream_job())

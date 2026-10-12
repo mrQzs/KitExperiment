@@ -253,15 +253,17 @@ class PiOracle(PiCliCase):
         # A job that names fewer dimensions than the translator reports settles
         # only those, and skips nothing.
         self.fresh()
-        result = self.once(self.stream_job(COMPLETE_FIXTURE, usage_dimensions=["output_tokens", "total_tokens"]),
+        result = self.once(self.stream_job(COMPLETE_FIXTURE, usage_dimensions=["output_tokens", "cache_read_tokens"]),
                            self.evidence_dir())
         self.assertEqual((result["outcome"]["usage_recorded"], result["outcome"]["usage_skipped"]),
-                         ({"output_tokens": "APPLIED", "total_tokens": "APPLIED"}, []))
+                         ({"output_tokens": "APPLIED", "cache_read_tokens": "APPLIED"}, []))
         expected = dispatcher_usage(COMPLETE_FIXTURE)
         _state, usage, _ids = self.usage(result["operation_id"])
-        self.assertEqual({k: usage[k]["amount"] for k in ("output_tokens", "total_tokens")},
-                         {k: expected[k] for k in ("output_tokens", "total_tokens")})
-        self.assertNotIn("input_tokens", usage)
+        self.assertEqual({k: usage[k]["amount"] for k in ("output_tokens", "cache_read_tokens")},
+                         {k: expected[k] for k in ("output_tokens", "cache_read_tokens")})
+        # Neither the total nor any other dimension the translator reports is
+        # added behind the job's back (mutation M15 of attempt-001).
+        self.assertEqual(set(usage), {"dispatches", "output_tokens", "cache_read_tokens"})
 
     def test_the_job_names_the_adapter_exactly(self):
         before = self.digest()
