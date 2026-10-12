@@ -156,11 +156,15 @@ class LoadJobsTests(_ServeHarness):
             self.assertEqual(job["max_line_bytes"], DEFAULT_MAX_LINE_BYTES)
 
     def test_refuses_a_directory_that_is_not_there(self):
+        self.write_jobs(self.job("task-1"))
+        self.assertEqual(set(load_jobs(str(self.jobs), "req-1")), {"task-1"})
         with self.assertRaises(RunSpecError) as caught:
             load_jobs(str(self.work / "missing"), "req-1")
         self.assertEqual(caught.exception.code, "E_RUN_JOBS")
 
     def test_refuses_an_empty_directory(self):
+        self.write_jobs(self.job("task-1"))
+        self.assertEqual(set(load_jobs(str(self.jobs), "req-1")), {"task-1"})
         empty = self.work / "empty"
         empty.mkdir()
         with self.assertRaises(RunSpecError) as caught:

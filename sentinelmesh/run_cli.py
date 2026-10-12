@@ -649,9 +649,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     break
                 operation_id = claim["operation_id"]
                 claimed += 1
-                # (g) ``once``'s own chain, exactly once, in the fresh directory.
-                os.makedirs(evidence)
+                # (g) ``once``'s own chain, exactly once, in the fresh directory.  From
+                # here on an interrupt is inside the run: the directory creation is
+                # part of (g), so it is not absorbed either (review of attempt-001, F1).
                 running = True
+                os.makedirs(evidence)
                 try:
                     invocation = Invocation(args.request, operation_id, job["role"], job["profile_id"],
                                             tuple(job["command"]), tuple(job["capabilities"]),

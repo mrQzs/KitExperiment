@@ -14,7 +14,9 @@ of attempts, without a job, or refused as ``E_ACTIVE_TASK`` / ``E_TASK_DONE`` /
 report line.  The child processes are local ``python -c`` programs writing the
 offline adapter's protocol; no provider CLI, no credentials, no network.
 
-A replayed claim cannot be produced through the product commands (every
+An interrupt inside a run (the adapter run, or the directory creation that opens
+it) propagates and is pinned by patching those two names on the module.  A
+replayed claim cannot be produced through the product commands (every
 operation of a task pushes the derived attempt number past any key it used), so
 that stop is pinned in process with a ledger proxy whose ``claim`` replays.
 """
@@ -477,6 +479,27 @@ class ServeOracle(ServeCase):
         self.assertEqual(([r["task_id"] for r in report["runs"]], report["stopped"]),
                          (["task-1", "task-2"], "interrupted"))
         self.assertEqual(len(self.operations()), 2)
+
+    def test_a_keyboard_interrupt_inside_a_run_is_not_caught(self):
+        """The interrupt that lands inside step (g) propagates, as it does in ``once``: in the adapter
+        run, and in the evidence directory creation that opens the run (review of attempt-001, F1)."""
+        self.all_jobs()
+
+        def interrupt(*args, **kwargs):
+            raise KeyboardInterrupt
+        for target in ("run_adapter_operation", "os"):
+            with self.subTest(target=target):
+                self.ledger = str(self.work / ("interrupt-%s.db" % target))
+                self.init()
+                patch = (mock.patch.object(run_cli, target, interrupt) if target != "os"
+                         else mock.patch.object(run_cli.os, "makedirs", interrupt))
+                out, err = io.StringIO(), io.StringIO()
+                with patch, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(KeyboardInterrupt):
+                        cli.main([str(a) for a in self.serve_argv()])
+                # No report was written, and the claim the interrupt cut short stays in the ledger.
+                self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
+                self.assertEqual([(o["task_id"], o["state"]) for o in self.operations()], [("task-1", "RESERVED")])
 
     def test_serve_runs_through_a_real_smctl_process(self):
         self.all_jobs()
