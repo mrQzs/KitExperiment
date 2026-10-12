@@ -1,0 +1,89 @@
+{
+  "dialect": "pi-session-v3",
+  "dispatcher_summary": {
+    "actual_models": [
+      {
+        "model": "step-5-preview",
+        "provider": "step"
+      }
+    ],
+    "assistant_messages": 1,
+    "complete": true,
+    "event_counts": {
+      "agent_end": 1,
+      "agent_settled": 1,
+      "agent_start": 1,
+      "message_end": 3,
+      "message_start": 3,
+      "message_update": 3,
+      "session": 1,
+      "turn_end": 1,
+      "turn_start": 1
+    },
+    "final_stop_reason": "stop",
+    "lines": 15,
+    "terminal_event": "agent_settled",
+    "tool_calls": {},
+    "tool_errors": 0,
+    "usage": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 536,
+      "output": 3,
+      "totalTokens": 539
+    }
+  },
+  "fixture": "windows-pi110-live-smctl-a001",
+  "live_run": {
+    "assistant_text": "OK",
+    "command": "smctl run once (node.exe + pi cli.js, --provider step --model step-5-preview --thinking off --no-session --no-context-files --no-extensions --no-skills --no-mcp --no-tools --mode json -p 'Reply with exactly: OK')",
+    "design_note": ".agent/design/live-pi-run.md",
+    "ledger_usage": {
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "input_tokens": 536,
+      "output_tokens": 3,
+      "total_tokens": 539
+    },
+    "node_exe_sha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237",
+    "node_version": "v24.19.0",
+    "outcome": {
+      "exit_code": 0,
+      "result_status": "SUCCEEDED",
+      "state": "REVIEW_PENDING",
+      "stop_reason": "completed",
+      "stream": {
+        "bytes": 9962,
+        "sha256": "236555f1fab8e29a0b8e22acfc7eacffded22665abd021f355661ad1bd45f4db",
+        "status": "ok"
+      },
+      "usage_recorded": {
+        "cache_read_tokens": "APPLIED",
+        "cache_write_tokens": "APPLIED",
+        "input_tokens": "APPLIED",
+        "output_tokens": "APPLIED",
+        "total_tokens": "APPLIED"
+      }
+    },
+    "pi_version": "1.1.0"
+  },
+  "reduction": {
+    "bytes": 4965,
+    "elided_message_updates": 1,
+    "elided_tool_updates": 0,
+    "kept_lines": 14,
+    "rule": "every frame kept except the inner message_update frames of each assistant message and the inner tool_execution_update frames of each tool call; strings over 64 characters cut to 48 plus a length and sha256 marker",
+    "truncated_strings": 16
+  },
+  "source": {
+    "attempt_id": "live-pi-run.v1.a001",
+    "created_at": "2026-10-12T04:57:14Z",
+    "events_bytes": 9962,
+    "events_lines": 15,
+    "events_sha256": "236555f1fab8e29a0b8e22acfc7eacffded22665abd021f355661ad1bd45f4db",
+    "pi_version": "1.1.0",
+    "platform": "Windows-2025Server-10.0.26100-SP0",
+    "task_id": "live-pi-run",
+    "tool_version": "planner (no dispatcher)"
+  }
+}

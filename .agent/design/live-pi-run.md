@@ -1,6 +1,6 @@
 # 设计说明：真实 pi 在监督器下运行一次（live-pi-run，候选 1b）
 
-状态：待用户决定（第 5 节）；规划端决定见第 6 节。
+状态：用户 2026-10-11 批准三项均选推荐项（第 5 节）；规划端决定见第 6 节；已执行并入库（第 9 节）。
 前置：controller-cli 三份合同（`smctl run init/once/recover`，`pi` adapter）、windows-supervisor 四份合同、pi-native-events、stream-ceilings、ledger-reference 均已集成（2026-10-11）。
 
 ## 1. 为什么做
@@ -36,7 +36,7 @@
 - 联网：只有这一次 pi 进程联网；`smctl` 自身不联网。
 - 不做的证明：断电持久性、Linux、多提供商仍 NOT_RUN。
 
-## 5. 用户决定（待定）
+## 5. 用户决定（2026-10-11，均选推荐项）
 
 1. **是否批准这一次真实运行**（凭据经 pi 自己的 `auth.json`，联网一次）：推荐批准，提示语固定为 `Reply with exactly: OK`。
 2. **provider / model / thinking**：推荐 `step` / `step-5-preview` / `off`（与派发器和现有夹具同一提供商，最便宜）。
@@ -60,4 +60,8 @@
 
 ## 9. 进度与遗留
 
-- 2026-10-11：干跑（`--version`）经 `smctl run once` 成立，见第 2 节；等待用户决定第 5 节。
+- 2026-10-11：干跑（`--version`）经 `smctl run once` 成立，见第 2 节。
+- 2026-10-11：用户批准后规划端执行一次（真实 `smctl` 子进程，Windows Server 2025，node v24.19.0，pi 1.1.0，`--provider step --model step-5-preview --thinking off`）：`once` 退出码 0；outcome `REVIEW_PENDING`、`stop_reason: completed`、`exit_code: 0`、流 `ok` 9962 字节 15 帧（`session`、`agent_start`、`turn_start`、3×`message_start`/`message_update`/`message_end`、`turn_end`、`agent_end`、`agent_settled`，`unknown: 0`）；`result.status: SUCCEEDED`，助手回答 `OK`；五个维度 APPLIED：`input_tokens` 536、`output_tokens` 3、`cache_read_tokens` 0、`cache_write_tokens` 0、`total_tokens` 539，账本 `known` 相同，`smctl ledger reference` 的 `usage`/`frames`/`terminal`/`models` 一致；`observation.json` 的 `process_identity.executable_sha256` 等于 node.exe 的 sha256；`stderr.log` 0 字节；`stdout.log` 与 `stderr.log` 都没有凭据形状的字符串；请求未停止。
+  - 入库：`.agent/runs/live-pi-run/attempt-001/`（git 忽略，本机的规划端证据：`events.jsonl` = `stdout.log` 原样、规划端按 pi 自己的帧算出的 `events-summary.json`、`meta.json`、`preflight.json`）；`reduce.py` 归约成 `tests/fixtures/pi_native/windows-pi110-live-smctl-a001.jsonl`（15 → 14 行，4965 字节，16 个字符串截断）+ `.meta.json`（多一个 `live_run` 块：命令、node 与 pi 版本、node.exe 摘要、outcome 摘要、账本结算的五个数、助手文本）；`tests/test_pi_events_captured.py` 的三个用例在本机把新 attempt 与夹具一起核过；新测试 `tests/test_live_pi_fixture.py`（2 个用例）把夹具经 `smctl run once` 回放到同样的结算。归约后的流里仍有 4 处本机路径前缀（会话头与系统提示的 cwd，被截到 48 字符），与既有夹具同类。
+  - 作业文件、账本、原始证据目录只在会话临时目录，未提交。
+  - 遗留：pi 1.1.0 这次只走了最简单的会话形状；compaction/retry/queue 等帧类型仍无捕获；Linux 与 macOS 上的真实运行仍 NOT_RUN。
