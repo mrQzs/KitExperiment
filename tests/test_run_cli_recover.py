@@ -197,6 +197,7 @@ def test_recover_writes_the_driver_report_verbatim(tmp_path):
         empty = evidence_dir(tmp_path, "empty")
         ok("run", "recover", ledger, "--owner", "ops-1")
         assert driver.call_count == 1
+        assert driver.call_args.kwargs["candidate_hash"] is evidence_digest
         assert driver.call_args.kwargs["candidate_hash"](str(empty)) == evidence_digest(str(empty))
 
 

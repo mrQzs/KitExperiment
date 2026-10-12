@@ -16,7 +16,7 @@ design names:
   ``RECOVERY_REQUIRED``), cancels every claim that never reached a handoff,
   settles every handoff never decided from its own records, and writes the
   driver's report exactly as it is -- it claims nothing, runs nothing, settles
-  nothing and reopens nothing, so what the recovery could not decide is the
+  no usage and reopens nothing, so what the recovery could not decide is the
   operator's, through ``smctl ledger settle``/``resolve``/``resume``.
 
 Every command claims at most once and runs at most once: there is no loop, no
@@ -415,8 +415,11 @@ def cmd_recover(args: argparse.Namespace) -> int:
     written again afterwards.
 
     A ``ContractError`` or ``LedgerError`` the driver raises is a refusal with
-    its own code and detail, and ``E_RECOVERY_INPUT`` happens before the
-    rollover, so a refused call leaves the ledger byte for byte as it was.  This
+    its own code and detail.  A refusal before the rollover -- a ledger that
+    cannot be opened, ``E_RECOVERY_INPUT`` -- leaves the ledger byte for byte as
+    it was; a ``LedgerError`` the driver passes on after the rollover is
+    reported the same way, and the ledger is then as the driver left it: the
+    generation moved and every request held (review of attempt-001, F1).  This
     command claims nothing, runs nothing, settles no usage and reopens no
     request: every request stays stopped with ``RECOVERY_REQUIRED``, a
     ``failed`` or ``skipped`` entry is left for the next call or for the
@@ -437,7 +440,8 @@ def cmd_recover(args: argparse.Namespace) -> int:
                       "operations": report["operations"]}
         except (ContractError, LedgerError) as exc:
             # Nothing was claimed by this command, so there is no operation to
-            # name; a refusal before the rollover left the ledger untouched.
+            # name; a refusal before the rollover left the ledger untouched, one
+            # after it left the generation moved.
             return _refuse(exc, None)
     finally:
         ledger.close()
