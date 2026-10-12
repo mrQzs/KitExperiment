@@ -128,7 +128,7 @@ class CandidateOfTest(VerdictCase):
             self.assertEqual(ledger_cli._candidate_of(ledger, finished), CANDIDATE)
 
             # A review that came in through a recovery carries the candidate the
-            # recovery recorded, and the recovery's own generation.
+            # recovery recorded.
             recovered = self.claim(ledger, "req-1", "task-2", "idem-2", "owner-2")
             ledger.handoff(recovered, "owner-2", ledger.generation)
             ledger.mark_running(recovered, "owner-2", ledger.generation)

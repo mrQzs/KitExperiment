@@ -278,10 +278,11 @@ def _candidate_of(ledger: Any, operation_id: str) -> str | None:
 
     An operation's view carries no candidate: the scheduler keeps it as a field
     that only the events ever spell, so the only place to read it is the log.
-    Three event types carry one -- ``run.finished_for_review`` (``finish``),
-    ``scheduler.recovered`` (``recover`` with the ``FINISHED`` outcome) and
-    ``scheduler.unknown_resolved`` (``resolve_unknown`` with the ``FINISHED``
-    resolution) -- and the last of them is the one that decided the run's
+    Three event types put one up for review -- ``run.finished_for_review``
+    (``finish``), ``scheduler.recovered`` (``recover`` with the ``FINISHED``
+    outcome) and ``scheduler.unknown_resolved`` (``resolve_unknown`` with the
+    ``FINISHED`` resolution) -- and ``run.verdict`` repeats the one that was
+    decided; the last of them is the one that decided the run's
     current state, so the last one in the log is what the operator reviews.  An
     operation that never recorded a candidate has nothing to review, which is
     reported as ``None`` rather than guessed at.
@@ -302,7 +303,7 @@ def _reviews(ledger: Any, request_id: str) -> list[dict[str, Any]]:
     A run that finished waits in ``REVIEW_PENDING`` with the candidate it put up
     for review, and only an operator can move it on -- which is why ``status``
     lists them here, in the order the request claimed them, each with the
-    candidate :meth:`verdict` has to be given.  ``attention`` is untouched: a
+    candidate ``smctl ledger verdict`` (``Scheduler.verdict``) has to be given.  ``attention`` is untouched: a
     review is not something an operator has to look at *now*, and a run of the
     current generation that may still finish on its own is not something to
     attend to at all.
