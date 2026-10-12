@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "task_id": "serve-loop",
+  "plan_version": 1,
+  "title": "smctl run serve: drain one request task by task",
+  "repository": "KitExperiment",
+  "base_sha": "88e7f14134bc493de72bbbfbc1b0ba20758b5aed",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/run_cli.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_run_cli_serve.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_run_cli_serve_oracle.py",
+      "tests/test_run_cli_oracle.py",
+      "tests/test_run_cli.py",
+      "tests/test_run_cli_recover_oracle.py",
+      "tests/test_run_cli_recover.py",
+      "tests/test_run_cli_pi_oracle.py",
+      "tests/test_run_cli_pi.py",
+      "tests/test_task_done_oracle.py",
+      "tests/test_review_verdict_oracle.py",
+      "tests/test_ledger_cli_oracle.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/ledger_cli.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_serve_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_serve.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/test_run_cli_recover.py",
+        "tests/test_run_cli_pi_oracle.py",
+        "tests/test_run_cli_pi.py",
+        "tests/test_task_done_oracle.py",
+        "tests/test_review_verdict_oracle.py",
+        "tests/test_ledger_cli_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh import run_cli; assert callable(run_cli.cmd_serve) and callable(run_cli.load_jobs) and callable(run_cli._clock) and callable(run_cli._count); assert run_cli._SERVE_SKIP == frozenset({'E_ACTIVE_TASK', 'E_TASK_DONE', 'E_ATTEMPTS'}); print('serve ok')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "serve ok"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "88e7f14134bc493de72bbbfbc1b0ba20758b5aed",
+        "--",
+        "sentinelmesh/cli.py",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/durable_ledger.py",
+        "sentinelmesh/ledger_cli.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/adapter_protocol.py",
+        "sentinelmesh/supervised_operation.py",
+        "sentinelmesh/supervised_record.py",
+        "sentinelmesh/restart_recovery.py",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/pi_events.py",
+        "tests/test_run_cli_serve_oracle.py",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/test_run_cli_recover.py",
+        "tests/test_run_cli_pi_oracle.py",
+        "tests/test_run_cli_pi.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "命令行、作业目录的读取与拒绝（第 1–2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ],
+      "intent": "操作员一条命令跑一个请求，而任何一份作业有问题时什么都不跑、账本不动"
+    },
+    {
+      "id": "D02",
+      "text": "报告与退出码的形状，拒绝时 stdout 与 stderr 的一致（第 3 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ],
+      "intent": "被脚本调用时一行就能读到跑了什么、跳过了什么、为什么停"
+    },
+    {
+      "id": "D03",
+      "text": "开跑前的检查与一遍循环的每一步——跳过的原因、停止的原因、派生键、证据目录、上限只在领取前检查（第 4–5、7 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ],
+      "intent": "每次运行与手敲 `once` 留下的账本完全相同，serve 不多一个守卫也不少一个，一个任务一次调用里只跑一次"
+    },
+    {
+      "id": "D04",
+      "text": "中断的两种处理与账本的关闭（第 6 条）",
+      "evidence": [
+        "V01"
+      ],
+      "intent": "领取之间按 Ctrl-C 得到报告而不是堆栈，运行当中的中断仍交给 `once` 的规则"
+    },
+    {
+      "id": "D05",
+      "text": "其它命令与模块不受影响，`run_cli.py` 的 diff 只在合同指定的位置，文档串按第 8 条，导入无副作用",
+      "evidence": [
+        "V03",
+        "V04",
+        "V07",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
