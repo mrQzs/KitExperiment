@@ -11,7 +11,7 @@
 
 ## 2. 现状（2026-10-11 实测，Windows Server 2025）
 
-- `pi` 在本机是 npm 的 `pi` shell 垫片（`C:\Users\Administrator\AppData\Roaming\npm\pi`，内容是 `exec node .../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "$@"`），`pi --version` → `1.1.0`；`node.exe` 是 `C:\Program Files\nodejs\node.exe`，v24.19.0。
+- `pi` 在本机是 npm 的 `pi` shell 垫片（`%APPDATA%\npm\pi`，内容是 `exec node .../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js "$@"`），`pi --version` → `1.1.0`；`node.exe` 是 `C:\Program Files\nodejs\node.exe`，v24.19.0。
 - 干跑已成立：作业 `command = [node.exe, cli.js, "--version"]`、`adapter_id: "pi"`、环境只有 `SYSTEMROOT`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP`/`TMP`/`HOMEDRIVE`/`HOMEPATH`/`PATH`（PATH 只含 node 目录），经真实 `smctl run once` → `REVIEW_PENDING`、`exit_code: 0`、`stdout.log` 是 `1.1.0\n`（流 `invalid`/`E_JSON_SYNTAX`，意料之中——`--version` 不是会话），`observation.json` 里 `process_identity.executable_sha256` 等于 `node.exe` 的 sha256（`3602f2bb…0237`），`boot_id` 带本机 BootId。也就是说真实程序在 Job Object 下启动、被记录、被归约的整条路径已通，只差 provider 调用。
 - pi 的凭据在它自己的配置目录（`~/.pi/auth.json`，这里只记名字），`pi auth check --provider <p> --model <m> --json` 是 Code-Kit 派发前就在用的准备检查；派发器自己把 pi 跑在 `--provider step --model step-5-preview --mode json --no-session` 下。
 - 本仓库的捕获夹具来自派发器的 `events.jsonl`（pi 1.0.x，macOS 与 Windows），归约工具 `tests/fixtures/pi_native/reduce.py` 以 attempt 目录（`events.jsonl` + `events-summary.json`）为输入。
