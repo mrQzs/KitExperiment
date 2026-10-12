@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "task_id": "run-cli-pi",
+  "plan_version": 1,
+  "title": "the pi adapter in smctl run once",
+  "repository": "KitExperiment",
+  "base_sha": "5527374449e2900b1a1a3cb621a89ca6d5063291",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/run_cli.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_run_cli_pi.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_run_cli_pi_oracle.py",
+      "tests/test_run_cli_oracle.py",
+      "tests/test_run_cli.py",
+      "tests/test_run_cli_recover_oracle.py",
+      "tests/test_run_cli_recover.py",
+      "tests/test_pi_events*.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/ledger_cli.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_pi_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_pi.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/test_run_cli_recover.py",
+        "tests/test_pi_events.py",
+        "tests/test_pi_events_oracle.py",
+        "tests/test_pi_events_captured.py",
+        "tests/test_adapter_run.py",
+        "tests/test_ledger_reference.py",
+        "tests/test_ledger_cli.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "python",
+        "-m",
+        "sentinelmesh.cli",
+        "run",
+        "--help"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "recover"
+      ]
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "5527374449e2900b1a1a3cb621a89ca6d5063291",
+        "--",
+        "sentinelmesh/cli.py",
+        "sentinelmesh/ledger_cli.py",
+        "sentinelmesh/pi_events.py",
+        "sentinelmesh/durable_ledger.py",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/supervised_operation.py",
+        "sentinelmesh/supervised_record.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/adapter_protocol.py",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/restart_recovery.py",
+        "tests/test_run_cli.py",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli_recover.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/fixtures"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "注册表与精确匹配（第 1 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D02",
+      "text": "`cmd_once` 按作业取 adapter，其它实参不变（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02"
+      ]
+    },
+    {
+      "id": "D03",
+      "text": "捕获的 pi 流经产品命令结算到 dispatcher 的数值、截断流用量未知并停止请求、两种错配是 `result_error`、Windows 上垫片 NOT_STARTED（oracle）",
+      "evidence": [
+        "V01"
+      ]
+    },
+    {
+      "id": "D04",
+      "text": "不解析程序、不读环境（第 3 条）",
+      "evidence": [
+        "review",
+        "V08"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "`init`/`once`/`recover`、pi 翻译器、账本不受影响，十四个模块与夹具不变，文档串按第 4 条，导入无副作用",
+      "evidence": [
+        "V03",
+        "V04",
+        "V07",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D06",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V05",
+        "V06",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 1800,
+    "max_wall_seconds_total": 3600,
+    "cost_budget": null
+  }
+}
