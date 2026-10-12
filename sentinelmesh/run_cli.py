@@ -33,8 +33,14 @@ and every refusal is reported with its own code, never guessed at.
 The child process sees exactly what the job file names and nothing else: its
 environment is the job's explicit mapping (``os.environ`` is never read for it),
 its working directory is the job's ``cwd`` and its argv is the job's
-``command``.  The first contract only accepts the ``offline`` adapter; a provider
-CLI, credentials and the network are out of scope.
+``command``.  Two adapters are accepted, each by its own ``adapter_id``:
+``offline`` reduces normalized events, and ``pi`` translates pi's ``--mode
+json`` session v3 frames (dialect ``pi-session-v3``) and reduces them the same
+way.  This command starts no provider, resolves no program of its own and reads
+no credentials: the program a job names is resolved by the supervisor from the
+job's ``PATH``, so a real pi has to be named in the job as the real program
+(``node.exe`` with pi's ``cli.js`` on Windows, where the ``pi.cmd`` shim is
+refused), and credentials and the network stay out of scope.
 
 Importing this module has no side effect: no file is read, no environment is
 read, no ledger is opened and no process is started.
@@ -52,6 +58,7 @@ from .adapter_run import (DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_STREAM_BYTES, MAX_
                           run_adapter_operation)
 from .durable_ledger import LedgerError, create_ledger, open_ledger
 from .ledger_cli import _write_line
+from .pi_events import PiNativeAdapter
 from .process_identity import environment_digest
 from .runtime import RuntimeErrorCode
 from .restart_recovery import recover_after_restart
@@ -78,9 +85,12 @@ _JOB_POSITIVE = ("plan", "guard_version", "timeout_seconds")
 #: The job keys that must be arrays of distinct strings (order kept as written).
 _JOB_STRING_LISTS = ("resources", "capabilities", "allowed_secret_names", "usage_dimensions")
 
-#: The adapter ids this contract accepts.  ``offline`` is the offline stub; the
-#: provider adapter (``pi-session-v3``) is the next contract and stays out.
-_ADAPTERS = frozenset({"offline"})
+#: The adapters this contract accepts, keyed by each adapter's own ``adapter_id``:
+#: ``offline`` is the offline stub and ``pi`` the translator of pi's ``--mode
+#: json`` session v3 frames.  There is no alias and no case or whitespace folding:
+#: a job names one of these keys exactly.  Neither adapter starts a provider, so
+#: the program the job names is still the supervisor's to resolve.
+_ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_id: PiNativeAdapter}
 
 
 class RunSpecError(Exception):
@@ -207,8 +217,9 @@ def load_job(path: str) -> dict[str, Any]:
     of distinct strings; ``command`` is a non-empty array of strings (repeats
     allowed); ``environment`` is a string-to-string object (possibly empty)
     whose names and values the invocation's own ``environment_digest`` accepts;
-    ``adapter_id`` is one this contract accepts; and the two ceilings are integers
-    within their own bounds.  Every violation is an ``E_RUN_JOB`` whose detail
+    ``adapter_id`` is one of :data:`_ADAPTERS` (matched exactly, no alias, no case
+    or whitespace folding); and the two ceilings are integers within their own
+    bounds.  Every violation is an ``E_RUN_JOB`` whose detail
     names the item.  The returned mapping is the file's own content with the two
     ceilings filled in.
     """
@@ -343,6 +354,10 @@ def cmd_once(args: argparse.Namespace) -> int:
     anything.  Otherwise the invocation is built from the job and handed to
     :func:`~sentinelmesh.adapter_run.run_adapter_operation` exactly once, with the
     child's environment, working directory and argv all taken from the job file.
+    The adapter is the one the job's ``adapter_id`` names, taken from
+    :data:`_ADAPTERS` and instantiated fresh for this call; nothing else -- the
+    dimensions, the ceilings, the timeout, the environment, the working
+    directory, the argv -- depends on which adapter it is.
 
     What the bridge raises before the outcome -- an ``AdapterError``, a scheduler
     ``ContractError``, a ``LedgerError`` or a ``RuntimeErrorCode`` -- is a refusal
@@ -383,7 +398,8 @@ def cmd_once(args: argparse.Namespace) -> int:
                                     tuple(job["command"]), tuple(job["capabilities"]),
                                     environment_digest(job["environment"]), job["adapter_id"])
             outcome = run_adapter_operation(
-                ledger, OfflineAdapter(), invocation, cwd=job["cwd"], timeout_seconds=job["timeout_seconds"],
+                ledger, _ADAPTERS[job["adapter_id"]](), invocation, cwd=job["cwd"],
+                timeout_seconds=job["timeout_seconds"],
                 environment=job["environment"], owner=args.owner, generation=ledger.generation,
                 evidence_dir=args.evidence, worktree_id=args.worktree_id, candidate_hash=candidate_hash,
                 usage_dimensions=tuple(job["usage_dimensions"]),
