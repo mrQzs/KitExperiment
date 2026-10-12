@@ -1014,6 +1014,16 @@ class Scheduler:
             self._enforce(op.request_id, op.task_id)
 
     def fixture_verdict(self, operation: str, candidate_hash: str, accepted: bool, evidence_hash: str) -> None:
+        """Decide a run that finished -- the hook the fixtures and the tests use.
+
+        It takes no generation, no operator and no note, and the ``run.verdict``
+        event it appends carries only the state and the evidence.  That is what
+        makes it a fixture hook: the operator's entry to the same transition is
+        :meth:`verdict`, which records the current generation, the operator and
+        the note in the ``resolve_unknown`` mould and is what ``smctl ledger
+        verdict`` calls.  This one is left exactly as it is, so the tests that
+        built the fixtures keep the shape they were written against.
+        """
         if type(accepted) is not bool or type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
             raise ContractError("E_VERDICT_SHAPE")
         with self._lock:
@@ -1024,6 +1034,58 @@ class Scheduler:
                 raise ContractError("E_VERDICT_CANDIDATE")
             state = "ACCEPTED" if accepted else "REJECTED"
             payload = self._encode_payload({"state": state, "evidence": evidence_hash})
+            op.state = state
+            self._emit(operation, "run.verdict", payload, encoded=True)
+
+    def verdict(self, operation: str, generation: int, *, candidate_hash: str, accepted: bool,
+                evidence_hash: str, operator: str, note: str) -> None:
+        """Decide a run that finished, in the ``resolve_unknown`` mould.
+
+        An operator looked at the candidate a run put up for review
+        (``REVIEW_PENDING``) and accepts or rejects it.  Where
+        :meth:`fixture_verdict` is the hook the fixtures use, this is the
+        operator's entry: it names the current generation, so a controller that
+        was fenced out cannot decide a run it no longer owns; it takes the
+        candidate by hand, so the decision names what was reviewed and not only
+        what the ledger happens to hold; and it records the operator and the
+        note, both validated by the same text rules :meth:`resolve_unknown`
+        applies, plus the evidence digest.  The scheduler records all three; it
+        verifies none of them -- the operator's authority and what the evidence
+        says stay the operator's business.
+
+        Every input is validated -- in the order the contract fixes -- before
+        anything is mutated, so a refused call leaves the ledger exactly as it
+        was.  The shape first (``accepted`` an exact ``bool``, ``evidence_hash``
+        a digest of 64 lowercase hexadecimal digits), then the two texts, then
+        the generation inside the lock, then the operation and its candidate.
+
+        Only the state changes: ``ACCEPTED`` or ``REJECTED``.  The owner, the
+        generation, the usage, the reservations and the resource holds are
+        untouched -- ``finish`` released them when the run went to review -- and
+        so is the request's stop: a verdict settles nothing and makes nothing
+        resumable.  The task's claim rules are unchanged too, so a task whose
+        candidate was rejected may be attempted again until its attempts run
+        out.
+        """
+        if type(accepted) is not bool or type(evidence_hash) is not str or not _HEX64.fullmatch(evidence_hash):
+            raise ContractError("E_VERDICT_SHAPE")
+        self._decision_text(operator, "E_OPERATOR", _MAX_OPERATOR)
+        self._decision_text(note, "E_NOTE", _MAX_NOTE)
+        with self._lock:
+            # The generation first: an older controller may not decide a run it
+            # no longer owns, whatever the operation is.
+            self._epoch(generation)
+            # Both are compared as exact text: an unhashable id must not reach
+            # the dict lookup, and a ``str`` subclass that merely compares equal
+            # to a recorded one is not the text the operator named.
+            if type(operation) is not str or type(candidate_hash) is not str:
+                raise ContractError("E_VERDICT_CANDIDATE")
+            op = self._operations.get(operation)
+            if op is None or op.state != "REVIEW_PENDING" or op.candidate_hash != candidate_hash:
+                raise ContractError("E_VERDICT_CANDIDATE")
+            state = "ACCEPTED" if accepted else "REJECTED"
+            payload = self._encode_payload({"state": state, "evidence": evidence_hash,
+                                            "candidate": candidate_hash, "operator": operator, "note": note})
             op.state = state
             self._emit(operation, "run.verdict", payload, encoded=True)
 

@@ -2,7 +2,8 @@
 
 After a crash the request has to be taken back by hand -- look at what the
 ledger holds, enter the usage that is known, decide the run nobody could
-classify, resume the request -- and every one of those steps used to mean writing
+classify, decide the candidate one put up for review, resume the request -- and
+every one of those steps used to mean writing
 Python: open the ledger, read the stop reasons, find the operation that needs a
 decision, call one controlled method, close the ledger.  This module puts exactly
 those steps behind ``smctl`` and nothing else.
@@ -272,6 +273,51 @@ def _attention(ledger: Any, request_id: str) -> list[dict[str, Any]]:
     return entries
 
 
+def _candidate_of(ledger: Any, operation_id: str) -> str | None:
+    """The candidate the ledger last recorded for one operation, or ``None``.
+
+    An operation's view carries no candidate: the scheduler keeps it as a field
+    that only the events ever spell, so the only place to read it is the log.
+    Three event types carry one -- ``run.finished_for_review`` (``finish``),
+    ``scheduler.recovered`` (``recover`` with the ``FINISHED`` outcome) and
+    ``scheduler.unknown_resolved`` (``resolve_unknown`` with the ``FINISHED``
+    resolution) -- and the last of them is the one that decided the run's
+    current state, so the last one in the log is what the operator reviews.  An
+    operation that never recorded a candidate has nothing to review, which is
+    reported as ``None`` rather than guessed at.
+    """
+    candidate: str | None = None
+    for event in ledger.events:
+        if event["operation_id"] != operation_id:
+            continue
+        payload = event["payload"]
+        if isinstance(payload, dict) and "candidate" in payload:
+            candidate = payload["candidate"]
+    return candidate
+
+
+def _reviews(ledger: Any, request_id: str) -> list[dict[str, Any]]:
+    """The runs of one request waiting for an operator's verdict, in claim order.
+
+    A run that finished waits in ``REVIEW_PENDING`` with the candidate it put up
+    for review, and only an operator can move it on -- which is why ``status``
+    lists them here, in the order the request claimed them, each with the
+    candidate :meth:`verdict` has to be given.  ``attention`` is untouched: a
+    review is not something an operator has to look at *now*, and a run of the
+    current generation that may still finish on its own is not something to
+    attend to at all.
+    """
+    entries: list[dict[str, Any]] = []
+    for operation_id in ledger.operation_ids():
+        view = ledger.operation(operation_id)
+        if view["request_id"] != request_id or view["state"] != "REVIEW_PENDING":
+            continue
+        entries.append({"operation_id": operation_id, "task_id": view["task_id"],
+                        "generation": view["generation"],
+                        "candidate": _candidate_of(ledger, operation_id)})
+    return entries
+
+
 def _status(ledger: Any, path: str) -> dict[str, Any]:
     """The read-only view: what the ledger holds, and what needs an operator."""
     requests = []
@@ -281,7 +327,8 @@ def _status(ledger: Any, path: str) -> dict[str, Any]:
         reasons = ledger.stop_reasons(request_id)
         requests.append({"request_id": request_id, "stopped": bool(reasons),
                          "stop_reasons": list(reasons), "snapshot": ledger.snapshot(request_id),
-                         "attention": _attention(ledger, request_id)})
+                         "attention": _attention(ledger, request_id),
+                         "reviews": _reviews(ledger, request_id)})
     return {"ledger": path, "generation": ledger.generation, "seq": ledger.seq, "requests": requests}
 
 
@@ -476,6 +523,31 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return _with_ledger(args, work)
 
 
+def cmd_verdict(args: argparse.Namespace) -> int:
+    """Decide a run that finished, from the operator's evidence.
+
+    The entry to the last transition of the chain ``claim -> handoff -> run ->
+    finish``: a run that finished waits in ``REVIEW_PENDING`` with the candidate
+    it put up for review, and only an operator can accept or reject it.  The
+    candidate is named by hand and the decision is taken in the current
+    generation of *this* ledger -- an older controller may not decide a run it no
+    longer owns -- with the operator, the evidence digest and the note recorded
+    in the ``run.verdict`` event, exactly as ``resolve`` records its own
+    decision.  The scheduler records them and verifies none of them: the
+    operator's authority and what the evidence says stay the operator's business.
+
+    Nothing else moves: the usage, the reservations, the resource holds and the
+    request's stop are what the run left them, and the task may be attempted
+    again whatever the verdict was, until its attempts run out.
+    """
+    def work(ledger: Any) -> dict[str, Any]:
+        ledger.verdict(args.operation, ledger.generation, candidate_hash=args.candidate,
+                       accepted=args.accept, evidence_hash=args.evidence, operator=args.operator,
+                       note=args.note)
+        return {"command": "verdict", "operation": ledger.operation(args.operation)}
+    return _with_ledger(args, work)
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     """Re-open a stopped request, naming every stop reason by hand.
 
@@ -560,6 +632,18 @@ def register(subparsers: Any) -> None:
     p.add_argument("--note", required=True, help="what the operator established")
     p.add_argument("--candidate", help="sha256 of the candidate, for FINISHED")
     p.set_defaults(func=cmd_resolve)
+
+    p = commands.add_parser("verdict", help="decide a run that finished, from the operator's evidence")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.add_argument("--operation", required=True, help="the REVIEW_PENDING operation to decide")
+    p.add_argument("--candidate", required=True, help="sha256 of the candidate the run put up for review")
+    decision = p.add_mutually_exclusive_group(required=True)
+    decision.add_argument("--accept", dest="accept", action="store_true", help="accept the candidate")
+    decision.add_argument("--reject", dest="accept", action="store_false", help="reject the candidate")
+    p.add_argument("--evidence", required=True, help="sha256 of the evidence for the decision")
+    p.add_argument("--operator", required=True, help="who decided")
+    p.add_argument("--note", required=True, help="what the operator established")
+    p.set_defaults(func=cmd_verdict)
 
     p = commands.add_parser("resume", help="re-open a stopped request, naming every hold back")
     p.add_argument("ledger", help="path of the ledger file")

@@ -98,7 +98,7 @@ LEDGER_FORMAT = "sentinelmesh-ledger-v2"
 
 #: Every mutating method of :class:`Scheduler`, in the order the contract fixes.
 MUTATING_METHODS = ("seed_request", "seed_task", "claim", "handoff", "mark_running", "renew", "observe", "settle",
-                    "finish", "fixture_verdict", "unknown", "release_proven_unstarted", "recover",
+                    "finish", "fixture_verdict", "verdict", "unknown", "release_proven_unstarted", "recover",
                     "cancel_unstarted", "stop", "rollover", "resolve_unknown", "resume")
 
 #: A generation written as canonical decimal text: no sign, no leading zeros.
