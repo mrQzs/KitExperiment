@@ -3,7 +3,7 @@
 `.agent/design/controller-cli.md` (sections 3, 5 and 6) turns the whole
 ``claim`` -> ``handoff`` -> ``supervise`` -> record -> ``_reduce`` -> ``settle``
 -> ``finish`` chain into commands an operator can start from the command line,
-one invocation at a time.  This module holds the three one-shot commands that
+one invocation at a time.  This module holds the four one-shot commands that
 design names:
 
 * ``smctl run init`` creates a ledger and seeds one request and its tasks from a
@@ -11,6 +11,11 @@ design names:
 * ``smctl run once`` claims exactly one operation and runs exactly one adapter
   invocation under the platform's own supervisor, reporting the outcome exactly
   as the bridge returned it;
+* ``smctl run serve`` drains one request: it walks the request's tasks in seeding
+  order and, for each task that has a job file and can still be claimed, claims
+  and runs exactly one operation through ``once``'s own chain -- no retry, no
+  concurrency, no daemon -- reporting every run, every task it skipped and why,
+  and why it stopped, as exactly one line;
 * ``smctl run recover`` takes over what a controller that died left in the ledger:
   it rolls the ledger over exactly once (every request stops with
   ``RECOVERY_REQUIRED``), cancels every claim that never reached a handoff,
@@ -19,9 +24,11 @@ design names:
   no usage and reopens nothing, so what the recovery could not decide is the
   operator's, through ``smctl ledger settle``/``resolve``/``resume``.
 
-Every command claims at most once and runs at most once: there is no loop, no
-retry and no daemon, so a command that is killed leaves at most one undecided
-operation in the ledger for the recovery path to take over.  The conventions are
+``init``, ``once`` and ``recover`` each claim at most once and run at most once;
+``serve`` walks a whole request in one pass, claiming and running each of its
+tasks at most once.  There is no retry and no daemon in any of them, so a command
+that is killed leaves at most one undecided operation in the ledger for the
+recovery path to take over.  The conventions are
 ``smctl ledger``'s exactly -- one canonical JSON line on stdout, a refusal as one
 JSON line on stderr (the ledger's own code and detail, plus the operation this
 call already claimed, or ``None`` when it claimed none) and exit 3, an argparse
@@ -49,8 +56,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import time
 from typing import Any
 
 from .adapter_protocol import AdapterError, Invocation, OfflineAdapter
@@ -91,6 +100,14 @@ _JOB_STRING_LISTS = ("resources", "capabilities", "allowed_secret_names", "usage
 #: a job names one of these keys exactly.  Neither adapter starts a provider, so
 #: the program the job names is still the supervisor's to resolve.
 _ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_id: PiNativeAdapter}
+
+#: The claim-refusal codes ``serve`` reads as "this task cannot be claimed right
+#: now" and skips, as opposed to the ones that mean the ledger must not move and
+#: stop the whole loop: an active or review-pending operation of the task, a task
+#: already accepted, and a task out of attempts.  Every other refusal code --
+#: ``E_STOPPED``, ``E_GUARD_STALE``, ``E_IDEMPOTENCY_CONFLICT`` and any ledger
+#: error -- stops the loop instead.
+_SERVE_SKIP = frozenset({"E_ACTIVE_TASK", "E_TASK_DONE", "E_ATTEMPTS"})
 
 
 class RunSpecError(Exception):
@@ -271,6 +288,41 @@ def load_job(path: str) -> dict[str, Any]:
     return result
 
 
+def load_jobs(directory: str, request_id: str) -> dict[str, Any]:
+    """Read every per-task job file of one request from a directory, or refuse it.
+
+    ``serve`` keeps one job file per task, named ``<task_id>.json``.  Every
+    ``*.json`` file in ``directory`` (read in file-name order, every other file
+    ignored) is checked by :func:`load_job` exactly as ``once`` checks a job; a
+    file ``load_job`` refuses (its own ``E_RUN_JOB``) is re-raised as
+    ``E_RUN_JOBS`` with the file name in front of the original detail.  A file
+    whose ``request_id`` is not ``request_id``, or whose ``task_id`` is not the
+    file name without its ``.json``, is ``E_RUN_JOBS`` naming the file.  A
+    ``directory`` that is not a directory, or that holds no ``*.json`` file at
+    all, is ``E_RUN_JOBS``.  The first file that fails refuses the whole
+    directory: nothing is returned, so the caller runs nothing.  The result maps
+    each task id to its job, exactly as :func:`load_job` returned it.
+    """
+    if not os.path.isdir(directory):
+        raise RunSpecError("E_RUN_JOBS", "%s is not a directory" % directory)
+    names = sorted(name for name in os.listdir(directory) if name.endswith(".json"))
+    if not names:
+        raise RunSpecError("E_RUN_JOBS", "there is no job file (*.json) in %s" % directory)
+    jobs: dict[str, Any] = {}
+    for name in names:
+        try:
+            job = load_job(os.path.join(directory, name))
+        except RunSpecError as exc:
+            raise RunSpecError("E_RUN_JOBS", "%s: %s" % (name, exc.detail)) from exc
+        if job["request_id"] != request_id:
+            raise RunSpecError("E_RUN_JOBS", "%s: request_id is %r, not %r" % (name, job["request_id"], request_id))
+        task_id = job["task_id"]
+        if task_id != name[:-len(".json")]:
+            raise RunSpecError("E_RUN_JOBS", "%s: task_id is %r, not the file name" % (name, task_id))
+        jobs[task_id] = job
+    return jobs
+
+
 def _emit(payload: Any) -> None:
     """One line of canonical JSON on stdout, non-ASCII left as it was written."""
     _write_line(sys.stdout, payload)
@@ -292,6 +344,23 @@ def _refuse(exc: Exception, operation_id: str | None) -> int:
         code, detail = exc.code, str(exc)
     _write_line(sys.stderr, {"error": code, "detail": detail, "operation_id": operation_id})
     return 3
+
+
+def _refusal(exc: Exception, operation_id: str | None) -> dict[str, Any]:
+    """The one refusal mapping ``serve`` reports on stdout and repeats on stderr.
+
+    Same code/detail split as :func:`_refuse` -- a scheduler, ledger or
+    ``RunSpecError`` carries its own ``code`` and ``detail``, an adapter or
+    runtime error carries only a code so its textual form is the detail -- wrapped
+    as the ``{"error", "detail", "operation_id"}`` object the report and the
+    stderr line share, ``operation_id`` being the operation this call already
+    claimed and left in the ledger, or ``None`` when it claimed none.
+    """
+    if isinstance(exc, (ContractError, LedgerError, RunSpecError)):
+        code, detail = exc.code, exc.detail
+    else:  # AdapterError, RuntimeErrorCode: no ``detail`` field of their own.
+        code, detail = exc.code, str(exc)
+    return {"error": code, "detail": detail, "operation_id": operation_id}
 
 
 def _seed_into(scheduler: Any, spec: dict[str, Any]) -> None:
@@ -465,6 +534,170 @@ def cmd_recover(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Drain one request: claim and run each of its tasks once, reporting it all.
+
+    ``serve`` walks one request from end to end in a single call.  The per-task
+    job files are read from ``--jobs`` first (any ``E_RUN_JOBS`` happens before
+    the ledger is opened, so nothing runs and the ledger is untouched); then the
+    ledger is opened; then the request's tasks are read in seeding order and any
+    task the directory has a job for but the request does not have is ``E_RUN_JOBS``
+    before a single claim.  A refusal in any of those checks -- and any refusal
+    during the walk that is not one of :data:`_SERVE_SKIP` -- stops the command as
+    ``refused``: the report is still written on stdout, the refusal is repeated on
+    stderr exactly as ``once`` writes it, and the exit code is 3.
+
+    The walk considers each task exactly once, in seeding order, and runs each
+    task at most once however its run ends -- there is no second pass, no retry
+    and no concurrency.  For each task: a task already accepted or out of
+    attempts is skipped (``done``/``attempts``); a task with no job file is
+    skipped (``no_job``); a claim the ledger refuses with one of
+    :data:`_SERVE_SKIP` is skipped with that code; and ``--max-runs`` or
+    ``--max-seconds``, checked only before a claim and never inside a run, ends
+    the walk as ``max_runs`` or ``max_seconds``.  A task that survives all of that
+    is claimed with the derived key ``<job key>#<attempt>`` (``attempt`` being the
+    task's used attempts plus one) in a fresh evidence directory
+    ``<evidence>/<task_id>/<attempt>`` that must not already exist
+    (``E_RUN_EVIDENCE``), and run through ``once``'s own chain exactly once; a
+    replayed claim is ``E_RUN_CLAIM_REPLAYED`` and a refusal the run raises names
+    the operation just claimed.  A walk that reaches the end stops as ``drained``.
+
+    stdout is always exactly one report line -- ``command``, ``request``, the
+    ``runs`` (task, attempt, operation, state and evidence directory of each), the
+    ``skipped`` (task and reason, in order), the ``stopped`` reason and the
+    ``refusal`` (or ``null``).  ``drained``/``max_runs``/``max_seconds``/
+    ``interrupted`` exit 0; ``refused`` exits 3.  A ``KeyboardInterrupt`` between
+    runs -- before a claim, including the clock read, the task view and the claim
+    itself -- is absorbed as ``interrupted``; one raised inside a run is not
+    caught, exactly as ``once`` leaves it.  The ledger is closed in the ``finally``
+    whatever happens.
+    """
+    runs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    refusal: dict[str, Any] | None = None
+    stopped: str | None = None
+    ledger = None
+    try:
+        # The checks before any claim: the job files (before the ledger), the
+        # ledger itself, the request's tasks, and any job with no task.
+        jobs = load_jobs(args.jobs, args.request)
+        ledger = open_ledger(args.ledger)
+        task_ids = ledger.task_ids(args.request)
+        known = set(task_ids)
+        extra = sorted(task for task in jobs if task not in known)
+        if extra:
+            raise RunSpecError("E_RUN_JOBS", "the request has no task for %s" % ", ".join(extra))
+        # The candidate is the operator's, or the evidence records' own digest,
+        # exactly as ``once`` decides it.
+        candidate_hash = evidence_digest if args.candidate is None else _constant(args.candidate)
+        claimed = 0
+        running = False
+        try:
+            started = _clock()
+            for task in task_ids:
+                # (a) --max-runs, checked before a claim and never inside a run.
+                if args.max_runs is not None and len(runs) >= args.max_runs:
+                    stopped = "max_runs"
+                    break
+                # (b) --max-seconds, the same: the budget never reaches into a run.
+                if args.max_seconds is not None and _clock() - started >= args.max_seconds:
+                    stopped = "max_seconds"
+                    break
+                # (c) a task the request has but the directory has no job for.
+                if task not in jobs:
+                    skipped.append({"task_id": task, "reason": "no_job"})
+                    continue
+                job = jobs[task]
+                # (d) a task already accepted, or one that used all its attempts.
+                view = ledger.task(args.request, task)
+                if view["done"]:
+                    skipped.append({"task_id": task, "reason": "done"})
+                    continue
+                if view["attempts"] >= view["max_attempts"]:
+                    skipped.append({"task_id": task, "reason": "attempts"})
+                    continue
+                # (e) the attempt's evidence directory, which must be fresh.
+                attempt = view["attempts"] + 1
+                evidence = os.path.join(args.evidence, task, str(attempt))
+                if os.path.exists(evidence):
+                    refusal = _refusal(RunSpecError("E_RUN_EVIDENCE",
+                                                    "the evidence directory %s already exists" % evidence), None)
+                    stopped = "refused"
+                    break
+                # (f) the claim, under the derived key, in the current generation.
+                key = "%s#%d" % (job["idempotency_key"], attempt)
+                claim_now = args.now + claimed
+                try:
+                    claim = ledger.claim(args.request, task, job["plan"], key, args.owner, ledger.generation,
+                                         job["guard_version"], job["reservation"], list(job["resources"]),
+                                         claim_now)
+                except (ContractError, LedgerError) as exc:
+                    if exc.code in _SERVE_SKIP:
+                        skipped.append({"task_id": task, "reason": exc.code})
+                        continue
+                    refusal = _refusal(exc, None)
+                    stopped = "refused"
+                    break
+                if claim["replayed"]:
+                    # Someone already used this derived key for this task: report
+                    # the operation it produced and start nothing.
+                    refusal = _refusal(RunSpecError("E_RUN_CLAIM_REPLAYED",
+                                                    "operation %s is already %s"
+                                                    % (claim["operation_id"], claim["state"])),
+                                       claim["operation_id"])
+                    stopped = "refused"
+                    break
+                operation_id = claim["operation_id"]
+                claimed += 1
+                # (g) ``once``'s own chain, exactly once, in the fresh directory.
+                os.makedirs(evidence)
+                running = True
+                try:
+                    invocation = Invocation(args.request, operation_id, job["role"], job["profile_id"],
+                                            tuple(job["command"]), tuple(job["capabilities"]),
+                                            environment_digest(job["environment"]), job["adapter_id"])
+                    outcome = run_adapter_operation(
+                        ledger, _ADAPTERS[job["adapter_id"]](), invocation, cwd=job["cwd"],
+                        timeout_seconds=job["timeout_seconds"], environment=job["environment"],
+                        owner=args.owner, generation=ledger.generation, evidence_dir=evidence,
+                        worktree_id=args.worktree_id, candidate_hash=candidate_hash,
+                        usage_dimensions=tuple(job["usage_dimensions"]),
+                        allowed_secret_names=frozenset(job["allowed_secret_names"]), now=claim_now,
+                        max_stream_bytes=job["max_stream_bytes"], max_line_bytes=job["max_line_bytes"])
+                except (AdapterError, ContractError, LedgerError, RuntimeErrorCode) as exc:
+                    # A refusal after the claim: the operation stays in the ledger.
+                    refusal = _refusal(exc, operation_id)
+                    stopped = "refused"
+                    break
+                runs.append({"task_id": task, "attempt": attempt, "operation_id": operation_id,
+                             "state": outcome["state"], "evidence_dir": evidence})
+                running = False
+        except KeyboardInterrupt:
+            # Between runs: absorbed as ``interrupted``.  A ``running`` flag still
+            # set means the interrupt landed inside a run, which is not ours to
+            # catch -- re-raise it, exactly as ``once`` leaves it.
+            if running:
+                raise
+            stopped = "interrupted"
+    except (ContractError, LedgerError, RunSpecError) as exc:
+        # A refusal from the checks before the walk: nothing was claimed, so
+        # there is no operation to name.
+        refusal = _refusal(exc, None)
+        stopped = "refused"
+    finally:
+        if ledger is not None:
+            ledger.close()
+    if stopped is None:
+        stopped = "drained"
+    report = {"command": "serve", "request": args.request, "runs": runs, "skipped": skipped,
+              "stopped": stopped, "refusal": refusal}
+    _emit(report)
+    if refusal is not None:
+        _write_line(sys.stderr, refusal)
+        return 3
+    return 0
+
+
 def _constant(value: str) -> Any:
     """A ``candidate_hash`` that returns the operator's value, ignoring the dir."""
     return lambda _evidence_dir: value
@@ -489,12 +722,34 @@ def _candidate(text: str) -> str:
     return text
 
 
+def _count(text: str) -> int:
+    """One positive integer in decimal digits: ``_digits``, and at least one.
+
+    ``--max-runs`` counts runs, so zero is a usage error rather than a budget
+    that stops before the first claim -- that is ``--max-seconds 0``'s job.
+    """
+    value = _digits(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("%r is not at least 1" % text)
+    return value
+
+
+def _clock() -> float:
+    """The clock ``serve`` measures ``--max-seconds`` against, in seconds.
+
+    Read through this module-level name so a test can substitute its own clock;
+    the value is only ever differenced against the start, so it is a monotonic
+    reading of elapsed time.
+    """
+    return time.monotonic()
+
+
 def register(subparsers: Any) -> None:
     """Add the ``run`` command group to ``smctl``'s subparsers.
 
-    ``init``, ``once`` and ``recover`` each take the ledger path as their first
-    positional argument; an unknown combination is a usage error (exit 2), so the
-    ledger is not even opened for one.
+    ``init``, ``once``, ``serve`` and ``recover`` each take the ledger path as
+    their first positional argument; an unknown combination is a usage error
+    (exit 2), so the ledger is not even opened for one.
     """
     group = subparsers.add_parser("run", help="one-shot adapter runs: create a ledger and run once under the supervisor")
     commands = group.add_subparsers(dest="run_command", required=True)
@@ -514,6 +769,23 @@ def register(subparsers: Any) -> None:
                    help="sha256 of the candidate (default: the evidence records' own digest)")
     p.add_argument("--now", type=_digits, default=0, help="logical clock for the claim and the run (default 0)")
     p.set_defaults(func=cmd_once)
+
+    p = commands.add_parser("serve", help="drain one request task by task, running each task once and reporting it all")
+    p.add_argument("ledger", help="path of the ledger file")
+    p.add_argument("--request", required=True, help="request id whose tasks are drained in seeding order")
+    p.add_argument("--jobs", required=True, help="directory of per-task job files, each named <task_id>.json")
+    p.add_argument("--evidence", required=True, help="evidence root; each run uses <root>/<task_id>/<attempt>")
+    p.add_argument("--worktree-id", required=True, help="worktree id recorded with each run")
+    p.add_argument("--owner", required=True, help="owner recorded on each operation and its events")
+    p.add_argument("--max-runs", type=_count,
+                   help="stop before a claim once this many runs are done (a positive integer)")
+    p.add_argument("--max-seconds", type=_digits,
+                   help="stop before a claim once this many seconds have passed (0 stops at once)")
+    p.add_argument("--candidate", type=_candidate,
+                   help="sha256 of the candidate (default: the evidence records' own digest)")
+    p.add_argument("--now", type=_digits, default=0,
+                   help="base logical clock; each claim uses it plus the claims before it (default 0)")
+    p.set_defaults(func=cmd_serve)
 
     p = commands.add_parser("recover", help="take over what a crashed controller left in the ledger, reporting it as it is")
     p.add_argument("ledger", help="path of the ledger file")
