@@ -21,5 +21,16 @@
     "allow": [
       "tests/fixtures/pi_native/**:home path"
     ]
+  },
+  "pricing": {
+    "step/step-5-preview": {
+      "input": 7,
+      "output": 20,
+      "cache_read": 0.35,
+      "cache_write": 0,
+      "currency": "CNY",
+      "source": "阶跃开放平台定价页 platform.stepfun.com/docs/zh/guides/pricing/details（国内按量付费；10 月 14 日前已用 API 调过该模型的账户缓存命中沿用 0.35；缓存写入含在未命中价里）",
+      "as_of": "2026-10-15"
+    }
   }
 }
