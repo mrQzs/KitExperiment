@@ -137,18 +137,17 @@
   - 权限拒绝之后的流（`permission_denials`）；
   - 写文件与运行命令的工具。
 
-## 5. 用户决定（待定）
+## 5. 用户决定
 
-1. **录制**：批准一次带只读工具的调用（推荐，第 3.1 节）／不录，照文档手写夹具。
-2. **工具事件**：照 pi 映射成 `tool_started` / `tool_finished`，交给归约器配对（推荐）／只计数，不出事件。
-3. **结算用量**：
-   - 仍只取 `result.usage`（推荐）；
-   - 另外核对逐消息之和（同一 `message.id` 只算一次），不相等就算用量未知；
-   - 改为逐消息累加。
-4. **没有 `result` 的流，reference 给什么**：
-   - 逐消息用量之和，同一 `message.id` 只算一次，标 `no_terminal`（推荐，与 pi 的“流不完整照样给数”一致）；
-   - 不给数，只报 `no_terminal`；
-   - 这一轮不做 reference。
+第一次提问（2026-10-16，均选推荐项）：
+1. **录制**：批准一次带只读工具的调用（第 3.1 节）。已录，见第 9 节。
+2. **工具事件**：照 pi 映射成 `tool_started` / `tool_finished`，交给归约器配对。
+3. **结算用量**：仍只取 `result.usage`，前提是“它是整个会话的合计”。录制推翻了这个前提（第 9 节），重新问。
+4. **没有 `result` 的流，reference 给什么**：逐消息用量之和，同一 `message.id` 只算一次，标 `no_terminal`。录制显示逐消息的 `output_tokens` 不是终值（第 9 节），重新问。
+
+第二次提问（录制之后，待定）：
+- 第 3、4 项重问；
+- 新增两项：拒绝回退怎么处理，其余新见帧怎么处理。
 
 ## 6. 规划端决定
 
@@ -171,3 +170,32 @@
 ## 9. 进度与遗留
 
 - 2026-10-16：核对翻译器、归约器的工具配对规则、`ledger reference` 与本机 CLI 的参数，写成本说明。
+- 2026-10-16：用户决定第一次提问的四项（均选推荐项），批准一次调用。
+- 2026-10-16：录制完成。`smctl run once` 退出码 0，`REVIEW_PENDING`；`offline` adapter 报 `E_ADAPTER_EVENT`，用量未记。CLI 报告 `success`、`num_turns: 6`，费用 0.0504443 美元。stdout 22 帧，`stderr` 为空，没有凭据形状的字符串。缩减成夹具 `tests/fixtures/claude_stream/windows-claude2_1_301-tools-a001.*`，`reduce.py` 加了 `--source` 参数，并在 meta 里记下 `modelUsage`。
+
+  **流的经过**比提示设想的乱，但正好碰到了真实运行里会有的几种帧：
+  1. 第一次 Read 被 `--restricted` 拒绝，说“路径在工作目录之外”。原因是作业里的 `cwd` 由短路径展开，大小写和磁盘上不同（`Desktop-Plan` 对 `Desktop-PLan`）。看来 Claude Code 比较路径时区分大小写，这是它自己的问题。
+  2. 接着 Opus 5.5 的安全分类器拦下了这条回答（`api_refusal_category: cyber`）。CLI 插入一条合成的 `user` 文本消息，重试一次，模型发出一个缺参数的 Read；然后转用 `claude-opus-4-8`，并撤回前面三帧。
+  3. 回退之后的模型读到 `a.txt`；读 `missing.txt` 出错；最后回答。
+
+  **帧的种类**
+  - `system` 帧有五种 subtype：`init`、`permission_denied`（带 `tool_use_id`）、`informational`（通知文本）、`model_refusal_fallback`（带 `retracted_message_uuids`、`original_model`、`fallback_model`）、`thinking_tokens`（估计值，出现 3 次）。
+  - `user` 帧有两种：
+    - 工具结果：`tool_result` 块，失败的带 `is_error: true`，成功的不带 `is_error`；
+    - 合成文本：`isSynthetic: true`，带 `refused_message_id`。
+  - `assistant` 帧的块有 `text`、`thinking`、`tool_use`。回退后的第一帧带 `supersedes`，列出被撤回的帧的 `uuid`。
+  - 所有帧的 `parent_tool_use_id` 都是 `null`。
+
+  **拆帧**
+  - 一条消息的每个内容块单独成一帧，共用 `message.id`，`usage` 逐帧重复。
+  - 同一条消息的两个 `tool_use` 帧之间，夹着第一个工具的结果帧。工具在块到达时就执行。
+
+  **用量**
+  - 逐消息（同一 `message.id` 只算一次）：
+    - 输入与两个缓存维度是终值；
+    - `output_tokens` 是块写出时的计数：4 条消息合计 27，实际是 670。
+  - `result.usage` 是 6 / 627 / 8253 / 3060（输入、输出、缓存读、缓存写），不含被撤回的那条消息。
+  - `result.modelUsage` 按模型分列，两个模型合计 10 / 670 / 11602 / 3401：
+    - 其中输入与两个缓存维度，正好等于逐消息之和；
+    - 它的 `costUSD` 之和等于 `total_cost_usd`，所以它才是计费的全额。
+  - 上一轮的单轮夹具里，`modelUsage` 与 `result.usage` 相等（只有一个模型，没有撤回）。所以改用 `modelUsage`，不会改变那一份的结算。

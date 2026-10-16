@@ -1,0 +1,80 @@
+{
+  "source": "planner recording, approved by the user on 2026-10-16 (.agent/design/claude-tools.md section 3.1)",
+  "claude_code_version": "2.1.301",
+  "platform": "Windows 2025Server",
+  "executable_sha256": "84d61feeb1a07e5a5b3354d68432591cac18a5d38a419a30d86d0f3ad8cba397",
+  "original": {
+    "sha256": "7b785d88335a4b418006aad535278b5cd814d695a68200a0e6a44e9927fbb2fc",
+    "bytes": 23738,
+    "frames": 22
+  },
+  "frame_types": [
+    "system",
+    "assistant",
+    "system",
+    "user",
+    "rate_limit_event",
+    "system",
+    "user",
+    "assistant",
+    "assistant",
+    "user",
+    "system",
+    "assistant",
+    "assistant",
+    "user",
+    "assistant",
+    "user",
+    "system",
+    "system",
+    "system",
+    "assistant",
+    "assistant",
+    "result"
+  ],
+  "cli_report": {
+    "usage": {
+      "input_tokens": 6,
+      "output_tokens": 627,
+      "cache_read_input_tokens": 8253,
+      "cache_creation_input_tokens": 3060
+    },
+    "total_cost_usd": 0.0504443,
+    "is_error": false,
+    "subtype": "success",
+    "num_turns": 6,
+    "model_usage": {
+      "claude-opus-5-5": {
+        "inputTokens": 6,
+        "outputTokens": 123,
+        "cacheReadInputTokens": 5019,
+        "cacheCreationInputTokens": 2020,
+        "costUSD": 0.0196478
+      },
+      "claude-opus-4-8": {
+        "inputTokens": 4,
+        "outputTokens": 547,
+        "cacheReadInputTokens": 6583,
+        "cacheCreationInputTokens": 1381,
+        "costUSD": 0.030796499999999997
+      }
+    }
+  },
+  "smctl_once": {
+    "state": "REVIEW_PENDING",
+    "exit_code": 0,
+    "stop_reason": "completed",
+    "stream_status": "ok",
+    "adapter_id": "offline"
+  },
+  "reduction": {
+    "max_kept_chars": 32,
+    "zeroed_numbers": [
+      "rate_limit_info.resetsAt",
+      "rate_limit_info.unifiedWindows.five_hour.utilization",
+      "rate_limit_info.unifiedWindows.five_hour.resetsAt",
+      "rate_limit_info.unifiedWindows.seven_day.utilization",
+      "rate_limit_info.unifiedWindows.seven_day.resetsAt"
+    ]
+  }
+}

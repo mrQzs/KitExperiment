@@ -1,9 +1,11 @@
 """Reduce a recorded Claude Code ``--output-format stream-json`` stream into a committed fixture.
 
-The planner recorded one real stream on 2026-10-16 with the user's approval
-(`.agent/design/claude-adapter.md`, section 3.1): ``smctl run once`` ran the
-native ``claude.exe`` under the Windows supervisor with a fixed one-turn prompt,
-no tools, no settings and no MCP.  The raw stdout carries local paths (``cwd``,
+The planner recorded two real streams on 2026-10-16, each with the user's
+approval: ``smctl run once`` ran the native ``claude.exe`` under the Windows
+supervisor with no settings and no MCP, the first time with a fixed one-turn
+prompt and no tools (`.agent/design/claude-adapter.md`, section 3.1), the
+second time with only the Read tool under ``--restricted``
+(`.agent/design/claude-tools.md`, section 3.1).  The raw stdout carries local paths (``cwd``,
 ``memory_paths`` and the like) and the account's rate-limit utilisation; this
 tool keeps every structural fact and drops those values, so the stream can live
 in ``tests/fixtures/claude_stream/`` without any release-check exception.
@@ -20,12 +22,13 @@ Rules (deterministic):
 * ``<name>.meta.json`` records the provenance (the recording, Claude Code's
   version, the platform, sha256 and size of the original stream, the
   executable's sha256), the CLI's own report from the ``result`` frame (token
-  usage, ``total_cost_usd``, ``is_error``, ``subtype``, ``num_turns``) and the
+  usage, ``total_cost_usd``, ``is_error``, ``subtype``, ``num_turns`` and the
+  per-model ``modelUsage`` tokens and cost) and the
   ``smctl run once`` outcome of the recording.
 
 Usage::
 
-    python tests/fixtures/claude_stream/reduce.py <stdout.log> <once.json> <fixture-name> --version V --exe-sha256 H [--out-dir DIR]
+    python tests/fixtures/claude_stream/reduce.py <stdout.log> <once.json> <fixture-name> --version V --exe-sha256 H [--out-dir DIR] [--source TEXT]
 
 Planner tool: it reads outside the test tree and is never run by a contract check.
 """
@@ -40,6 +43,7 @@ from pathlib import Path
 
 MAX_KEPT = 32
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+MODEL_USAGE_KEYS = ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", "costUSD")
 
 
 def _looks_like_path(text: str) -> bool:
@@ -75,6 +79,8 @@ def main(argv=None) -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--exe-sha256", required=True)
     parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parent))
+    parser.add_argument("--source", default="planner recording, approved by the user on 2026-10-16 "
+                                            "(.agent/design/claude-adapter.md section 3.1)")
     args = parser.parse_args(argv)
     raw = Path(args.stdout).read_bytes()
     frames = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
@@ -84,7 +90,7 @@ def main(argv=None) -> int:
     usage = result.get("usage") or {}
     outcome = json.loads(Path(args.once).read_text(encoding="utf-8"))["outcome"]
     meta = {
-        "source": "planner recording, approved by the user on 2026-10-16 (.agent/design/claude-adapter.md section 3.1)",
+        "source": args.source,
         "claude_code_version": args.version,
         "platform": "%s %s" % (platform.system(), platform.release()),
         "executable_sha256": args.exe_sha256,
@@ -92,7 +98,11 @@ def main(argv=None) -> int:
         "frame_types": [frame.get("type") for frame in frames],
         "cli_report": {"usage": {key: usage.get(key) for key in TOKEN_KEYS},
                        "total_cost_usd": result.get("total_cost_usd"), "is_error": result.get("is_error"),
-                       "subtype": result.get("subtype"), "num_turns": result.get("num_turns")},
+                       "subtype": result.get("subtype"), "num_turns": result.get("num_turns"),
+                       # Per model, as billed: a turn a fallback retracted is
+                       # still here although ``usage`` above leaves it out.
+                       "model_usage": {model: {key: entry.get(key) for key in MODEL_USAGE_KEYS}
+                                       for model, entry in (result.get("modelUsage") or {}).items()}},
         "smctl_once": {key: outcome.get(key) for key in ("state", "exit_code", "stop_reason")}
                       | {"stream_status": (outcome.get("stream") or {}).get("status"), "adapter_id": "offline"},
         "reduction": {"max_kept_chars": MAX_KEPT, "zeroed_numbers": zeroed},
