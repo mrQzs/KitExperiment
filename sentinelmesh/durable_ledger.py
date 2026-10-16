@@ -10,9 +10,16 @@ semantics.  This module wraps it in a single-host, append-only command log:
 * opening a ledger replays the log entry by entry on a fresh in-memory
   ``Scheduler`` and rebuilds exactly the state the writer had -- the same
   operation ids and the same event sequence numbers;
-* a failed append, or a log another instance already moved on, fails closed:
-  the instance refuses every further call, reads included, and the ledger has to
-  be opened (replayed) again.
+* several instances may write one log: every mutation first takes the write
+  lock and replays the commands appended after its own head -- the same replay
+  an open does, chain digests included -- before it runs in memory, appends and
+  commits, so two processes' writes are serialized by SQLite and none is lost.
+  What still fails closed is a log this instance cannot catch up on -- a
+  ``rollover`` among the commands to replay (another controller took over), a
+  checkpoint past this instance's head, or a next command that does not link to
+  its head -- plus a damaged tail (``E_LEDGER_CHAIN``) and a tail the Scheduler
+  refuses (``E_LEDGER_REPLAY``): the instance refuses every further call, reads
+  included, and the ledger has to be opened (replayed) again.
 
 The log is deliberately conservative: a rollback journal (``DELETE``),
 ``synchronous=FULL`` and ``fullfsync=ON``, which is what 07 appendix B.4 chose
@@ -724,12 +731,19 @@ def _replay(scheduler: _ReplayScheduler, command_text: str,
 class DurableScheduler:
     """A :class:`Scheduler` whose successful mutations live in a command log.
 
-    One instance is the only writer of its log: every mutation is applied in
-    memory, then appended inside one ``BEGIN IMMEDIATE`` transaction that first
-    checks the log head against what this instance already applied.  A different
-    head means another instance moved the log on and this one is stale.  Any
-    failure of the append invalidates the instance -- it refuses mutations and
-    reads alike -- so the caller has to reopen (replay) the ledger.
+    Several instances may write one log: every mutation runs inside one
+    ``BEGIN IMMEDIATE`` transaction that first replays the commands appended
+    after this instance's head -- the same replay an open does -- and only then
+    applies the call in memory, appends and commits.  The write lock is held
+    from the catch-up to the commit, so two processes' writes are serialized by
+    SQLite and each one judges the latest state.  A command to replay that does
+    not link to this instance's head, a ``rollover`` among them (another
+    controller took over) or a checkpoint past this instance's head means the
+    log cannot be caught up on and this instance is stale; a damaged tail is
+    ``E_LEDGER_CHAIN`` and one the Scheduler refuses is ``E_LEDGER_REPLAY``.
+    Any failure of the catch-up or of the append invalidates the instance -- it
+    refuses mutations and reads alike -- so the caller has to reopen (replay)
+    the ledger.
 
     An exception from the in-memory call invalidates the instance the same way,
     unless it is the Scheduler's own ``ContractError``: a refusal leaves the
@@ -934,6 +948,61 @@ class DurableScheduler:
             except Exception:  # the instance is gone either way
                 pass
 
+    def _catch_up(self, db: sqlite3.Connection) -> int:
+        """Replay the commands the log holds past this instance's head; return how many.
+
+        Runs inside the transaction the caller opened -- ``BEGIN IMMEDIATE`` for
+        a write, ``BEGIN`` for :meth:`refresh` -- so the write that follows is
+        judged on exactly what it read:
+
+        * the log head is this instance's ``(seq, sha)``: nothing to do, zero
+          commands are caught up;
+        * otherwise every command with a sequence number above this instance's
+          is read.  None at all -- a checkpoint moved past this instance and
+          took the commands it would need with it -- or a first one whose
+          ``previous`` is not this instance's digest, which is another history,
+          is ``E_LEDGER_STALE``;
+        * the chain of those rows is verified from this instance's own head,
+          and a break is ``E_LEDGER_CHAIN``;
+        * a ``rollover`` among them is ``E_LEDGER_STALE`` and nothing is
+          replayed: another controller took over, and replaying its generation
+          would let this one write on behind its back;
+        * the "used operation ids" table is built from the operations this
+          instance holds in memory, exactly as an open does for a checkpoint,
+          so a caught-up claim may not reuse an operation id with another
+          request or key;
+        * every command is replayed, in log order, through the module-level
+          :func:`_replay`; whatever it refuses is ``E_LEDGER_REPLAY``.
+
+        Only when every command replayed do the sequence number and the digest
+        move to the last one, and the checkpoint sequence to the checkpoint the
+        log holds.  A failure above leaves the in-memory state half updated,
+        which is why the caller invalidates the instance.
+        """
+        if _head(db) == (self._seq, self._last_sha):
+            return 0
+        rows = db.execute("SELECT seq, command, sha256, previous FROM commands WHERE seq > ? ORDER BY seq",
+                          (self._seq,)).fetchall()
+        if not rows or rows[0][3] != self._last_sha:
+            raise LedgerError("E_LEDGER_STALE", "the log moved on past this instance")
+        commands, last_sha = _verify_chain(rows, self._seq, self._last_sha)
+        for command_text in commands:
+            command = _strict_loads(command_text)
+            if type(command) is dict and command.get("method") == "rollover":
+                raise LedgerError("E_LEDGER_STALE", "another controller took over with a rollover")
+        # What this instance already holds in memory is claimed: the operations
+        # of a checkpoint and its own, the way an open seeds the table.
+        used: dict[str, tuple[Any, Any]] = {operation_id: (operation.request_id, operation.idempotency_key)
+                                            for operation_id, operation in self._scheduler._operations.items()}
+        for command_text in commands:
+            _replay(self._scheduler, command_text, used)
+        self._seq += len(commands)
+        self._last_sha = last_sha
+        checkpoint = _read_checkpoint(db)
+        if checkpoint is not None:
+            self._checkpoint_seq = checkpoint[0]
+        return len(commands)
+
     def _apply(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         with self._lock:
             self._require_available()
@@ -943,54 +1012,95 @@ class DurableScheduler:
             # parameter, defaults included, by name.
             bound = inspect.signature(target).bind(*args, **kwargs)
             bound.apply_defaults()
-            # In-memory first: a rejection by the Scheduler raises here, records
-            # nothing and leaves the instance usable.  Anything else -- an
-            # interrupt above all -- may already have changed the in-memory state
-            # while the log has nothing, so the instance is invalidated and the
-            # exception is passed on as it is.
+            db = self._db
+            if db is None:  # pragma: no cover -- ``_require_available`` just checked
+                raise LedgerError("E_LEDGER_UNAVAILABLE", "the ledger instance is closed or has failed")
+            # The write lock first, held until the commit: the catch-up, the
+            # in-memory call and the append then all judge the same log, and two
+            # processes' writes are serialized by SQLite.
             try:
+                db.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as exc:
+                self._invalidate()
+                raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+            try:
+                self._catch_up(db)
+            except BaseException as exc:
+                _rollback(db)
+                self._invalidate()
+                if isinstance(exc, LedgerError) or not isinstance(exc, Exception):
+                    raise
+                raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
+            try:
+                # In-memory second: a rejection by the Scheduler raises here,
+                # records nothing and leaves the instance usable -- what the
+                # catch-up replayed stays, those commands are in the log.
+                # Anything else -- an interrupt above all -- may already have
+                # changed the in-memory state while the log has nothing, so the
+                # instance is invalidated and the exception is passed on as it
+                # is.
                 result = target(*args, **kwargs)
             except ContractError:
+                _rollback(db)
                 raise
             except BaseException:
+                _rollback(db)
                 self._invalidate()
                 raise
             try:
                 raw = _encode_command(name, bound.arguments, result)
-                self._append(raw)
-            except LedgerError:
+                text = raw.decode("utf-8")
+                digest = entry_sha256(self._last_sha, text)
+                db.execute("INSERT INTO commands(seq, command, sha256, previous) VALUES (?, ?, ?, ?)",
+                           (self._seq + 1, text, digest, self._last_sha))
+                db.execute("COMMIT")
+            except BaseException as exc:
+                _rollback(db)
                 self._invalidate()
-                raise
-            except Exception as exc:
-                self._invalidate()
+                if isinstance(exc, LedgerError) or not isinstance(exc, Exception):
+                    raise
                 raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
-            except BaseException:
-                self._invalidate()
-                raise
+            self._seq += 1
+            self._last_sha = digest
             return result
 
-    def _append(self, raw: bytes) -> None:
-        db = self._db
-        if db is None:
-            raise LedgerError("E_LEDGER_UNAVAILABLE", "the ledger instance is closed or has failed")
-        text = raw.decode("utf-8")
-        previous = self._last_sha
-        digest = entry_sha256(previous, text)
-        try:
-            db.execute("BEGIN IMMEDIATE")
-        except sqlite3.Error as exc:
-            raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
-        try:
-            if _head(db) != (self._seq, self._last_sha):
-                raise LedgerError("E_LEDGER_STALE", "the log moved on past this instance")
-            db.execute("INSERT INTO commands(seq, command, sha256, previous) VALUES (?, ?, ?, ?)",
-                       (self._seq + 1, text, digest, previous))
-            db.execute("COMMIT")
-        except BaseException:
-            _rollback(db)
-            raise
-        self._seq += 1
-        self._last_sha = digest
+    def refresh(self) -> dict[str, int]:
+        """Catch up on what other instances appended, writing nothing.
+
+        The read views never catch up on their own -- reading is served from
+        memory -- so a caller that needs the latest state asks for it here.  One
+        read transaction (``BEGIN``) holds the catch-up of :meth:`_catch_up` and
+        is rolled back afterwards: the log is not written, not even the
+        checkpoint sequence, and the sequence number and the digest move only
+        when something was replayed.
+
+        Returns exactly ``{"seq": the sequence number after the catch-up,
+        "applied": how many commands were replayed}``.  The failures follow the
+        catch-up's rules: a ledger error is passed on, any other exception
+        (``sqlite3.Error`` included) becomes ``E_LEDGER_REPLAY`` and an interrupt
+        is passed on as it is.  All three invalidate the instance, because its
+        in-memory state may be half updated.
+        """
+        with self._lock:
+            self._require_available()
+            db = self._db
+            if db is None:  # pragma: no cover -- ``_require_available`` just checked
+                raise LedgerError("E_LEDGER_UNAVAILABLE", "the ledger instance is closed or has failed")
+            try:
+                try:
+                    db.execute("BEGIN")
+                except sqlite3.Error as exc:
+                    raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
+                try:
+                    applied = self._catch_up(db)
+                finally:
+                    _rollback(db)
+            except BaseException as exc:
+                self._invalidate()
+                if isinstance(exc, LedgerError) or not isinstance(exc, Exception):
+                    raise
+                raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
+            return {"seq": self._seq, "applied": applied}
 
     def compact(self) -> dict[str, Any]:
         """Write a checkpoint of the whole state and remove the commands it covers.
@@ -1089,8 +1199,11 @@ def create_ledger(path: str, *, generation: int = 1) -> DurableScheduler:
     """
     location = _check_path(path)
     # The in-memory ledger comes first: a refused generation raises its own
-    # ``ContractError`` and leaves no file behind.
-    scheduler = Scheduler(generation=generation)
+    # ``ContractError`` and leaves no file behind.  It is a ``_ReplayScheduler``
+    # like the one an open builds: catching up another instance's claim has to
+    # keep the operation id the log recorded for it, and a claim this instance
+    # makes itself generates one, exactly as on a ``Scheduler``.
+    scheduler = _ReplayScheduler(generation=generation)
     try:
         os.lstat(location)
     except FileNotFoundError:
