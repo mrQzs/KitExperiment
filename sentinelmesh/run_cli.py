@@ -15,7 +15,9 @@ design names:
   order and, for each task that has a job file and can still be claimed, claims
   and runs exactly one operation through ``once``'s own chain -- no retry, no
   concurrency, no daemon -- reporting every run, every task it skipped and why,
-  and why it stopped, as exactly one line;
+  and why it stopped, as exactly one line;  ``--parallel N`` runs the very same
+  walk with at most N runs in flight at a time, each claimed run handed to a
+  daemon thread of its own while the main thread goes on claiming;
 * ``smctl run recover`` takes over what a controller that died left in the ledger:
   it rolls the ledger over exactly once (every request stops with
   ``RECOVERY_REQUIRED``), cancels every claim that never reached a handoff,
@@ -59,6 +61,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from typing import Any
 
@@ -108,6 +111,22 @@ _ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_
 #: ``E_STOPPED``, ``E_GUARD_STALE``, ``E_IDEMPOTENCY_CONFLICT`` and any ledger
 #: error -- stops the loop instead.
 _SERVE_SKIP = frozenset({"E_ACTIVE_TASK", "E_TASK_DONE", "E_ATTEMPTS"})
+
+#: The claim-refusal codes ``serve --parallel`` reads as "one of this call's own
+#: runs in flight holds the slot, the resource key or the budget", as opposed to
+#: the ones that mean somebody else does and the walk must stop: the request's
+#: concurrency, a resource key another operation holds, and a budget the
+#: reservations of the runs in flight already use up.  With none of this call's
+#: runs in flight there is nothing of ours to wait for, and the code is an
+#: ordinary stop instead.
+_SERVE_WAIT = frozenset({"E_CONCURRENCY", "E_RESOURCE_BUSY", "E_BUDGET_INSUFFICIENT"})
+
+#: The longest the main thread of ``serve --parallel`` blocks in one wait -- for
+#: a free slot, for a run that holds a slot, a resource or the budget, or for the
+#: runs still in flight when the walk stops.  A wait never blocks without a
+#: timeout: on Windows a lock wait without one can keep a ``KeyboardInterrupt``
+#: from ever reaching the main thread, and the first Ctrl-C has to be seen.
+_POLL_SECONDS = 0.1
 
 
 class RunSpecError(Exception):
@@ -571,7 +590,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     itself -- is absorbed as ``interrupted``; one raised inside a run is not
     caught, exactly as ``once`` leaves it.  The ledger is closed in the ``finally``
     whatever happens.
+
+    ``--parallel N`` asks for the same walk with at most N runs in flight at a
+    time and is dispatched to :func:`_serve_parallel`; without it nothing above
+    changes.
     """
+    if getattr(args, "parallel", None) is not None:
+        return _serve_parallel(args)
     runs: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     refusal: dict[str, Any] | None = None
@@ -700,6 +725,326 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _same_directory(one: dict[str, Any], other: dict[str, Any]) -> bool:
+    """Two jobs in one working directory whose resource keys do not meet.
+
+    The directories are compared as
+    ``os.path.normcase(os.path.realpath(job["cwd"]))``, so another spelling of
+    the same tree -- a trailing separator, a ``..`` segment, another case where
+    the file system folds it -- is the same directory.  Sharing a directory is
+    only allowed when the two jobs name a resource key in common, because that
+    key is what keeps the second claim from starting while the first run is
+    still LIVE.
+    """
+    if os.path.normcase(os.path.realpath(one["cwd"])) != os.path.normcase(os.path.realpath(other["cwd"])):
+        return False
+    return not set(one["resources"]) & set(other["resources"])
+
+
+def _shared_directories(jobs: dict[str, Any]) -> None:
+    """Refuse two jobs of one request that share a working directory, or nothing.
+
+    Two runs in flight write files at the same time, and nothing between the
+    scheduler's resource keys and the adapter run keeps two children out of one
+    tree: a directory two jobs share therefore has to be paid for with a resource
+    key they have in common, which is what makes the second claim wait for the
+    first run to leave LIVE.  The task ids are walked in sorted order and the
+    *first* pair that shares a directory without a common key is the one
+    reported -- ``E_RUN_JOBS`` naming both tasks and the first job's own ``cwd``
+    -- so a directory with more than one offending pair still refuses the whole
+    call with one deterministic line.  Nothing is returned when no pair offends.
+    """
+    order = sorted(jobs)
+    for index, first in enumerate(order):
+        for second in order[index + 1:]:
+            if _same_directory(jobs[first], jobs[second]):
+                raise RunSpecError("E_RUN_JOBS", "tasks %s and %s share the working directory %s "
+                                                 "without a common resource key"
+                                   % (first, second, jobs[first]["cwd"]))
+
+
+def _runs_in_flight(threads: list[threading.Thread]) -> int:
+    """How many of this call's runs are still in flight: their threads are alive.
+
+    A worker thread writes its own result before it ends, so a thread that is no
+    longer alive has a result the main thread can read; the main thread never
+    learns an outcome from anywhere else.
+    """
+    return sum(1 for thread in threads if thread.is_alive())
+
+
+def _await_run(threads: list[threading.Thread]) -> None:
+    """Block at most :data:`_POLL_SECONDS` waiting for one of the live runs.
+
+    The first thread still in flight is joined with the poll interval as its
+    timeout, so the main thread comes back to its own checks -- the slot count,
+    the run that just ended, the ceilings -- at least that often and a
+    ``KeyboardInterrupt`` always has a chance to land.  With no run in flight
+    there is nothing to wait for and this returns at once.
+    """
+    for thread in threads:
+        if thread.is_alive():
+            thread.join(_POLL_SECONDS)
+            return
+
+
+def _ended_badly(records: list[dict[str, Any]]) -> bool:
+    """Whether one of this call's ended runs was refused or raised something.
+
+    A run that ended in a refusal, or in an error the four refusal classes do not
+    cover, ends the claims: nothing new is started behind it.
+    """
+    return any(record["refusal"] is not None or "error" in record for record in records)
+
+
+def _serve_run(record: dict[str, Any], ledger: Any, job: dict[str, Any], args: argparse.Namespace,
+               candidate_hash: Any) -> None:
+    """One run of ``serve --parallel``: ``once``'s own chain, in its own thread.
+
+    The thread is a daemon and runs exactly one adapter invocation: it creates
+    the attempt's evidence directory, builds the invocation from the job exactly
+    as ``once`` builds it and calls
+    :func:`~sentinelmesh.adapter_run.run_adapter_operation` through this module's
+    own name exactly once, with this claim's own logical clock.  Whatever it
+    learns is written back into ``record`` -- the claim's own row -- before the
+    thread ends: the outcome's ``state``, a refusal as
+    :func:`_refusal` names it, or an error none of the four refusal classes
+    covers, kept as it is for the main thread to raise.  It writes nothing to
+    stdout or stderr of its own: the report is the main thread's to write.
+    """
+    operation_id = record["operation_id"]
+    try:
+        os.makedirs(record["evidence_dir"])
+        invocation = Invocation(args.request, operation_id, job["role"], job["profile_id"],
+                                tuple(job["command"]), tuple(job["capabilities"]),
+                                environment_digest(job["environment"]), job["adapter_id"])
+        outcome = run_adapter_operation(
+            ledger, _ADAPTERS[job["adapter_id"]](), invocation, cwd=job["cwd"],
+            timeout_seconds=job["timeout_seconds"], environment=job["environment"],
+            owner=args.owner, generation=ledger.generation, evidence_dir=record["evidence_dir"],
+            worktree_id=args.worktree_id, candidate_hash=candidate_hash,
+            usage_dimensions=tuple(job["usage_dimensions"]),
+            allowed_secret_names=frozenset(job["allowed_secret_names"]), now=record["now"],
+            max_stream_bytes=job["max_stream_bytes"], max_line_bytes=job["max_line_bytes"])
+        record["state"] = outcome["state"]
+    except (AdapterError, ContractError, LedgerError, RuntimeErrorCode) as exc:
+        # A refusal after the claim: the operation stays in the ledger.
+        record["refusal"] = _refusal(exc, operation_id)
+    except BaseException as exc:  # a program error: the main thread raises it
+        record["error"] = exc
+
+
+def _serve_parallel(args: argparse.Namespace) -> int:
+    """Drain one request with at most ``--parallel`` runs in flight at a time.
+
+    The walk is the one ``serve`` makes without ``--parallel`` -- the same checks
+    before any claim (the job files, the shared-directory rule, the ledger, the
+    request's tasks, any job with no task), the same per-task steps in seeding
+    order, the same derived keys, the same evidence directories, the same skips
+    and the same ``max_runs``/``max_seconds`` stops -- with one difference: every
+    claim is still made by the main thread, in seeding order, but the run it
+    claimed is handed to a daemon thread of its own and the main thread goes on
+    claiming while fewer than ``--parallel`` of this call's runs are in flight.
+
+    A claim refused with one of :data:`_SERVE_WAIT` means the slot, the resource
+    key or the budget is held by one of this call's own runs in flight, so the
+    main thread waits for one of them to end and claims the very same task
+    again; with none of this call's runs in flight the code means what it means
+    without ``--parallel`` -- somebody else holds it -- and stops the walk as
+    ``refused``.  A run of this call that ends in a refusal or in an error stops
+    the claims too.  Every stop -- a refusal, a ceiling, the first Ctrl-C, the
+    end of the request -- waits for this call's own runs before anything is
+    reported, and the report is only written once the ledger is closed.
+
+    The first ``KeyboardInterrupt`` the main thread sees, in the walk or while it
+    waits, is absorbed as ``interrupted``: the claims stop, the runs in flight
+    are still waited out, the report is written and the exit code is 0.  A second
+    one is the operator giving up on them: it is not absorbed, it leaves
+    ``_serve_parallel`` with the ledger closed in the ``finally``, nothing is
+    written on stdout or stderr, and the runs still in flight are left to
+    ``smctl run recover``.  A ``KeyboardInterrupt`` in the checks before the walk
+    is not absorbed either, exactly as it is not in the walk without
+    ``--parallel``.
+
+    The report is one line on stdout with ``parallel`` added to ``serve``'s own
+    keys: the ``runs`` in claim order -- each with its task, attempt, operation,
+    state and evidence directory -- the ``skipped`` as without ``--parallel``,
+    the ``stopped`` reason and the ``refusal``.  The refusals are the runs' own,
+    in claim order, followed by the walk's own (the one that stopped it), the
+    first of them being the report's ``refusal`` and each of them one line on
+    stderr; a non-empty refusal list exits 3, anything else 0.  A run that ended
+    in an error the four refusal classes do not cover is raised, in claim order,
+    after the runs are over and the ledger is closed, and no report is written
+    for it.
+    """
+    skipped: list[dict[str, Any]] = []
+    stopped: str | None = None
+    interrupted = False
+    refusal: dict[str, Any] | None = None
+    ledger = None
+    records: list[dict[str, Any]] = []
+    threads: list[threading.Thread] = []
+    try:
+        # The checks before any claim: the job files (before the ledger), the
+        # shared directories, the ledger itself, the request's tasks, and any job
+        # with no task.  A ``KeyboardInterrupt`` here is not absorbed.
+        jobs = load_jobs(args.jobs, args.request)
+        _shared_directories(jobs)
+        ledger = open_ledger(args.ledger)
+        task_ids = ledger.task_ids(args.request)
+        known = set(task_ids)
+        extra = sorted(task for task in jobs if task not in known)
+        if extra:
+            raise RunSpecError("E_RUN_JOBS", "the request has no task for %s" % ", ".join(extra))
+        # The candidate is the operator's, or the evidence records' own digest,
+        # exactly as the walk without ``--parallel`` decides it.
+        candidate_hash = evidence_digest if args.candidate is None else _constant(args.candidate)
+        claimed = 0
+        try:
+            started = _clock()
+            index = 0
+            while index < len(task_ids):
+                # (s) a free slot: at most ``--parallel`` of this call's runs in
+                # flight, so wait for one of them to end before claiming again.
+                while _runs_in_flight(threads) >= args.parallel:
+                    _await_run(threads)
+                # (h) a run of this call that ended in a refusal or in an error
+                # stops the claims: nothing new is started behind it.
+                if _ended_badly(records):
+                    stopped = "refused"
+                    break
+                # (a) --max-runs, counting this call's claims, checked before a
+                # claim and never inside a run.
+                if args.max_runs is not None and claimed >= args.max_runs:
+                    stopped = "max_runs"
+                    break
+                # (b) --max-seconds, the same: the budget never reaches into a run.
+                if args.max_seconds is not None and _clock() - started >= args.max_seconds:
+                    stopped = "max_seconds"
+                    break
+                task = task_ids[index]
+                # (c) a task the request has but the directory has no job for.
+                if task not in jobs:
+                    skipped.append({"task_id": task, "reason": "no_job"})
+                    index += 1
+                    continue
+                job = jobs[task]
+                # (d) a task already accepted, or one that used all its attempts.
+                view = ledger.task(args.request, task)
+                if view["done"]:
+                    skipped.append({"task_id": task, "reason": "done"})
+                    index += 1
+                    continue
+                if view["attempts"] >= view["max_attempts"]:
+                    skipped.append({"task_id": task, "reason": "attempts"})
+                    index += 1
+                    continue
+                # (e) the attempt's evidence directory, which must be fresh.
+                attempt = view["attempts"] + 1
+                evidence = os.path.join(args.evidence, task, str(attempt))
+                if os.path.exists(evidence):
+                    refusal = _refusal(RunSpecError("E_RUN_EVIDENCE",
+                                                    "the evidence directory %s already exists" % evidence), None)
+                    stopped = "refused"
+                    break
+                # (f) the claim, under the derived key, in the current generation.
+                key = "%s#%d" % (job["idempotency_key"], attempt)
+                claim_now = args.now + claimed
+                try:
+                    claim = ledger.claim(args.request, task, job["plan"], key, args.owner, ledger.generation,
+                                         job["guard_version"], job["reservation"], list(job["resources"]),
+                                         claim_now)
+                except (ContractError, LedgerError) as exc:
+                    if exc.code in _SERVE_SKIP:
+                        skipped.append({"task_id": task, "reason": exc.code})
+                        index += 1
+                        continue
+                    if exc.code in _SERVE_WAIT and _runs_in_flight(threads):
+                        # One of this call's own runs holds the slot, the resource
+                        # key or the budget: wait for one of them to end, then
+                        # claim this very task again from (s).
+                        flight = _runs_in_flight(threads)
+                        while _runs_in_flight(threads) >= flight:
+                            _await_run(threads)
+                        continue
+                    refusal = _refusal(exc, None)
+                    stopped = "refused"
+                    break
+                if claim["replayed"]:
+                    # Someone already used this derived key for this task: report
+                    # the operation it produced and start nothing.
+                    refusal = _refusal(RunSpecError("E_RUN_CLAIM_REPLAYED",
+                                                    "operation %s is already %s"
+                                                    % (claim["operation_id"], claim["state"])),
+                                       claim["operation_id"])
+                    stopped = "refused"
+                    break
+                # (g) the run is registered before its thread starts, so an
+                # interrupt between the two leaves the operation RESERVED and
+                # unreported -- exactly as a claim interrupted in the walk
+                # without ``--parallel`` leaves it.
+                claimed += 1
+                record = {"task_id": task, "attempt": attempt, "operation_id": claim["operation_id"],
+                          "evidence_dir": evidence, "now": claim_now, "state": None, "refusal": None}
+                records.append(record)
+                threads.append(threading.Thread(target=_serve_run, daemon=True,
+                                                args=(record, ledger, job, args, candidate_hash)))
+                threads[-1].start()
+                index += 1
+        except KeyboardInterrupt:
+            # The first Ctrl-C, wherever in the walk it landed: the claims stop
+            # here, and the runs in flight are waited out below.
+            interrupted = True
+        try:
+            # Every stop waits for this call's own runs before anything is
+            # reported: a run in flight is a run the report owes a result to.
+            while _runs_in_flight(threads):
+                _await_run(threads)
+        except KeyboardInterrupt:
+            # The first Ctrl-C that landed while the runs in flight were already
+            # being waited out is absorbed and the wait simply continues; the
+            # second is the operator giving up on them, so it is not absorbed --
+            # the runs are left to ``smctl run recover``.
+            if interrupted:
+                raise
+            interrupted = True
+            while _runs_in_flight(threads):
+                _await_run(threads)
+    except (ContractError, LedgerError, RunSpecError) as exc:
+        # A refusal from the checks before the walk: nothing was claimed, so
+        # there is no operation to name.
+        refusal = _refusal(exc, None)
+        stopped = "refused"
+    finally:
+        if ledger is not None:
+            ledger.close()
+    # A run that ended in an error the four refusal classes do not cover: the
+    # runs are all over and the ledger is closed, so the first one in claim
+    # order is raised as it is and no report is written for it.
+    for record in records:
+        if "error" in record:
+            raise record["error"]
+    refusals = [record["refusal"] for record in records if record["refusal"] is not None]
+    if refusal is not None:
+        refusals.append(refusal)
+    runs = [{"task_id": record["task_id"], "attempt": record["attempt"],
+             "operation_id": record["operation_id"], "state": record["state"],
+             "evidence_dir": record["evidence_dir"]}
+            for record in records if record["state"] is not None]
+    if refusals:
+        stopped = "refused"
+    elif interrupted:
+        stopped = "interrupted"
+    elif stopped is None:
+        stopped = "drained"
+    report = {"command": "serve", "request": args.request, "runs": runs, "skipped": skipped,
+              "stopped": stopped, "refusal": refusals[0] if refusals else None, "parallel": args.parallel}
+    _emit(report)
+    for item in refusals:
+        _write_line(sys.stderr, item)
+    return 3 if refusals else 0
+
+
 def _constant(value: str) -> Any:
     """A ``candidate_hash`` that returns the operator's value, ignoring the dir."""
     return lambda _evidence_dir: value
@@ -787,6 +1132,8 @@ def register(subparsers: Any) -> None:
                    help="sha256 of the candidate (default: the evidence records' own digest)")
     p.add_argument("--now", type=_digits, default=0,
                    help="base logical clock; each claim uses it plus the claims before it (default 0)")
+    p.add_argument("--parallel", type=_count,
+                   help="run at most this many of the request's tasks at a time, each in a thread of its own")
     p.set_defaults(func=cmd_serve)
 
     p = commands.add_parser("recover", help="take over what a crashed controller left in the ledger, reporting it as it is")
