@@ -367,5 +367,26 @@ class WatchOracle(WatchCase):
         self.assertGreaterEqual(report["passes"], 3)
 
 
+class WatchCompletion(WatchCase):
+    """The planner's completion after attempt-001 (`.agent/reviews/serve-watch/attempt-001.md`, F1)."""
+
+    def test_an_interrupt_at_the_first_clock_read_is_absorbed_with_and_without_watch(self):
+        self.write_jobs(self.job("task-1"))
+        for extra in (("--parallel", "1"), ("--watch",)):
+            with self.subTest(mode=extra[0]):
+                def clock():
+                    raise KeyboardInterrupt
+                with mock.patch.object(run_cli, "_clock", clock):
+                    try:
+                        code, out, err = self.smctl(*self.argv(*extra, watch=False))
+                    except KeyboardInterrupt:
+                        self.fail("an interrupt at the first clock read escaped serve %s" % extra[0])
+                report = json.loads(out)
+                self.assertEqual((code, err, report["stopped"], report["runs"]), (0, "", "interrupted", []))
+                if extra[0] == "--watch":
+                    self.assertEqual(report["passes"], 1)
+        self.assertEqual(self.states(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

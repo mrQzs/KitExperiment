@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -247,7 +248,10 @@ class SleepTests(_WatchHarness):
         def fake_sleep(seconds):
             waits.append(seconds)
             clock[0] += seconds   # the clock only moves by what is actually slept
-        with mock.patch("time.sleep", fake_sleep), mock.patch("time.monotonic", lambda: clock[0]):
+        # Only the module's own ``time`` is replaced (review of attempt-001, F6): patching the global
+        # ``time.sleep`` would also catch other threads of the test process and make this case flaky.
+        fake_time = types.SimpleNamespace(sleep=fake_sleep, monotonic=lambda: clock[0])
+        with mock.patch.object(run_cli, "time", fake_time):
             run_cli._sleep(1.0)
         self.assertTrue(waits, "the pause slept at least once")
         self.assertTrue(all(wait <= run_cli._POLL_SECONDS for wait in waits),

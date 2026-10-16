@@ -965,9 +965,11 @@ def _serve_parallel(args: argparse.Namespace) -> int:
         # exactly as the walk without ``--parallel`` decides it.
         candidate_hash = evidence_digest if args.candidate is None else _constant(args.candidate)
         claimed = 0
-        # ``--max-seconds`` runs from the first pass, so the clock is read once
-        # here, before the pass loop, and every pass measures against it.
-        started = _clock()
+        # ``--max-seconds`` runs from the first pass: the clock is read once, at
+        # the start of the first pass and inside its ``try``, so a Ctrl-C at that
+        # read is absorbed as it is in the walk without ``--parallel`` (review of
+        # serve-watch attempt-001, F1).
+        started = None
         while True:
             # One pass: its own skips and its own interrupt flag; the claims, the
             # claim records and the threads carry across every pass.
@@ -975,6 +977,8 @@ def _serve_parallel(args: argparse.Namespace) -> int:
             skipped = []
             interrupted = False
             try:
+                if started is None:
+                    started = _clock()
                 # (watch) catch up on the ledger before the first claim of the
                 # pass, so a verdict, stop or rollover another process wrote is
                 # seen here; its refusal is a walk refusal -- drain, then refuse.
