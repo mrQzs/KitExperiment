@@ -1,0 +1,46 @@
+{
+  "source": "planner recording, approved by the user on 2026-10-16 (.agent/design/claude-adapter.md section 3.1)",
+  "claude_code_version": "2.1.301",
+  "platform": "Windows 2025Server",
+  "executable_sha256": "84d61feeb1a07e5a5b3354d68432591cac18a5d38a419a30d86d0f3ad8cba397",
+  "original": {
+    "sha256": "62cbc28611b5702b7d282ae9c6d892237491f01eb813447d715c544a91818a30",
+    "bytes": 5996,
+    "frames": 4
+  },
+  "frame_types": [
+    "system",
+    "assistant",
+    "rate_limit_event",
+    "result"
+  ],
+  "cli_report": {
+    "usage": {
+      "input_tokens": 2,
+      "output_tokens": 4,
+      "cache_read_input_tokens": 649,
+      "cache_creation_input_tokens": 2330
+    },
+    "total_cost_usd": 0.0188578,
+    "is_error": false,
+    "subtype": "success",
+    "num_turns": 1
+  },
+  "smctl_once": {
+    "state": "REVIEW_PENDING",
+    "exit_code": 0,
+    "stop_reason": "completed",
+    "stream_status": "ok",
+    "adapter_id": "offline"
+  },
+  "reduction": {
+    "max_kept_chars": 32,
+    "zeroed_numbers": [
+      "rate_limit_info.resetsAt",
+      "rate_limit_info.unifiedWindows.five_hour.utilization",
+      "rate_limit_info.unifiedWindows.five_hour.resetsAt",
+      "rate_limit_info.unifiedWindows.seven_day.utilization",
+      "rate_limit_info.unifiedWindows.seven_day.resetsAt"
+    ]
+  }
+}

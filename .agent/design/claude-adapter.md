@@ -1,6 +1,6 @@
 # 第二个 CLI adapter：Claude Code 的 stream-json
 
-状态：设计中（2026-10-16），等用户决定第 5 节。
+状态：用户已决定（2026-10-16，第 5 节四项均选推荐项）；录制完成，合同进行中。
 
 ## 1. 为什么做
 
@@ -85,20 +85,12 @@
 - 凭据：作业只给变量名，不读、不打印 Claude Code 的登录文件。录下的流在提交前检查凭据形状。
 - 一份录制只覆盖“单轮、无工具”的形状。工具调用、多轮、重试、压缩这些帧都没有样本，按未知帧失败关闭，与 pi 的处理相同，写进“不能证明”。
 
-## 5. 待用户决定
+## 5. 用户决定（2026-10-16，均选推荐项）
 
-1. **第二个 CLI 选哪个**
-   - Claude Code（推荐）：本机是原生 exe，监管器直接认身份；你已登录；stream-json 的终止消息自带整个会话的 token 与缓存用量。
-   - Codex：不同厂商，更“异构”；但它在本机是 node 加脚本，作业要点名 node.exe，还要确认它的登录状态。
-2. **录一份真实流**
-   - 批准一次最小调用（推荐）：用你当前登录的 Claude 账户，空目录、单轮、禁用工具，提示 `Reply with exactly: OK`，花费上限 0.5 美元；
-   - 不调用：只按文档写翻译器，夹具全部手写，解析规则没有真实样本支撑，“真实链路”仍是 NOT_RUN。
-3. **用量记哪些**
-   - 只记 token（推荐）：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_write_tokens` 加合计，与 pi 相同；CLI 报告的美元费用只写进夹具的说明，不进账本；
-   - 也把 `total_cost_usd` 记成一个维度。
-4. **第一版范围**
-   - 只做翻译与结算（推荐）：新 adapter id `claude`，作业文件照现有格式手写；
-   - 另加一个生成 Claude 作业文件的辅助命令。
+1. **CLI**：Claude Code。
+2. **录制**：批准一次最小调用（空目录、单轮、禁用工具、不加载设置与 MCP，提示 `Reply with exactly: OK`，花费上限 0.5 美元）。
+3. **用量**：只记 token 四个维度加合计；CLI 报告的美元费用只进夹具的 meta。
+4. **范围**：只做翻译与结算，新 adapter id `claude`。
 
 ## 6. 规划端决定
 
@@ -123,3 +115,9 @@
 ## 9. 进度与遗留
 
 - 2026-10-16：核对现有 adapter、pi 的先例与本机的 CLI，写成本说明。
+- 2026-10-16：用户决定第 5 节四项（均选推荐项），批准一次调用。
+- 2026-10-16：录制完成。
+  - 先干跑 `claude.exe --version`：`smctl run once` 在 Job Object 下启动，`REVIEW_PENDING`、退出码 0；观测记录的 `executable_sha256` 就是 `claude.exe` 的摘要（`84d61feeb1a0…`）。环境映射只给九个路径类变量，没有任何 key，Claude Code 自己读 OAuth 登录。
+  - 再做那一次调用：退出码 0，`stderr` 为空，stdout 4 帧——`system`（`init`）、`assistant`（回答 `OK`）、`rate_limit_event`（文档里没有提到）、`result`（`subtype: success`、`is_error: false`、`num_turns: 1`）。`result.usage` 是输入 2、输出 4、缓存读 649、缓存写 2330；CLI 报告的费用 0.0188578 美元，模型是账户的缺省模型。
+  - 流里没有凭据形状的字符串。`tests/fixtures/claude_stream/reduce.py` 把它缩减成 `windows-claude2_1_301-live-a001.jsonl` 与 `.meta.json`：超过 32 个字符或像路径的字符串整串换成长度加摘要，限额使用率的 5 个数清零，所以夹具不需要任何 release-check 放行。
+  - 作业文件、账本、原始证据都只在会话临时目录。
