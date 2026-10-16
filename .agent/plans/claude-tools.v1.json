@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "task_id": "claude-tools",
+  "plan_version": 1,
+  "title": "claude-tools: Claude Code tool calls, counted frames, modelUsage settlement and the claude reference",
+  "repository": "KitExperiment",
+  "base_sha": "dc03ae037b15897b3d93e501d78e8d1b47829940",
+  "risk_level": "medium",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch",
+      "merge"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/claude_events.py",
+      "sentinelmesh/ledger_cli.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_claude_tools.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_claude_tools_oracle.py",
+      "tests/test_claude_adapter_oracle.py",
+      "tests/test_claude_adapter.py",
+      "tests/test_ledger_reference*.py",
+      "tests/test_pi_events*.py",
+      "tests/test_live_pi_fixture.py",
+      "tests/test_run_cli*.py",
+      "sentinelmesh/run_cli.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/adapter_protocol.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/protocols.py",
+      "sentinelmesh/durable_ledger.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_claude_tools_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_claude_adapter_oracle.py",
+        "tests/test_claude_adapter.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_claude_tools.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_reference.py",
+        "tests/test_ledger_reference_oracle.py",
+        "tests/test_pi_events.py",
+        "tests/test_live_pi_fixture.py",
+        "tests/test_run_cli_pi_oracle.py",
+        "tests/test_run_cli_pi.py",
+        "tests/test_stream_ceilings.py",
+        "tests/test_stream_ceilings_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 1200,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "dc03ae0",
+        "--",
+        "tests/test_claude_tools_oracle.py",
+        "tests/test_claude_adapter_oracle.py",
+        "tests/test_claude_adapter.py",
+        "tests/fixtures/claude_stream",
+        "sentinelmesh/run_cli.py",
+        "sentinelmesh/pi_events.py",
+        "sentinelmesh/adapter_protocol.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/protocols.py",
+        "sentinelmesh/durable_ledger.py",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/cli.py",
+        "tests/test_ledger_reference.py",
+        "tests/test_ledger_reference_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V09",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh import claude_events as c, ledger_cli as l; import dataclasses; f = [x.name for x in dataclasses.fields(c.ClaudeTranslation)]; assert f[13:] == ['reported_usage', 'message_usage', 'illegal_message_usage', 'tool_calls', 'tool_errors', 'permission_denials', 'fallbacks']; assert c.MODEL_USAGE_KEYS[0] == ('inputTokens', 'input_tokens') and 'MODEL_USAGE_KEYS' in c.__all__; assert l._DIALECTS == ('pi-session-v3', 'claude-stream-json') and set(l._REFERENCES) == set(l._DIALECTS); print('tools ok')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "tools ok"
+      ],
+      "expect_on_base": "fail"
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "工具帧、`user` 帧与 `system` 帧的规则（第 3–5 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ],
+      "intent": "录下的带工具的流被一帧不差地翻成配对的工具事件，录制里出现过的权限拒绝、通知、思考估计、合成消息与模型回退都被认出并计数，没见过的仍然失败关闭"
+    },
+    {
+      "id": "D02",
+      "text": "结算改用 `modelUsage`（第 6–7 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V09"
+      ],
+      "intent": "账本里结算的 token 是计费的全额，包括被撤回的轮次和回退模型"
+    },
+    {
+      "id": "D03",
+      "text": "`reference` 认 `claude-stream-json`（第 8 条）",
+      "evidence": [
+        "V01",
+        "V03",
+        "V04",
+        "V09"
+      ],
+      "intent": "一次被杀或截断的 Claude Code 运行，操作员也能拿到按消息累加的参考值，并且知道输出只是下限"
+    },
+    {
+      "id": "D04",
+      "text": "其他模块与命令不受影响，文档串按第 9 条",
+      "evidence": [
+        "V04",
+        "V05",
+        "V08",
+        "review"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "Step 4 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V06",
+        "V07",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 3000,
+    "max_wall_seconds_total": 6000,
+    "cost_budget": null
+  }
+}

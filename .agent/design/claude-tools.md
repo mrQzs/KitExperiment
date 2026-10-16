@@ -244,3 +244,9 @@
     - 其中输入与两个缓存维度，正好等于逐消息之和；
     - 它的 `costUSD` 之和等于 `total_cost_usd`，所以它才是计费的全额。
   - 上一轮的单轮夹具里，`modelUsage` 与 `result.usage` 相等（只有一个模型，没有撤回）。所以改用 `modelUsage`，不会改变那一份的结算。
+- 2026-10-16：用户就录制推翻的两项重问、新增的两项作答（均选推荐项），规则定稿为第 3.2 节（`4074012`）。
+- 2026-10-16：规划端草稿（`claude_events.py` 约 400 行，`ledger_cli.py` 加约 30 行）与 oracle `tests/test_claude_tools_oracle.py`（17 个用例，`dc03ae0`）。
+  - 同一提交改钉上一轮的 `tests/test_claude_adapter_oracle.py`（非法用量改在 `modelUsage` 上；矩阵里的工具块改成没有 id 的）与 `tests/test_claude_adapter.py`（两条消息不同 id、`result` 带 `modelUsage`、新字段、异常帧改用 `stream_event`、总和越界改在 `modelUsage` 上）。
+  - 草稿在工具夹具上翻出 4 对工具事件，结算 15683（`modelUsage` 合计）；单轮夹具仍是 2985。
+  - 基线上新 oracle 14 个用例失败，两个改钉的文件 4 个失败；草稿上 38 个用例全过。
+  - 草稿变异 40 条：抓住 39 条；漏掉的 1 条是等价变异（各维之和的上限检查被总和的检查兜住）。
