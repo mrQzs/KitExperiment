@@ -1,6 +1,6 @@
 # 第二个 CLI adapter：Claude Code 的 stream-json
 
-状态：用户已决定（2026-10-16，第 5 节四项均选推荐项）；录制完成，合同进行中。
+状态：用户已决定（2026-10-16，第 5 节四项均选推荐项）；录制完成；oracle 与合同 `claude-adapter.v1` 已写，派发中。
 
 ## 1. 为什么做
 
@@ -121,3 +121,7 @@
   - 再做那一次调用：退出码 0，`stderr` 为空，stdout 4 帧——`system`（`init`）、`assistant`（回答 `OK`）、`rate_limit_event`（文档里没有提到）、`result`（`subtype: success`、`is_error: false`、`num_turns: 1`）。`result.usage` 是输入 2、输出 4、缓存读 649、缓存写 2330；CLI 报告的费用 0.0188578 美元，模型是账户的缺省模型。
   - 流里没有凭据形状的字符串。`tests/fixtures/claude_stream/reduce.py` 把它缩减成 `windows-claude2_1_301-live-a001.jsonl` 与 `.meta.json`：超过 32 个字符或像路径的字符串整串换成长度加摘要，限额使用率的 5 个数清零，所以夹具不需要任何 release-check 放行。
   - 作业文件、账本、原始证据都只在会话临时目录。
+- 2026-10-16：规划端草稿（约 240 行）与 oracle `tests/test_claude_adapter_oracle.py`（12 个用例）。
+  - 草稿在夹具上翻出 `run_started`、`assistant`、`usage`、`run_finished` 四个事件，忽略 1 个 `rate_limit_event`，结算 2985 个 token（2 + 4 + 649 + 2330），与 CLI 自己的报告一致。
+  - 草稿变异 20 条：抓住 19 条；“不核对 adapter 身份”是等价变异（父类 `OfflineAdapter.run` 用同一个错误码再核对一次），预期漏掉。
+  - 定稿时补的两处：异常帧之后的 `usage` 事件不能声称用量完整；翻译结果在有任何异常帧时 `usage` 为空（原型只看终止之前的异常帧）。

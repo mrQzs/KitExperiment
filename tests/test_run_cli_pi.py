@@ -134,11 +134,12 @@ class RunCliPiCase(unittest.TestCase):
     # -- the tests ----------------------------------------------------------- #
 
     def test_the_registry_is_keyed_by_each_adapters_own_adapter_id(self):
-        self.assertEqual(set(_ADAPTERS), {"offline", "pi"})
+        self.assertEqual(set(_ADAPTERS), {"claude", "offline", "pi"})
         self.assertIs(_ADAPTERS["offline"], OfflineAdapter)
         self.assertIs(_ADAPTERS["pi"], PiNativeAdapter)
-        # Every key is its class's own ``adapter_id``, and the two classes are
-        # distinct: the pi translator is not the offline stub under another name.
+        # Every key is its class's own ``adapter_id``, and the classes are
+        # distinct: the pi translator is not the offline stub under another name
+        # (the claude adapter is pinned by tests/test_claude_adapter_oracle.py).
         for adapter_id, adapter in _ADAPTERS.items():
             self.assertEqual(adapter_id, adapter.adapter_id)
         self.assertEqual(_ADAPTERS["offline"].protocol_version, "offline-adapter-v1")
@@ -185,14 +186,14 @@ class RunCliPiCase(unittest.TestCase):
         with self.assertRaises(RunSpecError) as caught:
             load_job(self.write_json("dialect.json", self.stream_job(adapter_id="pi-session-v3")))
         exc = caught.exception
-        self.assertEqual((exc.code, exc.detail), ("E_RUN_JOB", "adapter_id must be one of offline, pi"))
+        self.assertEqual((exc.code, exc.detail), ("E_RUN_JOB", "adapter_id must be one of claude, offline, pi"))
         # Case and whitespace are folded nowhere: the job names the id exactly.
         for adapter_id in ("PI", "Pi", " pi", "pi "):
             with self.subTest(adapter_id=adapter_id):
                 with self.assertRaises(RunSpecError) as caught:
                     load_job(self.write_json("case.json", self.stream_job(adapter_id=adapter_id)))
                 self.assertEqual((caught.exception.code, caught.exception.detail),
-                                 ("E_RUN_JOB", "adapter_id must be one of offline, pi"))
+                                 ("E_RUN_JOB", "adapter_id must be one of claude, offline, pi"))
 
     def test_a_captured_macos_stream_settles_the_dispatchers_usage(self):
         result = self.once(self.stream_job())
