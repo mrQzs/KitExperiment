@@ -14,10 +14,10 @@ semantics.  This module wraps it in a single-host, append-only command log:
   lock and replays the commands appended after its own head -- the same replay
   an open does, chain digests included -- before it runs in memory, appends and
   commits, so two processes' writes are serialized by SQLite and none is lost.
-  What still fails closed is a log this instance cannot catch up on -- a
-  ``rollover`` among the commands to replay (another controller took over), a
-  checkpoint past this instance's head, or a next command that does not link to
-  its head -- plus a damaged tail (``E_LEDGER_CHAIN``) and a tail the Scheduler
+  What still fails closed is a log this instance cannot catch up on
+  (``E_LEDGER_STALE``) -- a ``rollover`` among the commands to replay (another
+  controller took over), a checkpoint past this instance's head, or a next
+  command that does not link to its head -- plus a damaged tail (``E_LEDGER_CHAIN``) and a tail the Scheduler
   refuses (``E_LEDGER_REPLAY``): the instance refuses every further call, reads
   included, and the ledger has to be opened (replayed) again.
 
@@ -804,10 +804,15 @@ class DurableScheduler:
     def checkpoint_seq(self) -> int | None:
         """The sequence number of the checkpoint this instance's state starts from.
 
-        ``None`` when the ledger holds no checkpoint: the whole history is then
-        the commands the log still holds.  A compaction writes one covering
-        everything this instance has applied, so it moves to this instance's own
-        sequence number -- and stays there for the commands appended after it.
+        ``None`` when the ledger held no checkpoint as far as this instance
+        knows: the whole history is then the commands the log still holds.  A
+        compaction by this instance writes one covering everything it has
+        applied, so it moves to this instance's own sequence number -- and stays
+        there for the commands appended after it.  A checkpoint another instance
+        wrote is learnt when a catch-up replays the commands after it; one
+        written exactly at this instance's head with nothing after it is not
+        seen until something is appended (review of ledger-catch-up attempt-001,
+        I1).
 
         Read like every other read: an unavailable instance refuses it with
         ``E_LEDGER_UNAVAILABLE`` and the log is never touched.
@@ -1018,16 +1023,27 @@ class DurableScheduler:
             # The write lock first, held until the commit: the catch-up, the
             # in-memory call and the append then all judge the same log, and two
             # processes' writes are serialized by SQLite.
+            # Every way out of a failure below rolls back and invalidates, the
+            # invalidation in a ``finally`` so a second interrupt inside the
+            # rollback cannot leave a usable instance with half-updated memory or
+            # an open write transaction (review of attempt-001, M2).
             try:
                 db.execute("BEGIN IMMEDIATE")
-            except sqlite3.Error as exc:
-                self._invalidate()
-                raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+            except BaseException as exc:
+                try:
+                    _rollback(db)
+                finally:
+                    self._invalidate()
+                if isinstance(exc, sqlite3.Error):
+                    raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
+                raise
             try:
                 self._catch_up(db)
             except BaseException as exc:
-                _rollback(db)
-                self._invalidate()
+                try:
+                    _rollback(db)
+                finally:
+                    self._invalidate()
                 if isinstance(exc, LedgerError) or not isinstance(exc, Exception):
                     raise
                 raise LedgerError("E_LEDGER_REPLAY", str(exc)) from exc
@@ -1041,11 +1057,17 @@ class DurableScheduler:
                 # is.
                 result = target(*args, **kwargs)
             except ContractError:
-                _rollback(db)
+                try:
+                    _rollback(db)
+                except BaseException:
+                    self._invalidate()
+                    raise
                 raise
             except BaseException:
-                _rollback(db)
-                self._invalidate()
+                try:
+                    _rollback(db)
+                finally:
+                    self._invalidate()
                 raise
             try:
                 raw = _encode_command(name, bound.arguments, result)
@@ -1054,14 +1076,20 @@ class DurableScheduler:
                 db.execute("INSERT INTO commands(seq, command, sha256, previous) VALUES (?, ?, ?, ?)",
                            (self._seq + 1, text, digest, self._last_sha))
                 db.execute("COMMIT")
+                # The head moves inside the try: an exception between the commit
+                # and these two lines would otherwise leave a usable instance one
+                # command behind its own log, and the next catch-up would replay
+                # its own command a second time (review of attempt-001, M1).
+                self._seq += 1
+                self._last_sha = digest
             except BaseException as exc:
-                _rollback(db)
-                self._invalidate()
+                try:
+                    _rollback(db)
+                finally:
+                    self._invalidate()
                 if isinstance(exc, LedgerError) or not isinstance(exc, Exception):
                     raise
                 raise LedgerError("E_LEDGER_WRITE", str(exc)) from exc
-            self._seq += 1
-            self._last_sha = digest
             return result
 
     def refresh(self) -> dict[str, int]:
@@ -1070,9 +1098,9 @@ class DurableScheduler:
         The read views never catch up on their own -- reading is served from
         memory -- so a caller that needs the latest state asks for it here.  One
         read transaction (``BEGIN``) holds the catch-up of :meth:`_catch_up` and
-        is rolled back afterwards: the log is not written, not even the
-        checkpoint sequence, and the sequence number and the digest move only
-        when something was replayed.
+        is rolled back afterwards: nothing is written to the log, and this
+        instance's in-memory sequence number, digest and checkpoint sequence move
+        only when something was replayed.
 
         Returns exactly ``{"seq": the sequence number after the catch-up,
         "applied": how many commands were replayed}``.  The failures follow the

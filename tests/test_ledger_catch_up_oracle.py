@@ -22,6 +22,7 @@ ledger, and an operator's ``smctl ledger stop``/``verdict`` while
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -153,13 +154,15 @@ class CatchUpOracle(CatchUpCase):
         first.close()
         # Both writers open the ledger, wait at a starting line, then write as fast as they can, so
         # their transactions overlap: only a write lock taken before the catch-up keeps both going.
+        # Sixty each: enough to overlap, few enough that a loaded machine stays inside SQLite's
+        # five-second busy wait (one run with 120 each timed out under load).
         go = self.work / "go"
         body = ("import os, sys, time" + NL
                 + "from sentinelmesh.durable_ledger import open_ledger" + NL
                 + "ledger = open_ledger(sys.argv[1])" + NL
                 + "open(sys.argv[3] + '.' + sys.argv[2], 'w').close()" + NL
                 + "while not os.path.exists(sys.argv[3]): time.sleep(0.001)" + NL
-                + "for n in range(120):" + NL
+                + "for n in range(60):" + NL
                 + "    ledger.seed_task('req-1', '%s-%d' % (sys.argv[2], n), {'dispatches': 9, 'tokens': 500, 'cost': 200})" + NL
                 + "ledger.close()" + NL)
         writers = [subprocess.Popen([PY, "-c", body, self.path, name, str(go)], cwd=str(REPO_ROOT),
@@ -173,9 +176,9 @@ class CatchUpOracle(CatchUpCase):
         self.assertEqual([writer.returncode for writer in writers], [0, 0], results)
         with open_ledger(self.path) as ledger:
             tasks = ledger.task_ids("req-1")
-            self.assertEqual(ledger.seq, 242)
+            self.assertEqual(ledger.seq, 122)
         self.assertEqual(sorted(tasks), sorted(["task-1"] + ["%s-%d" % (side, n) for side in ("left", "right")
-                                                             for n in range(120)]))
+                                                             for n in range(60)]))
 
     def test_a_refusal_after_catching_up_keeps_what_was_caught_up_and_appends_nothing(self):
         first = self.seeded()
@@ -422,6 +425,94 @@ class OperatorWhileServing(CatchUpCase):
         with open_ledger(self.path) as ledger:
             self.assertEqual([ledger.operation(op)["state"] for op in ledger.operation_ids()],
                              ["ACCEPTED", "REVIEW_PENDING"])
+
+
+class _Interrupting:
+    """A connection that runs ``statement`` and then raises ``error``: an exception right after it."""
+
+    def __init__(self, db, statement, error):
+        self._db, self._statement, self._error = db, statement, error
+
+    def execute(self, sql, *args):
+        result = self._db.execute(sql, *args)
+        if sql == self._statement:
+            raise self._error
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+class CatchUpCompletion(CatchUpCase):
+    """The planner's completion after attempt-001 (`.agent/reviews/ledger-catch-up/attempt-001.md`, M1 and M2).
+
+    Interrupts in places no product command can time: right after the write
+    lock, inside the rollback of a refusal, and between the commit and the
+    instance's new head.  Each must leave the instance unusable and the write
+    lock released, never a usable instance whose memory and head disagree with
+    the log.
+    """
+
+    def assert_lock_free(self):
+        with open_ledger(self.path) as other:
+            started = time.monotonic()
+            other.stop("req-1", "LOCK_CHECK")
+            self.assertLess(time.monotonic() - started, 2.0, "the write lock was still held")
+
+    def test_an_interrupt_right_after_the_write_lock_invalidates_and_releases_it(self):
+        first = self.seeded()
+        first._db = _Interrupting(first._db, "BEGIN IMMEDIATE", KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            first.stop("req-1", "OPERATOR_STOP")
+        self.unavailable(first)
+        self.assert_lock_free()
+
+    def test_an_interrupt_inside_the_rollback_of_a_refusal_invalidates_and_releases_the_lock(self):
+        first = self.seeded()
+        first._db = _Interrupting(first._db, "ROLLBACK", KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            first.claim("req-1", "task-9", 1, "idem-x", "owner-1", 1, 1, dict(RESERVATION), ["src/x.py"])
+        self.unavailable(first)
+        self.assert_lock_free()
+
+    def test_an_interrupt_inside_the_rollback_of_a_failed_catch_up_still_invalidates(self):
+        first = self.seeded()
+        with open_ledger(self.path) as other:
+            other.seed_task("req-1", "task-2", CAPS, max_attempts=3)
+        first._db = _Interrupting(first._db, "ROLLBACK", KeyboardInterrupt())
+        with mock.patch.object(durable_ledger, "_replay", side_effect=RuntimeError("boom")):
+            with self.assertRaises(KeyboardInterrupt):
+                first.stop("req-1", "OPERATOR_STOP")
+        self.unavailable(first)
+        self.assert_lock_free()
+
+    def test_an_exception_between_the_commit_and_the_new_head_invalidates(self):
+        first = self.seeded()
+        lines, start = inspect.getsourcelines(DurableScheduler._apply)
+        target = [start + n for n, line in enumerate(lines) if line.strip() == "self._seq += 1"]
+        self.assertEqual(len(target), 1, "the head is not moved by exactly one 'self._seq += 1' in _apply")
+        fired = []
+
+        def local(frame, event, arg):
+            if event == "line" and frame.f_lineno == target[0] and not fired:
+                fired.append(frame.f_lineno)
+                raise KeyboardInterrupt
+            return local
+
+        def tracer(frame, event, arg):
+            return local if frame.f_code is DurableScheduler._apply.__code__ else None
+        previous = sys.gettrace()
+        sys.settrace(tracer)
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                first.stop("req-1", "OPERATOR_STOP")
+        finally:
+            sys.settrace(previous)
+        self.assertEqual(fired, target)
+        # The command is committed; the instance must not stay usable one command behind it.
+        self.unavailable(first)
+        with open_ledger(self.path) as reopened:
+            self.assertEqual((reopened.seq, reopened.stop_reasons("req-1")), (3, ("OPERATOR_STOP",)))
 
 
 if __name__ == "__main__":
