@@ -1,0 +1,314 @@
+{
+  "schema_version": 1,
+  "task_id": "ledger-catch-up",
+  "plan_version": 1,
+  "title": "durable ledger: writes and refresh() catch up with other instances",
+  "repository": "KitExperiment",
+  "base_sha": "4996e106fed511bc16d6d9635995309e2b54a70f",
+  "risk_level": "high",
+  "authorization": {
+    "executor": [
+      "local_edit",
+      "local_test"
+    ],
+    "integration": [
+      "local_branch",
+      "merge"
+    ]
+  },
+  "executor": {
+    "provider": "step",
+    "model": "step-5-preview",
+    "thinking": "high",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "bash"
+    ],
+    "context_files": "project"
+  },
+  "scope": {
+    "allowed_modified_files": [
+      "sentinelmesh/durable_ledger.py"
+    ],
+    "allowed_new_files": [
+      "tests/test_ledger_catch_up.py"
+    ],
+    "allowed_deleted_files": [],
+    "forbidden_paths": [
+      ".agent/**",
+      ".agents/**",
+      ".pi/**",
+      "AGENTS.md",
+      "code-kit-v2/**",
+      "pyproject.toml",
+      "tests/fixtures/**",
+      "tests/test_ledger_catch_up_oracle.py",
+      "tests/test_durable_ledger_oracle.py",
+      "tests/test_durable_ledger.py",
+      "tests/test_durable_ledger_gaps.py",
+      "tests/test_ledger_cli_oracle.py",
+      "tests/test_ledger_compaction.py",
+      "tests/test_ledger_compaction_oracle.py",
+      "sentinelmesh/scheduler.py",
+      "sentinelmesh/run_cli.py",
+      "sentinelmesh/ledger_cli.py",
+      "sentinelmesh/cli.py",
+      "sentinelmesh/restart_recovery.py",
+      "sentinelmesh/adapter_run.py",
+      "sentinelmesh/supervised_operation.py",
+      "sentinelmesh/supervised_record.py",
+      "sentinelmesh/posix_supervisor.py",
+      "sentinelmesh/windows_supervisor.py",
+      "sentinelmesh/process_identity.py",
+      "sentinelmesh/runtime.py",
+      "sentinelmesh/pi_events.py",
+      "sentinelmesh/core.py",
+      "sentinelmesh/__init__.py"
+    ],
+    "dependency_changes": "forbidden"
+  },
+  "setup": [],
+  "checks": [
+    {
+      "id": "V01",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_catch_up_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V02",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ledger_catch_up.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 300,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V03",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_durable_ledger_oracle.py",
+        "tests/test_durable_ledger.py",
+        "tests/test_durable_ledger_gaps.py",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_ledger_compaction.py",
+        "tests/test_ledger_compaction_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 600,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V04",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_run_cli_serve_parallel_oracle.py",
+        "tests/test_run_cli_serve_oracle.py",
+        "tests/test_run_cli_oracle.py",
+        "tests/test_run_cli_recover_oracle.py",
+        "tests/test_restart_recovery_oracle.py",
+        "tests/test_request_resume_oracle.py",
+        "tests/test_review_verdict_oracle.py",
+        "tests/test_task_done_oracle.py",
+        "tests/test_ledger_events_oracle.py",
+        "tests/test_ledger_reference_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 900,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ]
+    },
+    {
+      "id": "V05",
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 1200,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "[1-9]\\d* passed"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V06",
+      "argv": [
+        "python",
+        "-m",
+        "compileall",
+        "-q",
+        "sentinelmesh",
+        "tests"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 120,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V07",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    },
+    {
+      "id": "V08",
+      "argv": [
+        "python",
+        "-c",
+        "from sentinelmesh import durable_ledger as d; assert callable(d.DurableScheduler.refresh) and 'refresh' not in d.MUTATING_METHODS and not hasattr(d.DurableScheduler, '_append'); print('catch-up ok')"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0,
+      "output_must_match": [
+        "catch-up ok"
+      ],
+      "expect_on_base": "fail"
+    },
+    {
+      "id": "V09",
+      "argv": [
+        "git",
+        "diff",
+        "--quiet",
+        "4996e106fed511bc16d6d9635995309e2b54a70f",
+        "--",
+        "sentinelmesh/scheduler.py",
+        "sentinelmesh/run_cli.py",
+        "sentinelmesh/ledger_cli.py",
+        "sentinelmesh/cli.py",
+        "sentinelmesh/restart_recovery.py",
+        "sentinelmesh/adapter_run.py",
+        "sentinelmesh/supervised_operation.py",
+        "sentinelmesh/supervised_record.py",
+        "sentinelmesh/posix_supervisor.py",
+        "sentinelmesh/windows_supervisor.py",
+        "sentinelmesh/process_identity.py",
+        "sentinelmesh/runtime.py",
+        "sentinelmesh/pi_events.py",
+        "tests/test_ledger_catch_up_oracle.py",
+        "tests/test_durable_ledger_oracle.py",
+        "tests/test_durable_ledger.py",
+        "tests/test_durable_ledger_gaps.py",
+        "tests/test_ledger_cli_oracle.py",
+        "tests/test_ledger_compaction.py",
+        "tests/test_ledger_compaction_oracle.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 60,
+      "required": true,
+      "expected_exit_code": 0
+    }
+  ],
+  "definition_of_done": [
+    {
+      "id": "D01",
+      "text": "补读的规则——衔接、链、换代、已用操作 id、序号与检查点（第 1 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ],
+      "intent": "操作员从另一个进程下的停止、裁决、恢复，会被一个正在运行的控制器看见，而不是把它弄坏"
+    },
+    {
+      "id": "D02",
+      "text": "写入的顺序与失败规则——写锁、补读、内存调用、追加、提交，谁让实例失效、谁不（第 2 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V03"
+      ],
+      "intent": "两个进程的写入串行化、一条不丢，调度器的拒绝不毁掉实例，半更新的内存永远不会被写进日志"
+    },
+    {
+      "id": "D03",
+      "text": "`refresh()` 与 `create_ledger` 的调度器（第 3–4 条）",
+      "evidence": [
+        "V01",
+        "V02",
+        "V08"
+      ],
+      "intent": "需要最新状态的调用方能只读地补上，新建的账本也能补读别的实例的领取"
+    },
+    {
+      "id": "D04",
+      "text": "其它命令与模块不受影响，`compact` 与打开不变，文档串按第 6 条，导入无副作用",
+      "evidence": [
+        "V04",
+        "V05",
+        "V09",
+        "review"
+      ]
+    },
+    {
+      "id": "D05",
+      "text": "Step 5 的测试齐全，不自行做变异检查；所有修改在允许集合内，无依赖变更",
+      "evidence": [
+        "V06",
+        "V07",
+        "scope"
+      ]
+    }
+  ],
+  "budget": {
+    "max_attempts_total": 2,
+    "max_wall_seconds_per_attempt": 2400,
+    "max_wall_seconds_total": 4800,
+    "cost_budget": null
+  }
+}
