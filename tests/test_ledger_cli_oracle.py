@@ -226,16 +226,17 @@ class RefusalOracle(CliCase):
         db.close()
         self.refused("E_LEDGER_CHAIN", "ledger", "status", self.path)
 
-    def test_a_write_while_a_controller_holds_the_ledger_makes_it_stale(self):
+    def test_a_write_while_a_controller_holds_the_ledger_is_caught_up_by_the_controller(self):
+        # ledger-catch-up (2026-10-16): the old assertion -- the controller's next write is
+        # E_LEDGER_STALE -- is wrong now; the controller replays the operator's stop first.
         self.crashed()
         controller = open_ledger(self.path)
         self.addCleanup(controller.close)
         self.ok("ledger", "stop", self.path, "--request", "req-1", "--reason", "SECURITY_HOLD")
-        with self.assertRaises(LedgerError) as ctx:
-            controller.stop("req-1", "OPERATOR_STOP")
-        self.assertEqual(ctx.exception.code, "E_LEDGER_STALE")
+        controller.stop("req-1", "OPERATOR_STOP")
         with open_ledger(self.path) as reopened:
-            self.assertEqual(reopened.stop_reasons("req-1")[-1], "SECURITY_HOLD")
+            self.assertEqual(reopened.stop_reasons("req-1")[-2:], ("SECURITY_HOLD", "OPERATOR_STOP"))
+            self.assertEqual(reopened.seq, controller.seq)
 
 
 class ClosingOracle(CliCase):

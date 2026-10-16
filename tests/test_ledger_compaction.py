@@ -726,15 +726,19 @@ class TheLogHead(CompactionCase):
         self.assertEqual(reopened.operation_ids(), tuple(operations))
         reopened.close()
 
-    def test_another_instance_appending_makes_this_one_stale(self):
+    def test_another_instance_compacting_at_this_head_and_appending_is_caught_up(self):
+        # ledger-catch-up (2026-10-16): the old assertion -- E_LEDGER_STALE -- is wrong now; the
+        # checkpoint is at this instance's head, so the command after it can be replayed.
         ledger = create_ledger(self.path)
         scenario(ledger)
+        head = ledger.seq
         other = open_ledger(self.path)
         other.compact()
         other.stop("req-c", "OPERATOR_STOP")
         other.close()
-        self.assertEqual(self.code_of(LedgerError, ledger.stop, "req-c", "another"), "E_LEDGER_STALE")
-        self.assertEqual(self.code_of(LedgerError, lambda: ledger.seq), "E_LEDGER_UNAVAILABLE")
+        ledger.stop("req-c", "another")
+        self.assertEqual((ledger.seq, ledger.checkpoint_seq), (head + 2, head))
+        self.assertEqual(ledger.stop_reasons("req-c")[-2:], ("OPERATOR_STOP", "another"))
         ledger.close()
 
     def test_a_stale_instance_may_not_compact(self):

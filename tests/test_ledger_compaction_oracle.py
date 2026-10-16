@@ -512,7 +512,8 @@ class CompactionOracle(CompactionCase):
         reopened = open_ledger(self.path)
         self.assertEqual(views(reopened, ops), live)
         reopened.close()
-        # A process that compacts *and* appends moves the log on: this instance is stale.
+        # A process that compacts at this instance's head *and* appends: ledger-catch-up (2026-10-16)
+        # replays the appended command, so the old assertion -- E_LEDGER_STALE -- is wrong now.
         done = self.child("import sys\n"
                           "from sentinelmesh.durable_ledger import open_ledger\n"
                           "ledger = open_ledger(sys.argv[1])\n"
@@ -520,11 +521,11 @@ class CompactionOracle(CompactionCase):
                           "ledger.stop('req-1', 'another')\n"
                           "ledger.close()\n", self.path)
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.code_of(LedgerError, ledger.stop, "req-1", "third"), "E_LEDGER_STALE")
-        self.assertEqual(self.code_of(LedgerError, lambda: ledger.seq), "E_LEDGER_UNAVAILABLE")
+        ledger.stop("req-1", "third")
+        self.assertEqual((ledger.seq, ledger.checkpoint_seq), (23, 21))
         ledger.close()
         reopened = open_ledger(self.path)
-        self.assertEqual((reopened.seq, reopened.stop_reasons("req-1")), (22, ("hold", "another")))
+        self.assertEqual((reopened.seq, reopened.stop_reasons("req-1")), (23, ("hold", "another", "third")))
         reopened.close()
 
     def test_a_stale_instance_may_not_compact(self):

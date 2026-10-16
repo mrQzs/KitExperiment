@@ -429,16 +429,20 @@ class DurableLedgerOracle(LedgerCase):
         self.assertEqual(self.code_of(ContractError, reopened.snapshot, "req-1", "task-1"), "E_SCOPE_UNKNOWN")
         reopened.close()
 
-    def test_a_second_instance_in_this_process_is_fenced_the_same_way(self):
+    def test_a_second_instance_in_this_process_is_caught_up(self):
+        # ledger-catch-up (2026-10-16): the old assertion -- the instance that did not write last is
+        # stale -- is wrong now.  Each write first replays what the other instance appended; only a
+        # rollover by another controller still makes an instance stale (the case above).
         first = create_ledger(self.path)
         first.seed_request("req-1", "repo-1", CAPS)
         second = open_ledger(self.path)
         second.seed_task("req-1", "task-1", CAPS)
-        self.assertEqual(self.code_of(LedgerError, first.seed_task, "req-1", "task-2", CAPS), "E_LEDGER_STALE")
-        self.assertEqual(self.code_of(LedgerError, first.operation, "op-x"), "E_LEDGER_UNAVAILABLE")
-        # The instance that wrote last is still current.
+        first.seed_task("req-1", "task-2", CAPS)
+        self.assertEqual(first.seq, 3)
         second.seed_task("req-1", "task-3", CAPS)
-        self.assertEqual(second.seq, 3)
+        self.assertEqual(second.seq, 4)
+        first.refresh()
+        self.assertEqual((first.seq, first.snapshot("req-1")), (4, second.snapshot("req-1")))
         first.close()
         second.close()
 
