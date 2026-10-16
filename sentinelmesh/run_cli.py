@@ -48,10 +48,11 @@ The child process sees exactly what the job file names and nothing else: its
 environment is the job's explicit mapping (``os.environ`` is never read for it),
 its working directory is the job's ``cwd`` and its argv is the job's
 ``command``.  Three adapters are accepted, each by its own ``adapter_id``:
-``offline`` reduces normalized events, ``pi`` translates pi's ``--mode json``
-session v3 frames (dialect ``pi-session-v3``) and ``claude`` translates Claude
-Code's ``--output-format stream-json`` frames (dialect ``claude-stream-json``)
--- each of them reduced the same way.  This command starts no provider,
+``offline`` reduces normalized events as they are, while ``pi`` translates pi's
+``--mode json`` session v3 frames (dialect ``pi-session-v3``) and ``claude``
+translates Claude Code's ``--output-format stream-json`` frames (dialect
+``claude-stream-json``) into the same events before reducing them.  This
+command starts no provider,
 resolves no program of its own and reads no credentials: the program a job
 names is resolved by the supervisor from the job's ``PATH``, so a real pi has
 to be named in the job as the real program (``node.exe`` with pi's ``cli.js`` on
@@ -109,7 +110,7 @@ _JOB_STRING_LISTS = ("resources", "capabilities", "allowed_secret_names", "usage
 #: ``offline`` is the offline stub, ``pi`` the translator of pi's ``--mode json``
 #: session v3 frames and ``claude`` the translator of Claude Code's
 #: ``--output-format stream-json`` frames.  There is no alias and no case or
-#: whitespace folding: a job names one of these keys exactly.  Neither adapter
+#: whitespace folding: a job names one of these keys exactly.  None of them
 #: starts a provider, so the program the job names is still the supervisor's to
 #: resolve.
 _ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_id: PiNativeAdapter,

@@ -5,8 +5,8 @@ the oracle pins the recorded fixture, the terminal, the failing-closed matrix, t
 registry and the cross-adapter behaviour, so this file only covers what it does
 not -- a hand-written multi-message success stream, the exact shape of an odd
 frame's evidence payload, the summed-usage bound, the two entry-point refusals
-and the frozen translation result.  As in ``tests/test_pi_events.py`` every
-rejection case first proves a legal baseline, then changes exactly one thing.
+and the frozen translation result.  Every rejection case starts from the legal
+stream and changes one frame of it.
 """
 from __future__ import annotations
 
@@ -156,6 +156,40 @@ class ClaudeAdapterTests(ClaudeCase):
         self.assertEqual(len(usage_events), 1)
         self.assertIs(usage_events[0]["payload"]["complete"], False)
         self.assertFalse(set(DIMENSIONS) & set(usage_events[0]["payload"]))
+
+    def test_block_counts_follow_the_block_types(self):
+        # Review F6: two text blocks and one thinking block, so a swap of the
+        # two counters shows.
+        frames = stream()
+        frames[1]["message"]["content"] = [{"type": "text", "text": "a"},
+                                         {"type": "thinking", "thinking": "b"},
+                                         {"type": "text", "text": "c"}]
+        payload = self.translate(frames).events[1]["payload"]
+        self.assertEqual((payload["text_blocks"], payload["thinking_blocks"]), (2, 1))
+
+    def test_the_digest_of_a_non_ascii_frame_is_taken_over_its_utf8_text(self):
+        # Review F6: the canonical JSON keeps non-ASCII characters as they are
+        # (``ensure_ascii=False``), so the digest and the byte length are the
+        # UTF-8 ones, not those of the escaped form.
+        legal = stream()
+        odd = {"type": "user", "message": {"role": "user", "content": "\u5bc6\u94a5 \u00e9"}}
+        translation = self.translate(legal[:3] + [odd] + [legal[4]])
+        payload = self.odd_events(translation)[0]["payload"]
+        self.assertEqual((payload["sha256"], payload["bytes"]), digest_of(odd))
+        escaped = json.dumps(odd, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        self.assertNotEqual(payload["bytes"], len(escaped))
+
+    def test_num_turns_beyond_max_safe_integer_is_an_invalid_result(self):
+        # Review F4: the reducer refuses such an integer, so the translator does
+        # not report a complete usage for it.
+        frames = stream()
+        frames[4] = result(num_turns=MAX_SAFE_INTEGER)
+        self.assertEqual(self.types(self.translate(frames))[-1], "run_finished")
+        frames[4] = result(num_turns=MAX_SAFE_INTEGER + 1)
+        translation = self.translate(frames)
+        self.assertEqual(self.types(translation)[-1], INVALID_FRAME)
+        self.assertEqual((translation.terminal, translation.num_turns, translation.usage,
+                          translation.usage_complete), (None, None, {}, False))
 
     # -- the summed-usage bound ------------------------------------------------ #
 

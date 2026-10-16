@@ -1,6 +1,6 @@
 # 第二个 CLI adapter：Claude Code 的 stream-json
 
-状态：用户已决定（2026-10-16，第 5 节四项均选推荐项）；录制完成；oracle 与合同 `claude-adapter.v1` 已写，派发中。
+状态：完成（2026-10-16）。用户决定见第 5 节，录制与合同的结果见第 9 节。
 
 ## 1. 为什么做
 
@@ -125,3 +125,15 @@
   - 草稿在夹具上翻出 `run_started`、`assistant`、`usage`、`run_finished` 四个事件，忽略 1 个 `rate_limit_event`，结算 2985 个 token（2 + 4 + 649 + 2330），与 CLI 自己的报告一致。
   - 草稿变异 20 条：抓住 19 条；“不核对 adapter 身份”是等价变异（父类 `OfflineAdapter.run` 用同一个错误码再核对一次），预期漏掉。
   - 定稿时补的两处：异常帧之后的 `usage` 事件不能声称用量完整；翻译结果在有任何异常帧时 `usage` 为空（原型只看终止之前的异常帧）。
+- 2026-10-16：`claude-adapter.v1` 派给 Pi，PASS。
+  - a001 用时 997 秒（上限 3000 秒），`check --fresh` 8/8。
+  - 候选变异 24 条：oracle 与执行器测试合起来抓住 22 条；两边都漏的 2 条都是等价变异，一条是 `OfflineAdapter.run` 自己再核对一次身份，另一条是第二个 `init`，它照样被行号检查拦下。
+  - 独立复审 PASS，七条低级别发现。规划端收尾：
+    - 修正 `run_cli` 注释与两处文档串的措辞；
+    - `num_turns` 加 `MAX_SAFE_INTEGER` 上限：归约器拒收更大的整数，翻译器不再对它报告“用量完整”；
+    - 补三例测试：块计数、非 ASCII 帧的摘要、`num_turns` 上限。
+  - 提交：oracle `1350884`（含 `test_run_cli_pi.py` 改为三项注册表）、合同 `b9bc14c`、复审 `83cf383`、候选 `ec6881a`、收尾在其后。
+  - 决策模型的变异等价判断（shadow）仍然对每条都答“不等价”，真等价的 C23 只给 0.10。
+- 遗留：
+  - 只有“单轮、无工具”的样本，工具调用、多轮、重试、压缩都按未知帧失败关闭；
+  - `smctl ledger reference` 仍只认 `pi-session-v3`（用户决定第 4 项，未扩展）。

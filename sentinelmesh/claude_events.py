@@ -22,13 +22,17 @@ Design (``.agent/design/claude-adapter.md`` sections 3.2, 5 and 6):
 * ``rate_limit_event`` is counted and ignored;
 * ``result`` is the only terminal.  ``subtype == "success"`` with
   ``is_error: false`` and at least one assistant message is ``run_finished``;
-  every other shape is a complete ``error`` terminal with a ``reason``;
+  any other well-formed ``result`` is a complete ``error`` terminal with a
+  ``reason``.  A ``result`` whose ``subtype``, ``is_error`` or ``num_turns`` is
+  malformed (``num_turns`` must be an integer in ``0..MAX_SAFE_INTEGER``) is an
+  invalid record and no terminal at all;
 * usage is taken from the terminal ``result`` alone -- its
   ``input_tokens``, ``output_tokens``, ``cache_read_input_tokens`` and
   ``cache_creation_input_tokens`` plus their sum as ``total_tokens`` -- because
   those four numbers are the session's own totals; summing the per-message
   observations would double count, and the dollar cost
-  (``total_cost_usd``) is deliberately not a dimension;
+  (``total_cost_usd``) is deliberately not a dimension.  An illegal counter
+  in a well-formed ``result`` still ends the run, with its usage unknown;
 * unknown frame types, unknown ``system`` subtypes, tool-use content blocks,
   frames after ``result`` and malformed known frames all fail closed: they
   become an ``unknown`` record, so the stream never settles and no usage is
@@ -262,7 +266,7 @@ class _Accumulator:
         is_error = frame.get("is_error")
         num_turns = frame.get("num_turns")
         if type(subtype) is not str or type(is_error) is not bool or type(num_turns) is not int \
-                or num_turns < 0:
+                or not 0 <= num_turns <= MAX_SAFE_INTEGER:
             self._odd(line, frame, frame_type, "result subtype, is_error or num_turns is malformed",
                       INVALID_FRAME)
             return
