@@ -9,14 +9,19 @@ events and hands them to the reference reducer unchanged, exactly as
 * ``assistant`` (role assistant, content blocks ``text``/``thinking`` only, text
   never copied) is an ``assistant`` event;
 * ``rate_limit_event`` is counted and ignored;
-* ``result`` is the only terminal: its session ``usage`` (``input_tokens``,
-  ``output_tokens``, ``cache_read_input_tokens``, ``cache_creation_input_tokens``)
-  becomes one ``usage`` event with ``total_tokens`` their sum, then
-  ``run_finished`` for ``subtype: success`` with ``is_error: false`` and at least
-  one assistant message, ``error`` otherwise;
-* anything else -- another type, another ``system`` subtype, a tool-use content
-  block, a frame after ``result``, a frame that is not an object -- fails
-  closed: the stream does not settle and no usage is recorded.
+* ``result`` is the only terminal: its usage becomes one ``usage`` event with
+  ``total_tokens`` the sum of the four counters, then ``run_finished`` for
+  ``subtype: success`` with ``is_error: false`` and at least one assistant
+  message, ``error`` otherwise;
+* anything else -- another type, another ``system`` subtype, a malformed
+  tool-use content block, a frame after ``result``, a frame that is not an
+  object -- fails closed: the stream does not settle and no usage is recorded.
+
+Re-pinned by the planner for claude-tools (`.agent/design/claude-tools.md`):
+the usage is now the sum of ``result.modelUsage`` (equal to ``result.usage`` in
+this one-model recording), so the illegal-usage cases change ``modelUsage``; a
+well-formed tool-use block is now a tool call, so the matrix uses one without an
+id.  `tests/test_claude_tools_oracle.py` covers the rest.
 
 The registry ``run_cli._ADAPTERS`` gains ``claude``.  The real stream recorded on
 2026-10-16 (`tests/fixtures/claude_stream/windows-claude2_1_301-live-a001.*`) is
@@ -187,7 +192,7 @@ class ClaudeOracle(ClaudeCase):
             "a user frame": lambda f: f.insert(2, {"type": "user", "message": {"role": "user", "content": []}}),
             "a stream event": lambda f: f.insert(2, {"type": "stream_event", "event": {}}),
             "another system subtype": lambda f: f.insert(2, {"type": "system", "subtype": "compact_boundary"}),
-            "a tool-use block": lambda f: f[1]["message"]["content"].append({"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}),
+            "a tool-use block without an id": lambda f: f[1]["message"]["content"].append({"type": "tool_use", "name": "Bash", "input": {}}),
             "a frame after the result": lambda f: f.append({"type": "rate_limit_event"}),
             "a frame that is not an object": lambda f: f.insert(2, ["not", "an", "object"]),
             "a type that is not text": lambda f: f.insert(2, {"type": 7}),
@@ -225,9 +230,9 @@ class ClaudeOracle(ClaudeCase):
             with self.subTest(case=label):
                 frames = fixture_frames()
                 if change is None:
-                    del frames[3]["usage"]["cache_read_input_tokens"]
+                    del frames[3]["modelUsage"]["claude-opus-5-5"]["cacheReadInputTokens"]
                 else:
-                    frames[3]["usage"]["input_tokens"] = change
+                    frames[3]["modelUsage"]["claude-opus-5-5"]["inputTokens"] = change
                 translation = self.translate(frames)
                 self.assertFalse(translation.usage_complete)
                 self.assertEqual(translation.usage, {})

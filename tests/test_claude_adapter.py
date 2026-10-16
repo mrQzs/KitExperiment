@@ -7,6 +7,12 @@ not -- a hand-written multi-message success stream, the exact shape of an odd
 frame's evidence payload, the summed-usage bound, the two entry-point refusals
 and the frozen translation result.  Every rejection case starts from the legal
 stream and changes one frame of it.
+
+Re-pinned by the planner for claude-tools (`.agent/design/claude-tools.md`): the
+two messages now have their own ids (messages are counted by id), the result
+carries ``modelUsage`` (the settlement's source), the assistant payload and the
+translation gained fields, and the odd frame is a ``stream_event`` because a
+``user`` frame is now part of the dialect.
 """
 from __future__ import annotations
 
@@ -44,10 +50,11 @@ def init(**overrides):
     return frame
 
 
-def assistant(text="first answer", thinking="first thought", model="claude-opus-5-5", **overrides):
+def assistant(text="first answer", thinking="first thought", model="claude-opus-5-5", message_id="msg_01",
+              **overrides):
     content = [{"type": "thinking", "thinking": thinking}, {"type": "text", "text": text}]
     frame = {"type": "assistant", "session_id": "01a1-sess-claude",
-             "message": {"id": "msg_01", "type": "message", "role": "assistant",
+             "message": {"id": message_id, "type": "message", "role": "assistant",
                          "model": model, "content": content, "usage": {"input_tokens": 2}}}
     frame.update(overrides)
     return frame
@@ -57,7 +64,9 @@ def result(**overrides):
     frame = {"type": "result", "subtype": "success", "is_error": False, "num_turns": 1,
              "session_id": "01a1-sess-claude", "total_cost_usd": 0.0188578,
              "usage": {"input_tokens": 2, "output_tokens": 4, "cache_read_input_tokens": 649,
-                       "cache_creation_input_tokens": 2330}}
+                       "cache_creation_input_tokens": 2330},
+             "modelUsage": {"claude-opus-5-5": {"inputTokens": 2, "outputTokens": 4, "cacheReadInputTokens": 649,
+                                                "cacheCreationInputTokens": 2330, "costUSD": 0.0188578}}}
     frame.update(overrides)
     return frame
 
@@ -65,7 +74,7 @@ def result(**overrides):
 def stream():
     """A legal two-turn stream: init, two assistant messages, rate limit, result."""
     return [init(), assistant(text="first answer", thinking="first thought"),
-            assistant(text="second answer", thinking="second thought", model="claude-sonnet-5"),
+            assistant(text="second answer", thinking="second thought", model="claude-sonnet-5", message_id="msg_02"),
             {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}, result()]
 
 
@@ -109,10 +118,12 @@ class ClaudeAdapterTests(ClaudeCase):
             self.assertEqual(event["source"], SOURCE)
         for event_id, payload in ((event["event_id"], event["payload"]) for event in translation.events
                                   if event["type"] == "assistant"):
-            self.assertEqual(set(payload), {"model", "message_id", "text_blocks", "thinking_blocks"})
+            self.assertEqual(set(payload), {"model", "message_id", "text_blocks", "thinking_blocks",
+                                            "tool_use_blocks"})
             self.assertEqual((payload["model"], payload["message_id"], payload["text_blocks"],
-                              payload["thinking_blocks"]),
-                             ("claude-opus-5-5" if event_id == "L2" else "claude-sonnet-5", "msg_01", 1, 1))
+                              payload["thinking_blocks"], payload["tool_use_blocks"]),
+                             ("claude-opus-5-5", "msg_01", 1, 1, 0) if event_id == "L2"
+                             else ("claude-sonnet-5", "msg_02", 1, 1, 0))
             # Neither the answer nor the thinking is copied into the event.
             self.assertNotIn("answer", json.dumps(payload))
             self.assertNotIn("thought", json.dumps(payload))
@@ -124,7 +135,9 @@ class ClaudeAdapterTests(ClaudeCase):
         fields = tuple(field.name for field in dataclasses.fields(ClaudeTranslation))
         self.assertEqual(fields, ("dialect", "events", "frames", "ignored", "unknown", "usage",
                                   "usage_complete", "assistant_messages", "terminal", "subtype",
-                                  "is_error", "num_turns", "models"))
+                                  "is_error", "num_turns", "models", "reported_usage", "message_usage",
+                                  "illegal_message_usage", "tool_calls", "tool_errors", "permission_denials",
+                                  "fallbacks"))
         translation = self.translate(stream())
         with self.assertRaises(dataclasses.FrozenInstanceError):
             translation.usage_complete = False
@@ -136,7 +149,7 @@ class ClaudeAdapterTests(ClaudeCase):
     def test_an_odd_frame_event_carries_its_own_digest(self):
         legal = stream()
         self.assertEqual(self.odd_events(self.translate(legal)), [])
-        odd = dict(legal[3], type="user", message={"role": "user", "content": []})
+        odd = dict(legal[3], type="stream_event")
         frames = legal[:3] + [odd] + [legal[4]]
         translation = self.translate(frames)
         self.assertEqual(self.types(translation), ["run_started", "assistant", "assistant",
@@ -147,7 +160,7 @@ class ClaudeAdapterTests(ClaudeCase):
         digest, size = digest_of(odd)
         self.assertEqual((event["payload"]["frame_type"], event["payload"]["line"],
                           event["payload"]["reason"], event["payload"]["sha256"],
-                          event["payload"]["bytes"]), ("user", 4, "frame type outside the dialect",
+                          event["payload"]["bytes"]), ("stream_event", 4, "frame type outside the dialect",
                                                        digest, size))
         self.assertEqual(translation.unknown, 1)
         # An odd frame anywhere in the stream leaves the run's usage unknown.
@@ -196,8 +209,8 @@ class ClaudeAdapterTests(ClaudeCase):
     def test_a_sum_beyond_max_safe_integer_leaves_the_usage_unknown(self):
         # Every counter is legal on its own; only their sum is not.
         frames = stream()
-        frames[4] = result(usage={"input_tokens": MAX_SAFE_INTEGER, "output_tokens": 1,
-                                  "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})
+        frames[4] = result(modelUsage={"claude-opus-5-5": {"inputTokens": MAX_SAFE_INTEGER, "outputTokens": 1,
+                                                           "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}})
         translation = self.translate(frames)
         self.assertEqual((translation.usage, translation.usage_complete), ({}, False))
         self.assertEqual(translation.unknown, 0)
