@@ -47,14 +47,16 @@ and every refusal is reported with its own code, never guessed at.
 The child process sees exactly what the job file names and nothing else: its
 environment is the job's explicit mapping (``os.environ`` is never read for it),
 its working directory is the job's ``cwd`` and its argv is the job's
-``command``.  Two adapters are accepted, each by its own ``adapter_id``:
-``offline`` reduces normalized events, and ``pi`` translates pi's ``--mode
-json`` session v3 frames (dialect ``pi-session-v3``) and reduces them the same
-way.  This command starts no provider, resolves no program of its own and reads
-no credentials: the program a job names is resolved by the supervisor from the
-job's ``PATH``, so a real pi has to be named in the job as the real program
-(``node.exe`` with pi's ``cli.js`` on Windows, where the ``pi.cmd`` shim is
-refused), and credentials and the network stay out of scope.
+``command``.  Three adapters are accepted, each by its own ``adapter_id``:
+``offline`` reduces normalized events, ``pi`` translates pi's ``--mode json``
+session v3 frames (dialect ``pi-session-v3``) and ``claude`` translates Claude
+Code's ``--output-format stream-json`` frames (dialect ``claude-stream-json``)
+-- each of them reduced the same way.  This command starts no provider,
+resolves no program of its own and reads no credentials: the program a job
+names is resolved by the supervisor from the job's ``PATH``, so a real pi has
+to be named in the job as the real program (``node.exe`` with pi's ``cli.js`` on
+Windows, where the ``pi.cmd`` shim is refused), and credentials and the network
+stay out of scope.
 
 Importing this module has no side effect: no file is read, no environment is
 read, no ledger is opened and no process is started.
@@ -73,6 +75,7 @@ from typing import Any
 from .adapter_protocol import AdapterError, Invocation, OfflineAdapter
 from .adapter_run import (DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_STREAM_BYTES, MAX_LINE_BYTES, MAX_STREAM_BYTES,
                           run_adapter_operation)
+from .claude_events import ClaudeStreamAdapter
 from .durable_ledger import LedgerError, create_ledger, open_ledger
 from .ledger_cli import _write_line
 from .pi_events import PiNativeAdapter
@@ -103,11 +106,14 @@ _JOB_POSITIVE = ("plan", "guard_version", "timeout_seconds")
 _JOB_STRING_LISTS = ("resources", "capabilities", "allowed_secret_names", "usage_dimensions")
 
 #: The adapters this contract accepts, keyed by each adapter's own ``adapter_id``:
-#: ``offline`` is the offline stub and ``pi`` the translator of pi's ``--mode
-#: json`` session v3 frames.  There is no alias and no case or whitespace folding:
-#: a job names one of these keys exactly.  Neither adapter starts a provider, so
-#: the program the job names is still the supervisor's to resolve.
-_ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_id: PiNativeAdapter}
+#: ``offline`` is the offline stub, ``pi`` the translator of pi's ``--mode json``
+#: session v3 frames and ``claude`` the translator of Claude Code's
+#: ``--output-format stream-json`` frames.  There is no alias and no case or
+#: whitespace folding: a job names one of these keys exactly.  Neither adapter
+#: starts a provider, so the program the job names is still the supervisor's to
+#: resolve.
+_ADAPTERS = {OfflineAdapter.adapter_id: OfflineAdapter, PiNativeAdapter.adapter_id: PiNativeAdapter,
+             ClaudeStreamAdapter.adapter_id: ClaudeStreamAdapter}
 
 #: The claim-refusal codes ``serve`` reads as "this task cannot be claimed right
 #: now" and skips, as opposed to the ones that mean the ledger must not move and
