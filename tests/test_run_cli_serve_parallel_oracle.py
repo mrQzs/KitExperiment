@@ -667,6 +667,23 @@ class ParallelOracle(ParallelCase):
                          ([("task-1", "REVIEW_PENDING"), ("task-2", "REVIEW_PENDING")], [], "interrupted"))
         self.assertEqual([o["task_id"] for o in self.operations()], ["task-1", "task-2"])
 
+    def test_an_interrupt_while_waiting_for_a_run_does_not_mark_it_ended(self):
+        # Planner fix after the fresh check of ledger-catch-up (2026-10-16): on Python 3.12 a
+        # KeyboardInterrupt inside Thread.join(timeout) marks a running thread as stopped, so a
+        # drain built on join could stop waiting for a run that was still in flight.
+        release = threading.Event()
+        worker = threading.Thread(target=release.wait, args=(10,), daemon=True)
+        worker.start()
+        self.addCleanup(release.set)
+        threading.Timer(0.25, _thread.interrupt_main).start()
+        deadline = time.monotonic() + 5
+        with self.assertRaises(KeyboardInterrupt):
+            while time.monotonic() < deadline:
+                run_cli._await_run([worker])
+        self.assertTrue(worker.is_alive(), "an interrupted wait marked a running thread as ended")
+        release.set()
+        worker.join(5)
+
     def test_a_second_interrupt_is_not_absorbed_and_leaves_the_runs_in_flight_undecided(self):
         self.write_jobs(self.hold("task-1"), self.hold("task-2"), self.job("task-3"))
         before = set(threading.enumerate())

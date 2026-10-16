@@ -777,16 +777,21 @@ def _runs_in_flight(threads: list[threading.Thread]) -> int:
 def _await_run(threads: list[threading.Thread]) -> None:
     """Block at most :data:`_POLL_SECONDS` waiting for one of the live runs.
 
-    The first thread still in flight is joined with the poll interval as its
-    timeout, so the main thread comes back to its own checks -- the slot count,
-    the run that just ended, the ceilings -- at least that often and a
-    ``KeyboardInterrupt`` always has a chance to land.  With no run in flight
-    there is nothing to wait for and this returns at once.
+    A plain sleep of the poll interval while any run is in flight, so the main
+    thread comes back to its own checks -- the slot count, the run that just
+    ended, the ceilings -- at least that often and a ``KeyboardInterrupt``
+    always has a chance to land.  With no run in flight there is nothing to
+    wait for and this returns at once.
+
+    Never ``Thread.join``: on Python 3.12 a ``KeyboardInterrupt`` that lands
+    inside ``join(timeout)`` releases the thread's state lock and marks a thread
+    that is still running as stopped, so ``is_alive()`` turns false, the drain
+    stops waiting for that run and the report leaves it out while the ledger is
+    closed under it (found when a fresh check of ledger-catch-up hit it,
+    2026-10-16).
     """
-    for thread in threads:
-        if thread.is_alive():
-            thread.join(_POLL_SECONDS)
-            return
+    if any(thread.is_alive() for thread in threads):
+        time.sleep(_POLL_SECONDS)
 
 
 def _ended_badly(records: list[dict[str, Any]]) -> bool:
