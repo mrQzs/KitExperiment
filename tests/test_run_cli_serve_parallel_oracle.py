@@ -42,7 +42,8 @@ from unittest import mock
 
 from sentinelmesh import cli, run_cli
 from sentinelmesh.adapter_protocol import AdapterError
-from sentinelmesh.durable_ledger import open_ledger
+from sentinelmesh.scheduler import ContractError
+from sentinelmesh.durable_ledger import LedgerError, open_ledger
 from sentinelmesh.supervised_operation import evidence_digest
 from sentinelmesh.supervised_record import HANDOFF_NAME, OBSERVATION_NAME
 
@@ -747,6 +748,77 @@ class ParallelOracle(ParallelCase):
             with self.subTest(value=value):
                 self.usage_error(*self.serve_argv("--parallel", value, parallel=None))
         self.assertEqual(self.operations(), [])
+
+
+class ParallelCompletion(ParallelCase):
+    """The planner's completion after attempt-001 (`.agent/reviews/serve-parallel/attempt-001.md`, F1 and F2).
+
+    Both are races no product-level case can time, so they are pinned in process
+    through the candidate's own helpers: ``_runs_in_flight`` counts the runs in
+    flight and ``_await_run`` blocks for at most one poll.
+    """
+
+    def test_a_run_that_ends_between_two_counts_does_not_leave_the_walk_spinning(self):
+        # F1: the claim is refused with a wait code while one run is counted in flight, and that run
+        # has ended by the next count.  Counted twice, the wait would be for fewer than zero runs.
+        class Ledger:
+            generation = 1
+
+            def task_ids(self, request):
+                return ["task-1"]
+
+            def task(self, request, task):
+                return {"task_id": task, "max_attempts": 2, "attempts": 0, "done": False}
+
+            def claim(self, *args):
+                raise ContractError("E_RESOURCE_BUSY")
+
+            def close(self):
+                pass
+        counts = iter([0, 1, 0])
+        polls = []
+
+        def await_run(threads):
+            polls.append(1)
+            if len(polls) > 200:
+                raise RuntimeError("the walk spins waiting for a run that is not there")
+        self.write_jobs(self.job("task-1"))
+        with mock.patch.object(run_cli, "open_ledger", lambda path: Ledger()),                 mock.patch.object(run_cli, "_runs_in_flight", lambda threads: next(counts, 0)),                 mock.patch.object(run_cli, "_await_run", await_run):
+            report, errors = self.serve_refused()
+        self.assertEqual((errors[0]["error"], errors[0]["operation_id"], report["runs"]), ("E_RESOURCE_BUSY", None, []))
+
+    def test_a_ledger_refusal_in_the_walk_waits_for_the_runs_in_flight(self):
+        # F2: the task view of the second task fails while the first run is still in flight; the
+        # report comes after that run ended, and names it.
+        self.write_jobs(self.job("task-1"), self.job("task-2"))
+        real_open = run_cli.open_ledger
+        release = threading.Event()
+        ended = []
+
+        class Failing:
+            def __init__(self, ledger):
+                self._ledger, self._views = ledger, 0
+
+            def __getattr__(self, name):
+                return getattr(self._ledger, name)
+
+            def task(self, *args):
+                self._views += 1
+                if self._views == 2:
+                    threading.Timer(0.5, release.set).start()
+                    raise LedgerError("E_LEDGER_UNAVAILABLE", "made unusable by the oracle")
+                return self._ledger.task(*args)
+
+        def run(*args, **kwargs):
+            release.wait(10)
+            ended.append(time.monotonic())
+            return {"state": "REVIEW_PENDING"}
+        with mock.patch.object(run_cli, "open_ledger", lambda path: Failing(real_open(path))),                 mock.patch.object(run_cli, "run_adapter_operation", run):
+            report, errors = self.serve_refused()
+            returned = time.monotonic()
+        self.assertEqual((errors[0]["error"], errors[0]["operation_id"]), ("E_LEDGER_UNAVAILABLE", None))
+        self.assertEqual([(r["task_id"], r["state"]) for r in report["runs"]], [("task-1", "REVIEW_PENDING")])
+        self.assertTrue(ended and ended[0] <= returned)
 
 
 if __name__ == "__main__":

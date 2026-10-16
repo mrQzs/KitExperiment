@@ -14,9 +14,9 @@ design names:
 * ``smctl run serve`` drains one request: it walks the request's tasks in seeding
   order and, for each task that has a job file and can still be claimed, claims
   and runs exactly one operation through ``once``'s own chain -- no retry, no
-  concurrency, no daemon -- reporting every run, every task it skipped and why,
-  and why it stopped, as exactly one line;  ``--parallel N`` runs the very same
-  walk with at most N runs in flight at a time, each claimed run handed to a
+  daemon -- reporting every run, every task it skipped and why, and why it
+  stopped, as exactly one line; one run at a time, or with ``--parallel N`` the
+  very same walk with at most N runs in flight, each claimed run handed to a
   daemon thread of its own while the main thread goes on claiming;
 * ``smctl run recover`` takes over what a controller that died left in the ledger:
   it rolls the ledger over exactly once (every request stops with
@@ -30,7 +30,8 @@ design names:
 ``serve`` walks a whole request in one pass, claiming and running each of its
 tasks at most once.  There is no retry and no daemon in any of them, so a command
 that is killed leaves at most one undecided operation in the ledger for the
-recovery path to take over.  The conventions are
+recovery path to take over -- or, for ``serve --parallel N``, at most N, one per
+run in flight.  The conventions are
 ``smctl ledger``'s exactly -- one canonical JSON line on stdout, a refusal as one
 JSON line on stderr (the ledger's own code and detail, plus the operation this
 call already claimed, or ``None`` when it claimed none) and exit 3, an argparse
@@ -858,7 +859,8 @@ def _serve_parallel(args: argparse.Namespace) -> int:
 
     The first ``KeyboardInterrupt`` the main thread sees, in the walk or while it
     waits, is absorbed as ``interrupted``: the claims stop, the runs in flight
-    are still waited out, the report is written and the exit code is 0.  A second
+    are still waited out and the report is written (exit 0 unless something was
+    refused, which still exits 3).  A second
     one is the operator giving up on them: it is not absorbed, it leaves
     ``_serve_parallel`` with the ledger closed in the ``finally``, nothing is
     written on stdout or stderr, and the runs still in flight are left to
@@ -959,11 +961,14 @@ def _serve_parallel(args: argparse.Namespace) -> int:
                         skipped.append({"task_id": task, "reason": exc.code})
                         index += 1
                         continue
-                    if exc.code in _SERVE_WAIT and _runs_in_flight(threads):
+                    # The runs in flight are counted once: counted twice, the last
+                    # one could end in between and leave a wait for fewer than
+                    # zero runs that never ends (review of attempt-001, F1).
+                    flight = _runs_in_flight(threads)
+                    if exc.code in _SERVE_WAIT and flight:
                         # One of this call's own runs holds the slot, the resource
                         # key or the budget: wait for one of them to end, then
                         # claim this very task again from (s).
-                        flight = _runs_in_flight(threads)
                         while _runs_in_flight(threads) >= flight:
                             _await_run(threads)
                         continue
@@ -991,6 +996,13 @@ def _serve_parallel(args: argparse.Namespace) -> int:
                                                 args=(record, ledger, job, args, candidate_hash)))
                 threads[-1].start()
                 index += 1
+        except (ContractError, LedgerError, RunSpecError) as exc:
+            # A refusal from a ledger call of the walk other than the claim (the
+            # task view of a ledger a run has made unusable): it stops the walk
+            # like the claim's own refusals and, like them, waits for the runs in
+            # flight before anything is reported (review of attempt-001, F2).
+            refusal = _refusal(exc, None)
+            stopped = "refused"
         except KeyboardInterrupt:
             # The first Ctrl-C, wherever in the walk it landed: the claims stop
             # here, and the runs in flight are waited out below.
