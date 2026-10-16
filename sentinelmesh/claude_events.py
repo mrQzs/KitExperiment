@@ -44,9 +44,10 @@ Design (``.agent/design/claude-tools.md`` sections 3.2, 5 and 9):
   four counters of every model summed per dimension, plus their sum as
   ``total_tokens`` -- because that sum is the billed total (it includes retracted
   turns and the fallback model); ``result.usage`` is no longer read.  Each
-  per-message observation is also summed per ``message.id`` into
-  ``message_usage``; an illegal counter in a well-formed ``result`` still ends
-  the run, with its usage unknown;
+  ``message.id`` also keeps the usage of its last accepted frame (the frames of
+  one message repeat it), and those per-message observations are summed across
+  ids into ``message_usage``; an illegal counter in a well-formed ``result``
+  still ends the run, with its usage unknown;
 * unknown frame types, unknown ``system`` subtypes, subagent frames, frames after
   ``result`` and malformed known frames all fail closed: they become an
   ``unknown`` record, so the stream never settles and no usage is recorded;
@@ -56,9 +57,11 @@ Design (``.agent/design/claude-tools.md`` sections 3.2, 5 and 9):
 Two recordings (2026-10-16, ``tests/fixtures/claude_stream/``) cover the dialect:
 a single turn without tools, and a six-turn run with tool calls, a permission
 denial, a refusal fallback that retracts three frames and split assistant frames.
-Subagents, compaction, hooks, API retries, ``stream_event``, image blocks and
-write/exec tools have no sample here and are therefore refused as unknown frames,
-exactly as pi's translator refuses what it has never seen.
+Subagents, compaction, hooks, API retries, ``stream_event`` and image blocks have
+no sample here and are therefore refused as unknown frames, exactly as pi's
+translator refuses what it has never seen.  Tool names are not checked: the only
+recorded tool is ``Read``, but a ``Bash`` or ``Write`` call has the same
+``tool_use``/``tool_result`` shape and is translated the same way.
 
 Importing this module has no side effect: no file, environment, process or
 network access, no ``ctypes``.
@@ -98,7 +101,7 @@ MODEL_USAGE_KEYS = (
     ("cacheReadInputTokens", "cache_read_tokens"),
     ("cacheCreationInputTokens", "cache_write_tokens"),
 )
-#: The four token dimensions, in a fixed order, and their summed dimension.
+#: The four token dimensions, in a fixed order (``TOTAL_DIMENSION`` is not one of them).
 _DIMENSIONS = tuple(dimension for _vendor, dimension in USAGE_KEYS)
 #: The dimension summed from the four vendor counters.
 TOTAL_DIMENSION = "total_tokens"
@@ -254,7 +257,11 @@ class _Accumulator:
 
     def _system(self, frame: Dict[str, Any], line: int, frame_type: str) -> None:
         subtype = frame.get("subtype")
-        if subtype == _INIT_SUBTYPE:
+        if type(subtype) is not str:
+            # Checked first: a list or dict subtype is unhashable, and the set
+            # lookup below would raise instead of failing the frame closed.
+            self._odd(line, frame, frame_type, "system subtype is outside the dialect", UNKNOWN_FRAME)
+        elif subtype == _INIT_SUBTYPE:
             self._init(frame, line, frame_type)
         elif subtype == _PERMISSION_DENIED_SUBTYPE:
             tool_use_id = frame.get("tool_use_id")
@@ -275,7 +282,7 @@ class _Accumulator:
             self.fallbacks += 1
             self.models.add(fallback_model)
         else:
-            # Another subtype, or one that is not text at all: no sample, fail closed.
+            # Another text subtype: no sample, fail closed.
             self._odd(line, frame, frame_type, "system subtype is outside the dialect", UNKNOWN_FRAME)
 
     def _init(self, frame: Dict[str, Any], line: int, frame_type: str) -> None:

@@ -277,6 +277,10 @@ class ToolStreamOracle(ToolsCase):
             "an image block": lambda f: f[20]["message"]["content"].append({"type": "image", "source": {}}),
             "a compaction boundary": lambda f: f.insert(5, {"type": "system", "subtype": "compact_boundary"}),
             "a hook frame": lambda f: f.insert(5, {"type": "system", "subtype": "hook_started"}),
+            # Completion, review F1: an unhashable subtype raised TypeError in the set lookup.
+            "a system subtype that is a list": lambda f: f.insert(5, {"type": "system", "subtype": ["hook"]}),
+            "a system subtype that is an object": lambda f: f.insert(5, {"type": "system", "subtype": {"kind": "hook"}}),
+            "a system subtype that is a number": lambda f: f.insert(5, {"type": "system", "subtype": 7}),
             "a permission denial without its tool": lambda f: f[2].pop("tool_use_id"),
             "a fallback without its model": lambda f: f[10].pop("fallback_model"),
             "a fallback whose original model is a number": lambda f: f[10].update(original_model=7),
@@ -300,6 +304,17 @@ class ToolStreamOracle(ToolsCase):
                 status = None if outcome["result"] is None else outcome["result"]["status"]
                 self.assertIn(status, (None, "UNKNOWN"))
                 self.assertEqual(outcome["usage_recorded"], {})
+
+    def test_a_system_subtype_that_is_not_text_fails_closed_through_smctl(self):
+        # Completion, review F1: before the fix the translator raised, ``smctl run
+        # once`` exited 2 with the operation START_UNKNOWN and ``reference`` exited 2.
+        frames = fixture()
+        frames.insert(5, {"type": "system", "subtype": ["hook"]})
+        outcome, _usage, ledger, op = self.once(self.write_stream(frames))
+        self.assertEqual(outcome["state"], "REVIEW_PENDING")
+        self.assertEqual(outcome["usage_recorded"], {})
+        reference = self.reference(ledger, op)
+        self.assertEqual((reference["reasons"], reference["usage"]), (["unknown_frames"], BILLED))
 
     def test_an_odd_frame_emits_no_half_of_its_events(self):
         frames = fixture()

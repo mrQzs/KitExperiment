@@ -121,11 +121,14 @@ class ClaudeToolsTests(unittest.TestCase):
         frames = [
             init(),
             assistant("msg_a", usage_a, [{"type": "text", "text": "a"}]),
-            # msg_b is split across two frames that repeat its usage: it counts once.
-            assistant("msg_b", usage_b, [{"type": "thinking", "thinking": "t"}]),
+            # msg_b is split across two frames: it counts once, with its last
+            # frame's usage (review F5: the first frame shows a lower output).
+            assistant("msg_b", dict(usage_b, output_tokens=5), [{"type": "thinking", "thinking": "t"}]),
             assistant("msg_b", usage_b, [{"type": "text", "text": "b"}]),
             assistant("msg_c", usage_c, [{"type": "text", "text": "c"}]),
-            result({"claude-opus-5-5": {"inputTokens": 111, "outputTokens": 222,
+            # The billed total differs from the per-message sum (review F5), so the
+            # two numbers cannot stand in for each other.
+            result({"claude-opus-5-5": {"inputTokens": 111, "outputTokens": 900,
                                         "cacheReadInputTokens": 333, "cacheCreationInputTokens": 444}}),
         ]
         translation = self.translate(frames)
@@ -133,6 +136,9 @@ class ClaudeToolsTests(unittest.TestCase):
         self.assertEqual(translation.message_usage,
                          {"input_tokens": 111, "output_tokens": 222, "cache_read_tokens": 333,
                           "cache_write_tokens": 444, "total_tokens": 1110})
+        self.assertEqual(translation.reported_usage,
+                         {"input_tokens": 111, "output_tokens": 900, "cache_read_tokens": 333,
+                          "cache_write_tokens": 444, "total_tokens": 1788})
         self.assertEqual(translation.illegal_message_usage, 0)
 
     def test_a_cut_stream_with_an_illegal_message_lists_all_four_reasons_in_order(self):
@@ -149,7 +155,7 @@ class ClaudeToolsTests(unittest.TestCase):
                          ["no_terminal", "illegal_usage", "partial_output", "unknown_frames"])
         self.assertIs(reference["complete"], False)
         self.assertIsNone(reference["terminal"])
-        # Only the legal message is summed; the illegal one and the retracted run are left out.
+        # Only the legal message is summed; the one with an illegal counter is left out.
         self.assertEqual(reference["usage"],
                          {"input_tokens": 1, "output_tokens": 2, "cache_read_tokens": 3,
                           "cache_write_tokens": 4, "total_tokens": 10})
@@ -165,7 +171,9 @@ class ClaudeToolsTests(unittest.TestCase):
         ]
         translation = self.translate(frames)
         self.assertEqual(translation.fallbacks, 2)
-        self.assertEqual(translation.models.count("claude-fb-x"), 1)
+        # Review F6: the exact tuple, since ``models`` comes from a set and a
+        # count over it could never exceed one.
+        self.assertEqual(translation.models, ("claude-fb-x", "claude-opus-5-5"))
         self.assertEqual(translation.events[-1]["payload"]["fallbacks"], 2)
 
 
