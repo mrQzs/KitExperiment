@@ -32,6 +32,10 @@ dispatcher. Contracts, `.agent/`, and AGENTS.md are control-plane inputs and
 must not be changed by an executor.
 
 Executors run validation commands directly; the tool already returns the full
-output and exit code. If output must be shortened, use
-`T=$(mktemp -d); <command> > "$T/out" 2>&1; echo "exit=$?"; tail -n 20 "$T/out"; rm -rf "$T"`.
-Never write fixed paths such as `/tmp/v01.txt` (two attempts did).
+output and exit code. If output must be shortened, copy the self-check form the
+instruction gives under each check ("自检照抄"; in bash
+`set -o pipefail; <command> 2>&1 | tail -n 40`, so the pipeline's exit status is
+the command's own), and start any ad-hoc test command piped into `tail` with
+`set -o pipefail;` as well. Never write fixed paths such as `/tmp/v01.txt` (two
+attempts did). Choices the contract leaves to the executor go into the report's
+`interpretations` list.
