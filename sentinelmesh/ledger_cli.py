@@ -31,6 +31,8 @@ import sys
 from typing import Any, Callable
 
 from .adapter_run import MAX_LINE_BYTES, MAX_STREAM_BYTES, read_stream
+from .claude_events import DIALECT as CLAUDE_DIALECT
+from .claude_events import translate as claude_translate
 from .durable_ledger import LedgerError, open_ledger
 from .pi_events import DIALECT, translate
 from .scheduler import RESOLUTIONS, UNRESOLVED, ContractError
@@ -45,7 +47,8 @@ _RESOLUTIONS = tuple(sorted(RESOLUTIONS))
 #: The output-stream dialects ``reference`` understands, and nothing else: the
 #: ledger records no dialect, so the operator names the one the run wrote and a
 #: dialect nobody implemented is refused by argparse instead of being guessed at.
-_DIALECTS = (DIALECT,)
+#: pi's ``pi-session-v3`` first, then Claude Code's ``claude-stream-json``.
+_DIALECTS = (DIALECT, CLAUDE_DIALECT)
 
 #: The event types the Scheduler emits, and the only ones ``events`` offers.  The
 #: set is the Scheduler's own: an operator selecting a type nobody emits is a
@@ -226,10 +229,47 @@ def _pi_reference(events: list[dict[str, Any]]) -> dict[str, Any]:
             "models": [[provider, model] for provider, model in translation.models]}
 
 
+def _claude_reference(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """The ``claude-stream-json`` reference value of one translated stream.
+
+    Only :func:`~sentinelmesh.claude_events.translate` decides the numbers --
+    nothing is recounted here, so the tool pairing, ordering and termination
+    rules stay the translator's own.  When the terminal ``result`` carried a
+    legal ``modelUsage`` the reference is that billed total and the only reason
+    left is ``unknown_frames``; otherwise the reference is the per-message sum,
+    which is only a lower bound on what the run produced, and the reasons are
+    listed in one fixed order so the same stream always reads the same way.
+    """
+    translation = claude_translate(events)
+    from_messages = translation.reported_usage is None
+    reasons: list[str] = []
+    if from_messages and translation.terminal is None:
+        # No legal ``result``: the run was cut or killed before it settled.
+        reasons.append("no_terminal")
+    if from_messages and (translation.terminal is not None or translation.illegal_message_usage > 0):
+        # A result whose usage was illegal, or a message whose usage was illegal.
+        reasons.append("illegal_usage")
+    if from_messages:
+        # The per-message sum is only what the frames showed, never the total.
+        reasons.append("partial_output")
+    if translation.unknown > 0:
+        # An unknown or malformed frame, or a frame after the terminal one.
+        reasons.append("unknown_frames")
+    usage = dict(translation.message_usage if from_messages else translation.reported_usage)
+    return {"complete": not reasons, "reasons": reasons, "terminal": translation.terminal,
+            "subtype": translation.subtype, "is_error": translation.is_error,
+            "num_turns": translation.num_turns, "usage": usage,
+            "assistant_messages": translation.assistant_messages, "tool_calls": translation.tool_calls,
+            "tool_errors": translation.tool_errors, "permission_denials": translation.permission_denials,
+            "fallbacks": translation.fallbacks, "frames": translation.frames,
+            "unknown": translation.unknown, "models": list(translation.models)}
+
+
 #: The reference each dialect computes from the events of a stream that read
-#: ``ok``.  One dialect in this version; a dialect nobody implemented never
+#: ``ok``.  Two dialects in this version; a dialect nobody implemented never
 #: reaches here, because argparse refuses it before the ledger is opened.
-_REFERENCES: dict[str, Callable[[list[dict[str, Any]]], dict[str, Any]]] = {DIALECT: _pi_reference}
+_REFERENCES: dict[str, Callable[[list[dict[str, Any]]], dict[str, Any]]] = {DIALECT: _pi_reference,
+                                                                           CLAUDE_DIALECT: _claude_reference}
 
 
 def _attention(ledger: Any, request_id: str) -> list[dict[str, Any]]:
