@@ -17,7 +17,11 @@ design names:
   daemon -- reporting every run, every task it skipped and why, and why it
   stopped, as exactly one line; one run at a time, or with ``--parallel N`` the
   very same walk with at most N runs in flight, each claimed run handed to a
-  daemon thread of its own while the main thread goes on claiming;
+  daemon thread of its own while the main thread goes on claiming; with
+  ``--watch`` that same walk again and again -- catching up on the ledger
+  between two passes so a verdict an operator gives from another process is
+  seen, re-claiming a task a review rejected, and ending once no task can move
+  on without the operator;
 * ``smctl run recover`` takes over what a controller that died left in the ledger:
   it rolls the ledger over exactly once (every request stops with
   ``RECOVERY_REQUIRED``), cancels every claim that never reached a handoff,
@@ -128,6 +132,22 @@ _SERVE_WAIT = frozenset({"E_CONCURRENCY", "E_RESOURCE_BUSY", "E_BUDGET_INSUFFICI
 #: timeout: on Windows a lock wait without one can keep a ``KeyboardInterrupt``
 #: from ever reaching the main thread, and the first Ctrl-C has to be seen.
 _POLL_SECONDS = 0.1
+
+#: The states of a task's most recent operation that mean "a run ended without
+#: a review and the operator has to decide it": ``serve --watch`` skips such a
+#: task as ``needs_operator`` instead of re-claiming it every pass, so a task
+#: whose environment is broken does not burn an attempt every ``--poll-seconds``
+#: (the same lesson serve-loop records in its section 6).
+_NEEDS_OPERATOR = frozenset({"NOT_STARTED", "START_UNKNOWN", "CANCELLED_NOT_STARTED", "ABANDONED"})
+
+#: The states of a task's most recent operation that mean "still in flight, or
+#: waiting for a verdict": ``serve --watch`` reads a task whose last operation is
+#: in one of these as one that can still move on, so the watch keeps going.
+_WAITING = frozenset({"RESERVED", "HANDOFF_ACCEPTED", "RUNNING", "REVIEW_PENDING"})
+
+#: How long ``serve --watch`` pauses between two passes when ``--poll-seconds``
+#: is not given.
+_DEFAULT_POLL_SECONDS = 30
 
 
 class RunSpecError(Exception):
@@ -594,9 +614,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     ``--parallel N`` asks for the same walk with at most N runs in flight at a
     time and is dispatched to :func:`_serve_parallel`; without it nothing above
-    changes.
+    changes.  ``--watch`` asks for that same walk pass after pass -- each pass
+    catching up on the ledger so a verdict an operator gives from another process
+    is seen, a rejected task re-claimed, and the whole watch ending once no task
+    can move on without the operator -- and is dispatched to :func:`_serve_parallel`
+    too, pausing ``--poll-seconds`` (default :data:`_DEFAULT_POLL_SECONDS`) between
+    two passes; ``--poll-seconds`` given without ``--watch`` is a usage error that
+    reads nothing and touches no ledger.
     """
-    if getattr(args, "parallel", None) is not None:
+    if getattr(args, "poll_seconds", None) is not None and not getattr(args, "watch", False):
+        _write_line(sys.stderr, {"error": "E_RUN_USAGE", "detail": "--poll-seconds needs --watch",
+                                 "operation_id": None})
+        return 2
+    if getattr(args, "parallel", None) is not None or getattr(args, "watch", False):
         return _serve_parallel(args)
     runs: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -841,16 +871,34 @@ def _serve_run(record: dict[str, Any], ledger: Any, job: dict[str, Any], args: a
 
 
 def _serve_parallel(args: argparse.Namespace) -> int:
-    """Drain one request with at most ``--parallel`` runs in flight at a time.
+    """Drain one request, pass after pass under ``--watch``, at most the width wide.
 
-    The walk is the one ``serve`` makes without ``--parallel`` -- the same checks
-    before any claim (the job files, the shared-directory rule, the ledger, the
-    request's tasks, any job with no task), the same per-task steps in seeding
-    order, the same derived keys, the same evidence directories, the same skips
-    and the same ``max_runs``/``max_seconds`` stops -- with one difference: every
-    claim is still made by the main thread, in seeding order, but the run it
-    claimed is handed to a daemon thread of its own and the main thread goes on
-    claiming while fewer than ``--parallel`` of this call's runs are in flight.
+    Without ``--watch`` this makes exactly one pass: the walk ``serve`` makes
+    without ``--parallel`` -- the same checks before any claim (the job files, the
+    shared-directory rule, the ledger, the request's tasks, any job with no task),
+    the same per-task steps in seeding order, the same derived keys, the same
+    evidence directories, the same skips and the same ``max_runs``/``max_seconds``
+    stops -- with one difference: every claim is still made by the main thread, in
+    seeding order, but the run it claimed is handed to a daemon thread of its own
+    and the main thread goes on claiming while fewer than the width
+    (``--parallel``, or one without it) of this call's runs are in flight.
+
+    With ``--watch`` the pass is repeated until the watch ends.  The width is
+    ``--parallel`` or one and is the report's ``parallel``; the claim count, the
+    claim records and their threads carry across every pass, and ``--max-seconds``
+    runs from the first one.  Each pass clears ``skipped`` (the report shows the
+    last pass's) and, before its first claim, catches up on the ledger with
+    :meth:`~sentinelmesh.durable_ledger.DurableScheduler.refresh` so a verdict,
+    stop or rollover another process wrote is seen; a task whose most recent
+    operation ended without a review (a state in :data:`_NEEDS_OPERATOR`) is
+    skipped as ``needs_operator`` rather than re-claimed, while a task a review
+    rejected is claimed again on a later pass.  A pass that stopped for a refusal,
+    ``max_runs``, ``max_seconds`` or an interrupt, or that left a run refused or in
+    error, ends the whole watch; otherwise the ledger is caught up again, the watch
+    ends ``finished`` when :func:`_watch_finished` finds no task with a job that
+    can move on without the operator, ``--max-seconds`` is honoured, and otherwise
+    it pauses ``--poll-seconds`` (default :data:`_DEFAULT_POLL_SECONDS`) through
+    :func:`_sleep` and starts the next pass.
 
     A claim refused with one of :data:`_SERVE_WAIT` means the slot, the resource
     key or the budget is held by one of this call's own runs in flight, so the
@@ -862,27 +910,29 @@ def _serve_parallel(args: argparse.Namespace) -> int:
     end of the request -- waits for this call's own runs before anything is
     reported, and the report is only written once the ledger is closed.
 
-    The first ``KeyboardInterrupt`` the main thread sees, in the walk or while it
-    waits, is absorbed as ``interrupted``: the claims stop, the runs in flight
+    The first ``KeyboardInterrupt`` the main thread sees, in a pass or while it
+    pauses, is absorbed as ``interrupted``: the claims stop, the runs in flight
     are still waited out and the report is written (exit 0 unless something was
     refused, which still exits 3).  A second
     one is the operator giving up on them: it is not absorbed, it leaves
     ``_serve_parallel`` with the ledger closed in the ``finally``, nothing is
     written on stdout or stderr, and the runs still in flight are left to
-    ``smctl run recover``.  A ``KeyboardInterrupt`` in the checks before the walk
-    is not absorbed either, exactly as it is not in the walk without
+    ``smctl run recover``.  A ``KeyboardInterrupt`` in the checks before the first
+    pass is not absorbed either, exactly as it is not in the walk without
     ``--parallel``.
 
-    The report is one line on stdout with ``parallel`` added to ``serve``'s own
-    keys: the ``runs`` in claim order -- each with its task, attempt, operation,
-    state and evidence directory -- the ``skipped`` as without ``--parallel``,
-    the ``stopped`` reason and the ``refusal``.  The refusals are the runs' own,
-    in claim order, followed by the walk's own (the one that stopped it), the
-    first of them being the report's ``refusal`` and each of them one line on
-    stderr; a non-empty refusal list exits 3, anything else 0.  A run that ended
-    in an error the four refusal classes do not cover is raised, in claim order,
-    after the runs are over and the ledger is closed, and no report is written
-    for it.
+    The report is one line on stdout with ``parallel`` (the width) added to
+    ``serve``'s own keys -- the ``runs`` in claim order across every pass, each
+    with its task, attempt, operation, state and evidence directory, the
+    ``skipped`` of the last pass, the ``stopped`` reason and the ``refusal`` --
+    and, under ``--watch``, ``passes`` (how many passes ran) and ``watch``
+    (``{"poll_seconds"}``, the pause used).  ``stopped`` gains ``finished``.  The
+    refusals are the runs' own, in claim order, followed by the walk's own (the
+    one that stopped it), the first of them being the report's ``refusal`` and
+    each of them one line on stderr; a non-empty refusal list exits 3, anything
+    else 0.  A run that ended in an error the four refusal classes do not cover is
+    raised, in claim order, after the runs are over and the ledger is closed, and
+    no report is written for it.
     """
     skipped: list[dict[str, Any]] = []
     stopped: str | None = None
@@ -891,6 +941,14 @@ def _serve_parallel(args: argparse.Namespace) -> int:
     ledger = None
     records: list[dict[str, Any]] = []
     threads: list[threading.Thread] = []
+    # ``--watch`` repeats the pass; the width is ``--parallel`` or one, and the
+    # pause between two passes is ``--poll-seconds`` or the default.
+    watch = bool(getattr(args, "watch", False))
+    poll_seconds = getattr(args, "poll_seconds", None)
+    poll_seconds = _DEFAULT_POLL_SECONDS if poll_seconds is None else poll_seconds
+    width = getattr(args, "parallel", None)
+    width = 1 if width is None else width
+    passes = 0
     try:
         # The checks before any claim: the job files (before the ledger), the
         # shared directories, the ledger itself, the request's tasks, and any job
@@ -907,126 +965,177 @@ def _serve_parallel(args: argparse.Namespace) -> int:
         # exactly as the walk without ``--parallel`` decides it.
         candidate_hash = evidence_digest if args.candidate is None else _constant(args.candidate)
         claimed = 0
-        try:
-            started = _clock()
-            index = 0
-            while index < len(task_ids):
-                # (s) a free slot: at most ``--parallel`` of this call's runs in
-                # flight, so wait for one of them to end before claiming again.
-                while _runs_in_flight(threads) >= args.parallel:
+        # ``--max-seconds`` runs from the first pass, so the clock is read once
+        # here, before the pass loop, and every pass measures against it.
+        started = _clock()
+        while True:
+            # One pass: its own skips and its own interrupt flag; the claims, the
+            # claim records and the threads carry across every pass.
+            passes += 1
+            skipped = []
+            interrupted = False
+            try:
+                # (watch) catch up on the ledger before the first claim of the
+                # pass, so a verdict, stop or rollover another process wrote is
+                # seen here; its refusal is a walk refusal -- drain, then refuse.
+                if watch:
+                    ledger.refresh()
+                index = 0
+                while index < len(task_ids):
+                    # (s) a free slot: at most the width of this call's runs in
+                    # flight, so wait for one of them to end before claiming again.
+                    while _runs_in_flight(threads) >= width:
+                        _await_run(threads)
+                    # (h) a run of this call that ended in a refusal or in an error
+                    # stops the claims: nothing new is started behind it.
+                    if _ended_badly(records):
+                        stopped = "refused"
+                        break
+                    # (a) --max-runs, counting this call's claims across every
+                    # pass, checked before a claim and never inside a run.
+                    if args.max_runs is not None and claimed >= args.max_runs:
+                        stopped = "max_runs"
+                        break
+                    # (b) --max-seconds, the same: the budget never reaches into a run.
+                    if args.max_seconds is not None and _clock() - started >= args.max_seconds:
+                        stopped = "max_seconds"
+                        break
+                    task = task_ids[index]
+                    # (c) a task the request has but the directory has no job for.
+                    if task not in jobs:
+                        skipped.append({"task_id": task, "reason": "no_job"})
+                        index += 1
+                        continue
+                    job = jobs[task]
+                    # (d) a task already accepted, or one that used all its attempts.
+                    view = ledger.task(args.request, task)
+                    if view["done"]:
+                        skipped.append({"task_id": task, "reason": "done"})
+                        index += 1
+                        continue
+                    if view["attempts"] >= view["max_attempts"]:
+                        skipped.append({"task_id": task, "reason": "attempts"})
+                        index += 1
+                        continue
+                    # (watch) a run that ended without a review is the operator's:
+                    # skip it rather than burn an attempt every pass.
+                    if watch:
+                        last = _last_operation(ledger, args.request, task)
+                        if last is not None and last["state"] in _NEEDS_OPERATOR:
+                            skipped.append({"task_id": task, "reason": "needs_operator"})
+                            index += 1
+                            continue
+                    # (e) the attempt's evidence directory, which must be fresh.
+                    attempt = view["attempts"] + 1
+                    evidence = os.path.join(args.evidence, task, str(attempt))
+                    if os.path.exists(evidence):
+                        refusal = _refusal(RunSpecError("E_RUN_EVIDENCE",
+                                                        "the evidence directory %s already exists" % evidence), None)
+                        stopped = "refused"
+                        break
+                    # (f) the claim, under the derived key, in the current generation.
+                    key = "%s#%d" % (job["idempotency_key"], attempt)
+                    claim_now = args.now + claimed
+                    try:
+                        claim = ledger.claim(args.request, task, job["plan"], key, args.owner, ledger.generation,
+                                             job["guard_version"], job["reservation"], list(job["resources"]),
+                                             claim_now)
+                    except (ContractError, LedgerError) as exc:
+                        if exc.code in _SERVE_SKIP:
+                            skipped.append({"task_id": task, "reason": exc.code})
+                            index += 1
+                            continue
+                        # The runs in flight are counted once: counted twice, the last
+                        # one could end in between and leave a wait for fewer than
+                        # zero runs that never ends (review of attempt-001, F1).
+                        flight = _runs_in_flight(threads)
+                        if exc.code in _SERVE_WAIT and flight:
+                            # One of this call's own runs holds the slot, the resource
+                            # key or the budget: wait for one of them to end, then
+                            # claim this very task again from (s).
+                            while _runs_in_flight(threads) >= flight:
+                                _await_run(threads)
+                            continue
+                        refusal = _refusal(exc, None)
+                        stopped = "refused"
+                        break
+                    if claim["replayed"]:
+                        # Someone already used this derived key for this task: report
+                        # the operation it produced and start nothing.
+                        refusal = _refusal(RunSpecError("E_RUN_CLAIM_REPLAYED",
+                                                        "operation %s is already %s"
+                                                        % (claim["operation_id"], claim["state"])),
+                                           claim["operation_id"])
+                        stopped = "refused"
+                        break
+                    # (g) the run is registered before its thread starts, so an
+                    # interrupt between the two leaves the operation RESERVED and
+                    # unreported -- exactly as a claim interrupted in the walk
+                    # without ``--parallel`` leaves it.
+                    claimed += 1
+                    record = {"task_id": task, "attempt": attempt, "operation_id": claim["operation_id"],
+                              "evidence_dir": evidence, "now": claim_now, "state": None, "refusal": None}
+                    records.append(record)
+                    threads.append(threading.Thread(target=_serve_run, daemon=True,
+                                                    args=(record, ledger, job, args, candidate_hash)))
+                    threads[-1].start()
+                    index += 1
+            except (ContractError, LedgerError, RunSpecError) as exc:
+                # A refusal from a ledger call of the walk other than the claim (the
+                # task view of a ledger a run has made unusable, or the start-of-pass
+                # catch-up of a ledger another process rolled over): it stops the walk
+                # like the claim's own refusals and, like them, waits for the runs in
+                # flight before anything is reported (review of attempt-001, F2).
+                refusal = _refusal(exc, None)
+                stopped = "refused"
+            except KeyboardInterrupt:
+                # The first Ctrl-C, wherever in the walk it landed: the claims stop
+                # here, and the runs in flight are waited out below.
+                interrupted = True
+            try:
+                # Every stop waits for this call's own runs before anything is
+                # reported: a run in flight is a run the report owes a result to.
+                while _runs_in_flight(threads):
                     _await_run(threads)
-                # (h) a run of this call that ended in a refusal or in an error
-                # stops the claims: nothing new is started behind it.
-                if _ended_badly(records):
-                    stopped = "refused"
+            except KeyboardInterrupt:
+                # The first Ctrl-C that landed while the runs in flight were already
+                # being waited out is absorbed and the wait simply continues; the
+                # second is the operator giving up on them, so it is not absorbed --
+                # the runs are left to ``smctl run recover``.
+                if interrupted:
+                    raise
+                interrupted = True
+                while _runs_in_flight(threads):
+                    _await_run(threads)
+            # Without ``--watch`` one pass is the whole call.
+            if not watch:
+                break
+            # A stop reason, an interrupt, or a run that ended in a refusal or an
+            # error ends the whole watch.
+            if stopped is not None or interrupted or _ended_badly(records):
+                break
+            try:
+                # Between two passes: catch up on the ledger again (a verdict, a
+                # stop or a rollover another process wrote is seen here too), end
+                # ``finished`` when nothing can move on without the operator, honour
+                # ``--max-seconds`` from the first pass, then pause.  A refusal here
+                # is the main thread's own (``operation_id`` null); a Ctrl-C here is
+                # the first interrupt, and no run is in flight at this point.
+                ledger.refresh()
+                if _watch_finished(ledger, args.request, task_ids, jobs):
+                    stopped = "finished"
                     break
-                # (a) --max-runs, counting this call's claims, checked before a
-                # claim and never inside a run.
-                if args.max_runs is not None and claimed >= args.max_runs:
-                    stopped = "max_runs"
-                    break
-                # (b) --max-seconds, the same: the budget never reaches into a run.
                 if args.max_seconds is not None and _clock() - started >= args.max_seconds:
                     stopped = "max_seconds"
                     break
-                task = task_ids[index]
-                # (c) a task the request has but the directory has no job for.
-                if task not in jobs:
-                    skipped.append({"task_id": task, "reason": "no_job"})
-                    index += 1
-                    continue
-                job = jobs[task]
-                # (d) a task already accepted, or one that used all its attempts.
-                view = ledger.task(args.request, task)
-                if view["done"]:
-                    skipped.append({"task_id": task, "reason": "done"})
-                    index += 1
-                    continue
-                if view["attempts"] >= view["max_attempts"]:
-                    skipped.append({"task_id": task, "reason": "attempts"})
-                    index += 1
-                    continue
-                # (e) the attempt's evidence directory, which must be fresh.
-                attempt = view["attempts"] + 1
-                evidence = os.path.join(args.evidence, task, str(attempt))
-                if os.path.exists(evidence):
-                    refusal = _refusal(RunSpecError("E_RUN_EVIDENCE",
-                                                    "the evidence directory %s already exists" % evidence), None)
-                    stopped = "refused"
-                    break
-                # (f) the claim, under the derived key, in the current generation.
-                key = "%s#%d" % (job["idempotency_key"], attempt)
-                claim_now = args.now + claimed
-                try:
-                    claim = ledger.claim(args.request, task, job["plan"], key, args.owner, ledger.generation,
-                                         job["guard_version"], job["reservation"], list(job["resources"]),
-                                         claim_now)
-                except (ContractError, LedgerError) as exc:
-                    if exc.code in _SERVE_SKIP:
-                        skipped.append({"task_id": task, "reason": exc.code})
-                        index += 1
-                        continue
-                    # The runs in flight are counted once: counted twice, the last
-                    # one could end in between and leave a wait for fewer than
-                    # zero runs that never ends (review of attempt-001, F1).
-                    flight = _runs_in_flight(threads)
-                    if exc.code in _SERVE_WAIT and flight:
-                        # One of this call's own runs holds the slot, the resource
-                        # key or the budget: wait for one of them to end, then
-                        # claim this very task again from (s).
-                        while _runs_in_flight(threads) >= flight:
-                            _await_run(threads)
-                        continue
-                    refusal = _refusal(exc, None)
-                    stopped = "refused"
-                    break
-                if claim["replayed"]:
-                    # Someone already used this derived key for this task: report
-                    # the operation it produced and start nothing.
-                    refusal = _refusal(RunSpecError("E_RUN_CLAIM_REPLAYED",
-                                                    "operation %s is already %s"
-                                                    % (claim["operation_id"], claim["state"])),
-                                       claim["operation_id"])
-                    stopped = "refused"
-                    break
-                # (g) the run is registered before its thread starts, so an
-                # interrupt between the two leaves the operation RESERVED and
-                # unreported -- exactly as a claim interrupted in the walk
-                # without ``--parallel`` leaves it.
-                claimed += 1
-                record = {"task_id": task, "attempt": attempt, "operation_id": claim["operation_id"],
-                          "evidence_dir": evidence, "now": claim_now, "state": None, "refusal": None}
-                records.append(record)
-                threads.append(threading.Thread(target=_serve_run, daemon=True,
-                                                args=(record, ledger, job, args, candidate_hash)))
-                threads[-1].start()
-                index += 1
-        except (ContractError, LedgerError, RunSpecError) as exc:
-            # A refusal from a ledger call of the walk other than the claim (the
-            # task view of a ledger a run has made unusable): it stops the walk
-            # like the claim's own refusals and, like them, waits for the runs in
-            # flight before anything is reported (review of attempt-001, F2).
-            refusal = _refusal(exc, None)
-            stopped = "refused"
-        except KeyboardInterrupt:
-            # The first Ctrl-C, wherever in the walk it landed: the claims stop
-            # here, and the runs in flight are waited out below.
-            interrupted = True
-        try:
-            # Every stop waits for this call's own runs before anything is
-            # reported: a run in flight is a run the report owes a result to.
-            while _runs_in_flight(threads):
-                _await_run(threads)
-        except KeyboardInterrupt:
-            # The first Ctrl-C that landed while the runs in flight were already
-            # being waited out is absorbed and the wait simply continues; the
-            # second is the operator giving up on them, so it is not absorbed --
-            # the runs are left to ``smctl run recover``.
-            if interrupted:
-                raise
-            interrupted = True
-            while _runs_in_flight(threads):
-                _await_run(threads)
+                _sleep(poll_seconds)
+            except (ContractError, LedgerError, RunSpecError) as exc:
+                refusal = _refusal(exc, None)
+                stopped = "refused"
+                break
+            except KeyboardInterrupt:
+                interrupted = True
+                break
     except (ContractError, LedgerError, RunSpecError) as exc:
         # A refusal from the checks before the walk: nothing was claimed, so
         # there is no operation to name.
@@ -1055,7 +1164,10 @@ def _serve_parallel(args: argparse.Namespace) -> int:
     elif stopped is None:
         stopped = "drained"
     report = {"command": "serve", "request": args.request, "runs": runs, "skipped": skipped,
-              "stopped": stopped, "refusal": refusals[0] if refusals else None, "parallel": args.parallel}
+              "stopped": stopped, "refusal": refusals[0] if refusals else None, "parallel": width}
+    if watch:
+        report["passes"] = passes
+        report["watch"] = {"poll_seconds": poll_seconds}
     _emit(report)
     for item in refusals:
         _write_line(sys.stderr, item)
@@ -1108,6 +1220,74 @@ def _clock() -> float:
     return time.monotonic()
 
 
+def _sleep(seconds: float) -> None:
+    """Wait a full ``seconds`` seconds, in sleeps of at most :data:`_POLL_SECONDS`.
+
+    ``serve --watch`` pauses between two passes through this, and the pause has to
+    stay interruptible: one ``time.sleep`` of ``--poll-seconds`` (thirty by
+    default) would keep a ``KeyboardInterrupt`` from reaching the main thread
+    until it was over, so the wait is cut into pieces of at most
+    :data:`_POLL_SECONDS` each.  Elapsed time is measured with
+    :func:`time.monotonic`, so a piece that returns early is simply followed by
+    another and the whole ``seconds`` are waited however the pieces fall.  It is
+    read through this module-level name so a test can replace it and drive the
+    passes deterministically.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(remaining, _POLL_SECONDS))
+
+
+def _last_operation(ledger: Any, request: str, task: str) -> dict[str, Any] | None:
+    """The most recent operation of one task of one request, or ``None``.
+
+    Walks :meth:`~sentinelmesh.durable_ledger.DurableScheduler.operation_ids` in
+    claim order and returns the
+    :meth:`~sentinelmesh.durable_ledger.DurableScheduler.operation` view whose
+    ``request_id`` and ``task_id`` both match -- the last one, the task's most
+    recent attempt -- or ``None`` when the task has no operation at all.  The
+    reads are served from memory, so this costs one pass over the operations and
+    touches no log.
+    """
+    last: dict[str, Any] | None = None
+    for operation_id in ledger.operation_ids():
+        view = ledger.operation(operation_id)
+        if view["request_id"] == request and view["task_id"] == task:
+            last = view
+    return last
+
+
+def _watch_finished(ledger: Any, request: str, task_ids: Any, jobs: dict[str, Any]) -> bool:
+    """Whether no task with a job can move on without the operator.
+
+    Every task of ``task_ids`` that has a job in ``jobs`` is checked in order and
+    the watch is not finished while any one of them can still move on its own: a
+    task ``serve`` reads as ``done`` is done; one whose most recent operation is
+    in :data:`_WAITING` (still in flight, or waiting for a verdict) is not; one
+    that used all its attempts is done; and one with no operation yet, or whose
+    most recent operation a review ``REJECTED`` while it still has an attempt
+    left, can move on.  A task with no job is not looked at.  ``True`` only when
+    every task with a job has passed.
+    """
+    for task in task_ids:
+        if task not in jobs:
+            continue
+        view = ledger.task(request, task)
+        if view["done"]:
+            continue
+        operation = _last_operation(ledger, request, task)
+        if operation is not None and operation["state"] in _WAITING:
+            return False
+        if view["attempts"] >= view["max_attempts"]:
+            continue
+        if operation is None or operation["state"] == "REJECTED":
+            return False
+    return True
+
+
 def register(subparsers: Any) -> None:
     """Add the ``run`` command group to ``smctl``'s subparsers.
 
@@ -1149,6 +1329,12 @@ def register(subparsers: Any) -> None:
                    help="sha256 of the candidate (default: the evidence records' own digest)")
     p.add_argument("--now", type=_digits, default=0,
                    help="base logical clock; each claim uses it plus the claims before it (default 0)")
+    p.add_argument("--watch", action="store_true",
+                   help="walk the request pass after pass, pausing --poll-seconds between two passes and "
+                        "catching up on the ledger, until no task can move on without the operator")
+    p.add_argument("--poll-seconds", type=_count, default=None,
+                   help="seconds --watch pauses between two passes (a positive integer, default %d)"
+                        % _DEFAULT_POLL_SECONDS)
     p.add_argument("--parallel", type=_count,
                    help="run at most this many of the request's tasks at a time, each in a thread of its own")
     p.set_defaults(func=cmd_serve)
